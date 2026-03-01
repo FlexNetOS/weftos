@@ -4,7 +4,12 @@
 //! process has an [`AgentCapabilities`] that governs what IPC scopes,
 //! tool categories, and resource budgets the agent is allowed.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+
+use crate::error::KernelError;
+use crate::process::{Pid, ProcessTable};
 
 /// Resource limits for an agent process.
 ///
@@ -141,6 +146,302 @@ impl AgentCapabilities {
     }
 }
 
+/// Sandbox policy governing filesystem and shell access.
+///
+/// Controls whether an agent can execute shell commands, access
+/// the network, and which filesystem paths are allowed or denied.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SandboxPolicy {
+    /// Whether the agent may execute shell commands.
+    #[serde(default, alias = "allowShell")]
+    pub allow_shell: bool,
+
+    /// Whether the agent may make network requests.
+    #[serde(default, alias = "allowNetwork")]
+    pub allow_network: bool,
+
+    /// Filesystem paths the agent is allowed to access.
+    #[serde(default, alias = "allowedPaths")]
+    pub allowed_paths: Vec<String>,
+
+    /// Filesystem paths the agent is explicitly denied from accessing.
+    #[serde(default, alias = "deniedPaths")]
+    pub denied_paths: Vec<String>,
+}
+
+/// Tool-level permission configuration.
+///
+/// An allow/deny list model where deny overrides allow.
+/// Empty `allow` means all tools permitted (unless explicitly denied).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolPermissions {
+    /// Tools the agent is allowed to use (empty = all allowed).
+    #[serde(default, alias = "tools")]
+    pub allow: Vec<String>,
+
+    /// Tools the agent is explicitly denied from using.
+    #[serde(default, alias = "denyTools")]
+    pub deny: Vec<String>,
+
+    /// Named services the agent may access (e.g. "memory", "cron").
+    #[serde(default, alias = "serviceAccess")]
+    pub service_access: Vec<String>,
+}
+
+/// Resource type for capability limit checks.
+///
+/// Each variant carries the current value to check against limits.
+#[derive(Debug, Clone)]
+pub enum ResourceType {
+    /// Memory usage in bytes.
+    Memory(u64),
+    /// CPU time in milliseconds.
+    CpuTime(u64),
+    /// Number of concurrent tool calls.
+    ConcurrentTools(u32),
+    /// Number of IPC messages sent.
+    Messages(u64),
+}
+
+/// Capability checker that enforces per-agent access control.
+///
+/// The checker reads capabilities from the process table and
+/// validates tool access, IPC routing, service access, and
+/// resource limits. It is designed to be called from tool
+/// execution hooks without requiring a direct dependency on
+/// the kernel crate (via trait objects in the core).
+pub struct CapabilityChecker {
+    process_table: Arc<ProcessTable>,
+}
+
+impl CapabilityChecker {
+    /// Create a new capability checker backed by the given process table.
+    pub fn new(process_table: Arc<ProcessTable>) -> Self {
+        Self { process_table }
+    }
+
+    /// Check whether a process is allowed to call a tool.
+    ///
+    /// Evaluation order:
+    /// 1. Agent must have `can_exec_tools` enabled.
+    /// 2. If `tool_permissions.deny` is non-empty, the tool must not
+    ///    be in the deny list (deny overrides allow).
+    /// 3. If `tool_permissions.allow` is non-empty, the tool must be
+    ///    in the allow list.
+    /// 4. Shell tools require `sandbox.allow_shell`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::CapabilityDenied` with a description
+    /// of why access was denied.
+    pub fn check_tool_access(
+        &self,
+        pid: Pid,
+        tool_name: &str,
+        tool_permissions: Option<&ToolPermissions>,
+        sandbox: Option<&SandboxPolicy>,
+    ) -> Result<(), KernelError> {
+        let entry = self
+            .process_table
+            .get(pid)
+            .ok_or(KernelError::ProcessNotFound { pid })?;
+
+        // Must have tool execution capability
+        if !entry.capabilities.can_exec_tools {
+            return Err(KernelError::CapabilityDenied {
+                pid,
+                action: format!("execute tool '{tool_name}'"),
+                reason: "agent does not have can_exec_tools capability".into(),
+            });
+        }
+
+        // Check deny list (deny overrides allow)
+        if let Some(perms) = tool_permissions {
+            if perms.deny.iter().any(|d| d == tool_name) {
+                return Err(KernelError::CapabilityDenied {
+                    pid,
+                    action: format!("execute tool '{tool_name}'"),
+                    reason: "tool is in the deny list".into(),
+                });
+            }
+
+            // Check allow list (empty = all allowed)
+            if !perms.allow.is_empty()
+                && !perms.allow.iter().any(|a| a == tool_name)
+            {
+                return Err(KernelError::CapabilityDenied {
+                    pid,
+                    action: format!("execute tool '{tool_name}'"),
+                    reason: "tool is not in the allow list".into(),
+                });
+            }
+        }
+
+        // Check sandbox policy for shell tools
+        if let Some(sb) = sandbox
+            && is_shell_tool(tool_name)
+            && !sb.allow_shell
+        {
+            return Err(KernelError::CapabilityDenied {
+                pid,
+                action: format!("execute shell tool '{tool_name}'"),
+                reason: "sandbox policy does not allow shell execution".into(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Check whether a process may send a message to another process.
+    ///
+    /// Uses the sender's IPC scope to determine if communication
+    /// with the target PID is allowed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::CapabilityDenied` if IPC is disabled
+    /// or the target is outside the sender's IPC scope.
+    pub fn check_ipc_target(&self, from_pid: Pid, to_pid: Pid) -> Result<(), KernelError> {
+        let entry = self
+            .process_table
+            .get(from_pid)
+            .ok_or(KernelError::ProcessNotFound { pid: from_pid })?;
+
+        if !entry.capabilities.can_ipc {
+            return Err(KernelError::CapabilityDenied {
+                pid: from_pid,
+                action: format!("send IPC message to PID {to_pid}"),
+                reason: "agent does not have IPC capability".into(),
+            });
+        }
+
+        if !entry.capabilities.can_message(to_pid) {
+            return Err(KernelError::CapabilityDenied {
+                pid: from_pid,
+                action: format!("send IPC message to PID {to_pid}"),
+                reason: format!(
+                    "target PID {to_pid} is outside IPC scope {:?}",
+                    entry.capabilities.ipc_scope
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Check whether a process may access a named service.
+    ///
+    /// If `tool_permissions` has a non-empty `service_access` list,
+    /// the service name must appear in it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::CapabilityDenied` if the service is not
+    /// in the agent's service access list.
+    pub fn check_service_access(
+        &self,
+        pid: Pid,
+        service_name: &str,
+        tool_permissions: Option<&ToolPermissions>,
+    ) -> Result<(), KernelError> {
+        // Verify the PID exists
+        let _entry = self
+            .process_table
+            .get(pid)
+            .ok_or(KernelError::ProcessNotFound { pid })?;
+
+        if let Some(perms) = tool_permissions
+            && !perms.service_access.is_empty()
+            && !perms.service_access.iter().any(|s| s == service_name)
+        {
+            return Err(KernelError::CapabilityDenied {
+                pid,
+                action: format!("access service '{service_name}'"),
+                reason: "service is not in the agent's service access list".into(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Check whether a resource usage is within the agent's limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::ResourceLimitExceeded` if the resource
+    /// usage exceeds the agent's configured limits.
+    pub fn check_resource_limit(
+        &self,
+        pid: Pid,
+        resource: &ResourceType,
+    ) -> Result<(), KernelError> {
+        let entry = self
+            .process_table
+            .get(pid)
+            .ok_or(KernelError::ProcessNotFound { pid })?;
+
+        let limits = &entry.capabilities.resource_limits;
+
+        match resource {
+            ResourceType::Memory(bytes) => {
+                if *bytes > limits.max_memory_bytes {
+                    return Err(KernelError::ResourceLimitExceeded {
+                        pid,
+                        resource: "memory".into(),
+                        current: *bytes,
+                        limit: limits.max_memory_bytes,
+                    });
+                }
+            }
+            ResourceType::CpuTime(ms) => {
+                if *ms > limits.max_cpu_time_ms {
+                    return Err(KernelError::ResourceLimitExceeded {
+                        pid,
+                        resource: "cpu_time".into(),
+                        current: *ms,
+                        limit: limits.max_cpu_time_ms,
+                    });
+                }
+            }
+            ResourceType::ConcurrentTools(count) => {
+                if u64::from(*count) > limits.max_tool_calls {
+                    return Err(KernelError::ResourceLimitExceeded {
+                        pid,
+                        resource: "concurrent_tools".into(),
+                        current: u64::from(*count),
+                        limit: limits.max_tool_calls,
+                    });
+                }
+            }
+            ResourceType::Messages(count) => {
+                if *count > limits.max_messages {
+                    return Err(KernelError::ResourceLimitExceeded {
+                        pid,
+                        resource: "messages".into(),
+                        current: *count,
+                        limit: limits.max_messages,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get a reference to the underlying process table.
+    pub fn process_table(&self) -> &Arc<ProcessTable> {
+        &self.process_table
+    }
+}
+
+/// Check whether a tool name is a shell execution tool.
+fn is_shell_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "shell_exec" | "exec_shell" | "bash" | "command" | "run_command"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +551,282 @@ mod tests {
         assert!(caps.can_ipc);
         assert!(caps.can_exec_tools);
         assert!(!caps.can_network);
+    }
+
+    // ── SandboxPolicy tests ──────────────────────────────────────────
+
+    #[test]
+    fn sandbox_policy_default() {
+        let sb = SandboxPolicy::default();
+        assert!(!sb.allow_shell);
+        assert!(!sb.allow_network);
+        assert!(sb.allowed_paths.is_empty());
+        assert!(sb.denied_paths.is_empty());
+    }
+
+    #[test]
+    fn sandbox_policy_serde_roundtrip() {
+        let sb = SandboxPolicy {
+            allow_shell: true,
+            allow_network: false,
+            allowed_paths: vec!["/workspace".into()],
+            denied_paths: vec!["/etc".into(), "/root".into()],
+        };
+        let json = serde_json::to_string(&sb).unwrap();
+        let restored: SandboxPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, sb);
+    }
+
+    // ── ToolPermissions tests ────────────────────────────────────────
+
+    #[test]
+    fn tool_permissions_default() {
+        let perms = ToolPermissions::default();
+        assert!(perms.allow.is_empty());
+        assert!(perms.deny.is_empty());
+        assert!(perms.service_access.is_empty());
+    }
+
+    #[test]
+    fn tool_permissions_serde_roundtrip() {
+        let perms = ToolPermissions {
+            allow: vec!["read_file".into(), "write_file".into()],
+            deny: vec!["shell_exec".into()],
+            service_access: vec!["memory".into()],
+        };
+        let json = serde_json::to_string(&perms).unwrap();
+        let restored: ToolPermissions = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, perms);
+    }
+
+    // ── CapabilityChecker tests ──────────────────────────────────────
+
+    use crate::process::{ProcessEntry, ProcessState, ResourceUsage};
+    use tokio_util::sync::CancellationToken;
+
+    fn make_checker_with_entry(caps: AgentCapabilities) -> (CapabilityChecker, Pid) {
+        let table = Arc::new(ProcessTable::new(16));
+        let entry = ProcessEntry {
+            pid: 0,
+            agent_id: "test-agent".to_owned(),
+            state: ProcessState::Running,
+            capabilities: caps,
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let pid = table.insert(entry).unwrap();
+        (CapabilityChecker::new(table), pid)
+    }
+
+    #[test]
+    fn checker_tool_access_allowed_by_default() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        assert!(checker.check_tool_access(pid, "read_file", None, None).is_ok());
+    }
+
+    #[test]
+    fn checker_tool_access_denied_no_exec_tools() {
+        let caps = AgentCapabilities {
+            can_exec_tools: false,
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        let result = checker.check_tool_access(pid, "read_file", None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_tool_deny_list_blocks() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let perms = ToolPermissions {
+            deny: vec!["shell_exec".into()],
+            ..Default::default()
+        };
+        let result = checker.check_tool_access(pid, "shell_exec", Some(&perms), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_tool_deny_overrides_allow() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let perms = ToolPermissions {
+            allow: vec!["shell_exec".into()],
+            deny: vec!["shell_exec".into()],
+            ..Default::default()
+        };
+        let result = checker.check_tool_access(pid, "shell_exec", Some(&perms), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_tool_allow_list_restricts() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let perms = ToolPermissions {
+            allow: vec!["read_file".into(), "write_file".into()],
+            ..Default::default()
+        };
+        assert!(checker.check_tool_access(pid, "read_file", Some(&perms), None).is_ok());
+        assert!(checker.check_tool_access(pid, "web_search", Some(&perms), None).is_err());
+    }
+
+    #[test]
+    fn checker_sandbox_blocks_shell() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let sb = SandboxPolicy {
+            allow_shell: false,
+            ..Default::default()
+        };
+        let result = checker.check_tool_access(pid, "shell_exec", None, Some(&sb));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_sandbox_allows_shell() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let sb = SandboxPolicy {
+            allow_shell: true,
+            ..Default::default()
+        };
+        assert!(checker.check_tool_access(pid, "shell_exec", None, Some(&sb)).is_ok());
+    }
+
+    #[test]
+    fn checker_ipc_allowed() {
+        let table = Arc::new(ProcessTable::new(16));
+        let entry1 = ProcessEntry {
+            pid: 0,
+            agent_id: "sender".to_owned(),
+            state: ProcessState::Running,
+            capabilities: AgentCapabilities::default(), // IpcScope::All
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let entry2 = ProcessEntry {
+            pid: 0,
+            agent_id: "receiver".to_owned(),
+            state: ProcessState::Running,
+            capabilities: AgentCapabilities::default(),
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let pid1 = table.insert(entry1).unwrap();
+        let pid2 = table.insert(entry2).unwrap();
+
+        let checker = CapabilityChecker::new(table);
+        assert!(checker.check_ipc_target(pid1, pid2).is_ok());
+    }
+
+    #[test]
+    fn checker_ipc_denied_no_ipc() {
+        let caps = AgentCapabilities {
+            can_ipc: false,
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        let result = checker.check_ipc_target(pid, 999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_ipc_denied_restricted_scope() {
+        let caps = AgentCapabilities {
+            ipc_scope: IpcScope::Restricted(vec![5, 10]),
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        assert!(checker.check_ipc_target(pid, 5).is_ok());
+        assert!(checker.check_ipc_target(pid, 10).is_ok());
+        assert!(checker.check_ipc_target(pid, 15).is_err());
+    }
+
+    #[test]
+    fn checker_service_access_allowed_empty_list() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        // Empty service_access = all services allowed
+        let perms = ToolPermissions::default();
+        assert!(checker.check_service_access(pid, "memory", Some(&perms)).is_ok());
+    }
+
+    #[test]
+    fn checker_service_access_restricted() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        let perms = ToolPermissions {
+            service_access: vec!["memory".into(), "cron".into()],
+            ..Default::default()
+        };
+        assert!(checker.check_service_access(pid, "memory", Some(&perms)).is_ok());
+        assert!(checker.check_service_access(pid, "cron", Some(&perms)).is_ok());
+        assert!(checker.check_service_access(pid, "network", Some(&perms)).is_err());
+    }
+
+    #[test]
+    fn checker_resource_limit_memory_ok() {
+        let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
+        assert!(checker.check_resource_limit(pid, &ResourceType::Memory(1024)).is_ok());
+    }
+
+    #[test]
+    fn checker_resource_limit_memory_exceeded() {
+        let caps = AgentCapabilities {
+            resource_limits: ResourceLimits {
+                max_memory_bytes: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        let result = checker.check_resource_limit(pid, &ResourceType::Memory(200));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_resource_limit_cpu_exceeded() {
+        let caps = AgentCapabilities {
+            resource_limits: ResourceLimits {
+                max_cpu_time_ms: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        let result = checker.check_resource_limit(pid, &ResourceType::CpuTime(200));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_resource_limit_messages_exceeded() {
+        let caps = AgentCapabilities {
+            resource_limits: ResourceLimits {
+                max_messages: 10,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (checker, pid) = make_checker_with_entry(caps);
+        let result = checker.check_resource_limit(pid, &ResourceType::Messages(20));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checker_nonexistent_pid() {
+        let table = Arc::new(ProcessTable::new(16));
+        let checker = CapabilityChecker::new(table);
+        assert!(checker.check_tool_access(999, "read_file", None, None).is_err());
+        assert!(checker.check_ipc_target(999, 1).is_err());
+        assert!(checker.check_resource_limit(999, &ResourceType::Memory(0)).is_err());
+    }
+
+    #[test]
+    fn is_shell_tool_recognizes_variants() {
+        assert!(is_shell_tool("shell_exec"));
+        assert!(is_shell_tool("exec_shell"));
+        assert!(is_shell_tool("bash"));
+        assert!(is_shell_tool("command"));
+        assert!(is_shell_tool("run_command"));
+        assert!(!is_shell_tool("read_file"));
+        assert!(!is_shell_tool("web_search"));
     }
 }

@@ -23,6 +23,7 @@ use crate::health::HealthSystem;
 use crate::ipc::KernelIpc;
 use crate::process::{ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 use crate::service::ServiceRegistry;
+use crate::supervisor::AgentSupervisor;
 
 /// Kernel lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +69,7 @@ pub struct Kernel<P: Platform> {
     service_registry: Arc<ServiceRegistry>,
     ipc: Arc<KernelIpc>,
     health: HealthSystem,
+    supervisor: AgentSupervisor<P>,
     boot_log: BootLog,
     boot_time: Instant,
 }
@@ -175,6 +177,13 @@ impl<P: Platform> Kernel<P> {
             "kernel boot complete"
         );
 
+        // 7. Create agent supervisor
+        let supervisor = AgentSupervisor::new(
+            process_table.clone(),
+            ipc.clone(),
+            AgentCapabilities::default(),
+        );
+
         Ok(Self {
             state: KernelState::Running,
             config: kernel_config,
@@ -184,6 +193,7 @@ impl<P: Platform> Kernel<P> {
             service_registry,
             ipc,
             health,
+            supervisor,
             boot_log,
             boot_time,
         })
@@ -258,6 +268,11 @@ impl<P: Platform> Kernel<P> {
     /// Get the health system.
     pub fn health(&self) -> &HealthSystem {
         &self.health
+    }
+
+    /// Get the agent supervisor.
+    pub fn supervisor(&self) -> &AgentSupervisor<P> {
+        &self.supervisor
     }
 
     /// Get the boot log.

@@ -55,6 +55,39 @@ pub enum KernelError {
         actual: String,
     },
 
+    /// Capability check denied an action.
+    #[error("capability denied for PID {pid}: cannot {action} -- {reason}")]
+    CapabilityDenied {
+        /// The PID of the process that was denied.
+        pid: u64,
+        /// The action that was attempted.
+        action: String,
+        /// Why the action was denied.
+        reason: String,
+    },
+
+    /// Resource limit exceeded.
+    #[error("resource limit exceeded for PID {pid}: {resource} ({current} > {limit})")]
+    ResourceLimitExceeded {
+        /// The PID of the process.
+        pid: u64,
+        /// Name of the resource (memory, cpu_time, etc.).
+        resource: String,
+        /// Current usage value.
+        current: u64,
+        /// Configured limit.
+        limit: u64,
+    },
+
+    /// Agent spawn failed.
+    #[error("spawn failed for agent '{agent_id}': {reason}")]
+    SpawnFailed {
+        /// The agent that was being spawned.
+        agent_id: String,
+        /// Why the spawn failed.
+        reason: String,
+    },
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),

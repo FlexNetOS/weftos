@@ -218,6 +218,32 @@ impl ProcessTable {
     pub fn max_processes(&self) -> u32 {
         self.max_processes
     }
+
+    /// Update the capabilities of a process.
+    ///
+    /// Replaces the existing capabilities with the given ones.
+    /// This is used by the supervisor when hot-updating an agent's
+    /// permissions (future work) or during restart.
+    pub fn set_capabilities(
+        &self,
+        pid: Pid,
+        capabilities: AgentCapabilities,
+    ) -> Result<(), KernelError> {
+        let mut entry = self
+            .entries
+            .get_mut(&pid)
+            .ok_or(KernelError::ProcessNotFound { pid })?;
+        entry.capabilities = capabilities;
+        Ok(())
+    }
+
+    /// Count processes in the given state.
+    pub fn count_by_state(&self, state: &ProcessState) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| &e.state == state)
+            .count()
+    }
 }
 
 #[cfg(test)]
@@ -394,5 +420,47 @@ mod tests {
         };
         table.insert_with_pid(entry).unwrap();
         assert_eq!(table.get(0).unwrap().agent_id, "kernel");
+    }
+
+    #[test]
+    fn set_capabilities() {
+        let table = ProcessTable::new(64);
+        let pid = table.insert(make_entry("agent-1")).unwrap();
+
+        let new_caps = AgentCapabilities {
+            can_spawn: false,
+            can_network: true,
+            ..Default::default()
+        };
+        table.set_capabilities(pid, new_caps).unwrap();
+
+        let entry = table.get(pid).unwrap();
+        assert!(!entry.capabilities.can_spawn);
+        assert!(entry.capabilities.can_network);
+    }
+
+    #[test]
+    fn set_capabilities_nonexistent_pid() {
+        let table = ProcessTable::new(64);
+        let result = table.set_capabilities(999, AgentCapabilities::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn count_by_state() {
+        let table = ProcessTable::new(64);
+        let p1 = table.insert(make_entry("a1")).unwrap();
+        let p2 = table.insert(make_entry("a2")).unwrap();
+        table.insert(make_entry("a3")).unwrap();
+
+        // All start as Starting
+        assert_eq!(table.count_by_state(&ProcessState::Starting), 3);
+        assert_eq!(table.count_by_state(&ProcessState::Running), 0);
+
+        table.update_state(p1, ProcessState::Running).unwrap();
+        table.update_state(p2, ProcessState::Running).unwrap();
+
+        assert_eq!(table.count_by_state(&ProcessState::Starting), 1);
+        assert_eq!(table.count_by_state(&ProcessState::Running), 2);
     }
 }

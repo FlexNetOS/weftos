@@ -35,10 +35,14 @@ pub mod health;
 pub mod ipc;
 pub mod process;
 pub mod service;
+pub mod supervisor;
 
 // Re-export key types at the crate level for convenience.
 pub use boot::{Kernel, KernelState};
-pub use capability::{AgentCapabilities, IpcScope, ResourceLimits};
+pub use capability::{
+    AgentCapabilities, CapabilityChecker, IpcScope, ResourceLimits, ResourceType, SandboxPolicy,
+    ToolPermissions,
+};
 pub use clawft_types::config::KernelConfig;
 pub use config::KernelConfigExt;
 pub use console::{BootEvent, BootLog, BootPhase, LogLevel};
@@ -47,3 +51,4 @@ pub use health::{HealthStatus, HealthSystem, OverallHealth};
 pub use ipc::{KernelIpc, KernelMessage, KernelSignal, MessagePayload, MessageTarget};
 pub use process::{Pid, ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 pub use service::{ServiceRegistry, ServiceType, SystemService};
+pub use supervisor::{AgentSupervisor, SpawnRequest, SpawnResult};
