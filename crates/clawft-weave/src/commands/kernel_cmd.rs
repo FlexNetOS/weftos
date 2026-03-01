@@ -1,12 +1,14 @@
 //! `weaver kernel` subcommand implementation.
 //!
 //! Provides kernel lifecycle and introspection commands:
-//! - `weaver kernel start`    -- start the kernel daemon (persistent)
-//! - `weaver kernel stop`     -- stop a running daemon
-//! - `weaver kernel status`   -- kernel state, uptime, process/service counts
-//! - `weaver kernel services` -- list registered services with health
-//! - `weaver kernel ps`       -- list process table entries
-//! - `weaver kernel logs`     -- show kernel event log
+//! - `weaver kernel start`         -- start the kernel daemon (backgrounds by default)
+//! - `weaver kernel start --foreground` -- start in foreground (blocking)
+//! - `weaver kernel stop`          -- stop a running daemon
+//! - `weaver kernel status`        -- kernel state, uptime, PID, process/service counts
+//! - `weaver kernel services`      -- list registered services with health
+//! - `weaver kernel ps`            -- list process table entries
+//! - `weaver kernel attach`        -- stream kernel logs in real time
+//! - `weaver kernel logs`          -- show kernel event log snapshot
 //!
 //! Query commands (`status`, `services`, `ps`) connect to a running daemon
 //! first. If no daemon is running, they boot an ephemeral kernel, display
@@ -39,8 +41,12 @@ pub struct KernelArgs {
 /// Kernel subcommands.
 #[derive(Subcommand)]
 pub enum KernelAction {
-    /// Start the kernel daemon (persistent, runs in foreground).
-    Start,
+    /// Start the kernel daemon (backgrounds by default).
+    Start {
+        /// Run in foreground instead of backgrounding.
+        #[arg(long)]
+        foreground: bool,
+    },
 
     /// Stop a running kernel daemon.
     Stop,
@@ -53,6 +59,17 @@ pub enum KernelAction {
 
     /// List process table entries.
     Ps,
+
+    /// Attach to a running daemon and stream logs in real time.
+    Attach {
+        /// Number of recent entries to show before streaming (default: 20).
+        #[arg(short = 'n', long, default_value = "20")]
+        tail: usize,
+
+        /// Minimum log level: debug, info, warn, error.
+        #[arg(short, long)]
+        level: Option<String>,
+    },
 
     /// Show kernel event log.
     Logs {
@@ -69,11 +86,17 @@ pub enum KernelAction {
 /// Run the kernel subcommand.
 pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
     match args.action {
-        KernelAction::Start => {
-            let platform = NativePlatform::new();
-            let config = super::load_config(&platform, args.config.as_deref()).await?;
-            let kernel_config = config.kernel.clone();
-            crate::daemon::run(config, kernel_config).await?;
+        KernelAction::Start { foreground } => {
+            if foreground {
+                // Run in foreground (blocking)
+                let platform = NativePlatform::new();
+                let config = super::load_config(&platform, args.config.as_deref()).await?;
+                let kernel_config = config.kernel.clone();
+                crate::daemon::run(config, kernel_config).await?;
+            } else {
+                // Background (default) — fork and exit
+                crate::daemon::daemonize(args.config.as_deref())?;
+            }
         }
         KernelAction::Stop => {
             let mut client = DaemonClient::connect()
@@ -82,6 +105,9 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             let resp = client.simple_call("kernel.shutdown").await?;
             if resp.ok {
                 println!("Daemon shutdown initiated.");
+                // Clean up PID file
+                let pid_path = protocol::pid_path();
+                let _ = std::fs::remove_file(&pid_path);
             } else {
                 let msg = resp.error.unwrap_or_else(|| "unknown error".into());
                 anyhow::bail!("shutdown failed: {msg}");
@@ -93,7 +119,14 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
                 if resp.ok {
                     let result: protocol::KernelStatusResult =
                         serde_json::from_value(resp.result.unwrap())?;
-                    print_daemon_status(&result);
+                    // Read PID from PID file if available
+                    let pid = protocol::pid_path()
+                        .exists()
+                        .then(|| std::fs::read_to_string(protocol::pid_path()).ok())
+                        .flatten()
+                        .and_then(|s| s.trim().parse::<u32>().ok());
+                    print_daemon_status(&result, pid);
+                    print_cluster_summary(&mut client).await;
                 } else {
                     let msg = resp.error.unwrap_or_else(|| "unknown error".into());
                     eprintln!("daemon error: {msg}");
@@ -144,6 +177,92 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
                 print_ps(&kernel);
             }
         }
+        KernelAction::Attach { tail, level } => {
+            let mut client = DaemonClient::connect()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("no daemon running (use 'weaver kernel start' first)"))?;
+
+            // Get the total event count to seed our cursor, then show recent tail
+            let all_params = protocol::LogsParams {
+                count: 0, // 0 = all
+                level: level.clone(),
+            };
+            let all_req = protocol::Request::with_params(
+                "kernel.logs",
+                serde_json::to_value(&all_params)?,
+            );
+            let all_resp = client.call(all_req).await?;
+            let total_events = if all_resp.ok {
+                let entries: Vec<protocol::LogEntry> =
+                    serde_json::from_value(all_resp.result.unwrap())?;
+                let total = entries.len();
+                // Show the last `tail` entries
+                let show_from = total.saturating_sub(tail);
+                let shown = &entries[show_from..];
+                if !shown.is_empty() {
+                    println!("--- Recent kernel logs ({} of {} entries) ---", shown.len(), total);
+                    print_daemon_logs(shown);
+                    println!("--- Streaming (Ctrl+C to detach) ---");
+                } else {
+                    println!("--- No logs yet — streaming (Ctrl+C to detach) ---");
+                }
+                total
+            } else {
+                println!("--- Streaming (Ctrl+C to detach) ---");
+                0
+            };
+
+            // Poll for new logs at interval, only printing entries beyond our cursor
+            let poll_interval = std::time::Duration::from_secs(1);
+            let mut last_count = total_events;
+            loop {
+                tokio::time::sleep(poll_interval).await;
+
+                // Reconnect each poll (connection may be closed after response)
+                let mut poll_client = match DaemonClient::connect().await {
+                    Some(c) => c,
+                    None => {
+                        println!("\n[daemon disconnected]");
+                        break;
+                    }
+                };
+
+                let params = protocol::LogsParams {
+                    count: 0, // all
+                    level: level.clone(),
+                };
+                let req = protocol::Request::with_params(
+                    "kernel.logs",
+                    serde_json::to_value(&params)?,
+                );
+                match poll_client.call(req).await {
+                    Ok(resp) if resp.ok => {
+                        let entries: Vec<protocol::LogEntry> =
+                            serde_json::from_value(resp.result.unwrap())?;
+                        let current_count = entries.len();
+                        if current_count > last_count {
+                            // Print only new entries (those beyond our cursor)
+                            for entry in &entries[last_count..] {
+                                let ts = &entry.timestamp[11..19];
+                                let level_tag = match entry.level.as_str() {
+                                    "error" => "ERR ",
+                                    "warn" => "WARN",
+                                    "debug" => "DBG ",
+                                    _ => "INFO",
+                                };
+                                println!("{ts} [{level_tag}] {}", entry.message);
+                            }
+                        }
+                        last_count = current_count;
+                    }
+                    Ok(_) => {} // non-ok response, keep polling
+                    Err(_) => {
+                        println!("\n[daemon disconnected]");
+                        break;
+                    }
+                }
+            }
+        }
         KernelAction::Logs { count, level } => {
             if let Some(mut client) = DaemonClient::connect().await {
                 let params = protocol::LogsParams {
@@ -179,17 +298,44 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
 // ── Daemon-mode display (from protocol types) ─────────────────────
 
 /// Print kernel status from a daemon response.
-fn print_daemon_status(result: &protocol::KernelStatusResult) {
+fn print_daemon_status(result: &protocol::KernelStatusResult, pid: Option<u32>) {
     let uptime_str = format_uptime(result.uptime_secs);
 
     println!("WeftOS Kernel Status (daemon)");
     println!("-----------------------------");
     println!("State:      {}", result.state);
+    if let Some(p) = pid {
+        println!("PID:        {p}");
+    }
     println!("Uptime:     {uptime_str}");
     println!("Processes:  {}", result.process_count);
     println!("Services:   {}", result.service_count);
     println!("Max procs:  {}", result.max_processes);
     println!("Health chk: {}s", result.health_check_interval_secs);
+    println!("Socket:     {}", protocol::socket_path().display());
+    println!("Log:        {}", protocol::log_path().display());
+
+    // Show cluster info if available (via separate RPC call)
+    // This is best-effort; errors are silently ignored.
+}
+
+/// Fetch and print cluster info from daemon (appended to status output).
+async fn print_cluster_summary(client: &mut DaemonClient) {
+    let resp = match client.simple_call("cluster.nodes").await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    if !resp.ok {
+        return;
+    }
+    let nodes: Vec<protocol::ClusterNodeInfo> =
+        match serde_json::from_value(resp.result.unwrap_or_default()) {
+            Ok(n) => n,
+            Err(_) => return,
+        };
+    if !nodes.is_empty() {
+        println!("Cluster:    {} nodes", nodes.len());
+    }
 }
 
 /// Print services from a daemon response.
@@ -304,6 +450,14 @@ fn print_status<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
         "Health chk: {}s",
         kernel.kernel_config().health_check_interval_secs
     );
+
+    // Cluster membership
+    let membership = kernel.cluster_membership();
+    let peer_count = membership.len();
+    if peer_count > 0 {
+        let active = membership.active_peers().len();
+        println!("Cluster:    {peer_count} nodes ({active} active)");
+    }
 }
 
 /// Print services table from an ephemeral kernel.

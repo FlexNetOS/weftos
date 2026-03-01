@@ -73,10 +73,12 @@ pub use capability::{
     AgentCapabilities, CapabilityChecker, IpcScope, ResourceLimits, ResourceType, SandboxPolicy,
     ToolPermissions,
 };
-pub use clawft_types::config::KernelConfig;
+pub use clawft_types::config::{ClusterNetworkConfig, KernelConfig};
 pub use cluster::{
     ClusterConfig, ClusterError, ClusterMembership, NodeId, NodePlatform, NodeState, PeerNode,
 };
+#[cfg(feature = "cluster")]
+pub use cluster::ClusterService;
 pub use config::KernelConfigExt;
 pub use console::{BootEvent, BootLog, BootPhase, KernelEventLog, LogLevel};
 pub use container::{

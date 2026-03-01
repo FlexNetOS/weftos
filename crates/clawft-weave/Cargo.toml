@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [features]
 default = []
+cluster = ["clawft-kernel/cluster"]
 
 [dependencies]
 clawft-kernel = { workspace = true, features = ["native"] }
@@ -29,4 +30,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 comfy-table = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
 dirs = { workspace = true }

@@ -3,9 +3,71 @@
 **Document ID**: 07-ruvector-deep-integration
 **Workstream**: W-KERNEL
 **Date**: 2026-02-28
-**Status**: Architecture
+**Status**: Partially Implemented (cluster layer done)
 **Supersedes**: Portions of K0-K5 where ruvector crates replace custom implementations
-**Dependencies**: All ruvector crates from `https://github.com/ruvnet/ruvector` (101 crates)
+**Dependencies**: ruvector distributed crates from `https://github.com/weave-logic-ai/ruvector`
+
+---
+
+## 0. Reality Check: What Actually Exists in ruvector
+
+> **This section was added 2026-03-01 after auditing the actual ruvector repository.**
+
+The original version of this document (below) references **101 crates** and names many
+specific crates. After cloning and inspecting the ruvector repo, only a subset exists.
+The integration plan has been adjusted to work with what is real.
+
+### Crates That Exist and Are Integrated
+
+| Crate | Purpose | Status in WeftOS |
+|-------|---------|-----------------|
+| `ruvector-cluster` | `ClusterManager`, `ShardRouter`, `DagConsensus`, pluggable `Discovery` | **Integrated** behind `#[cfg(feature = "cluster")]` in `clawft-kernel` |
+| `ruvector-raft` | `RaftNode` leader election and log replication | **Available** as optional dep, not yet wired as kernel service |
+| `ruvector-replication` | `ReplicaSet`, `SyncManager` for state replication | **Available** as optional dep, not yet wired |
+| `ruvector-core` | Vector store, HNSW index, quantization | **Optional** — feature-gated behind `vector-store` in all 3 distributed crates |
+
+### Crates Referenced Below That Do NOT Exist
+
+The following crate names appear in the original architecture below but **do not exist**
+in the ruvector repository. They represent aspirational design, not available code:
+
+- `cognitum-gate-tilezero` (coherence gate)
+- `ruvector-nervous-system` (event bus)
+- `ruvector-delta-consensus` (causal ordering)
+- `prime-radiant` (routing optimizer)
+- `rvf-wasm` (WASM runtime)
+- `rvf-kernel` (kernel primitives)
+- `rvf-crypto` (crypto operations)
+- `rvf-wire` (wire format)
+- `mcp-gate` (MCP integration)
+
+### What Was Actually Implemented
+
+1. **Universal ClusterMembership** (`crates/clawft-kernel/src/cluster.rs`):
+   Compiles on all platforms including WASM. Tracks peers with `Option<String>`
+   addresses and `NodePlatform` enum (CloudNative, Browser, Edge, Wasi). Always
+   present on `Kernel<P>`.
+
+2. **Native ClusterService** (`crates/clawft-kernel/src/cluster.rs`, behind `cluster` feature):
+   Wraps `ruvector_cluster::ClusterManager` with `StaticDiscovery`. Implements
+   `SystemService` trait. Syncs ruvector node state into kernel `ClusterMembership`.
+
+3. **Daemon RPC** (`crates/clawft-weave/src/daemon.rs`):
+   6 new dispatch methods: `cluster.status`, `cluster.nodes`, `cluster.join`,
+   `cluster.leave`, `cluster.health`, `cluster.shards`.
+
+4. **CLI** (`crates/clawft-weave/src/commands/cluster_cmd.rs`):
+   `weaver cluster {status|nodes|join|leave|health|shards}` commands.
+
+5. **ruvector fork fix**: Made `ruvector-core` optional in all 3 distributed crates
+   (it was listed as dep but never imported).
+
+### Future Integration Phases
+
+- **Raft leader election**: Wire `RaftNode` as a kernel service for metadata consensus
+- **Replication**: Wire `ReplicaSet` + `SyncManager` for agent state across nodes
+- **WS cluster protocol**: Full bidirectional cluster protocol over WebSocket
+- **Vector store**: Enable `ruvector-core` vector-store feature for distributed vectors
 
 ---
 

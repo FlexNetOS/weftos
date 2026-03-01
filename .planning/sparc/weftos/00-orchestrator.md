@@ -2,7 +2,7 @@
 
 **Workstream ID**: W-KERNEL
 **Date**: 2026-02-28
-**Status**: Planning
+**Status**: In Progress (K0 Complete)
 **Estimated Duration**: 17+ weeks (K0-K6 + addenda)
 **Source Analysis**: `.planning/development_notes/openfang-comparison.md`, existing kernel primitives audit
 
@@ -45,7 +45,7 @@ Both binaries link to the same `clawft-cli` crate. `weave` is a thin alias that 
 
 | Phase | ID | Title | Goal | Duration |
 |---|---|---|---|---|
-| 0 | K0 | Kernel Foundation | New `clawft-kernel` crate with boot, process table, service registry, health | 2 weeks |
+| 0 | K0 | Kernel Foundation | New `clawft-kernel` crate with boot, process table, service registry, health, cluster membership | 2 weeks | **Complete** |
 | 1 | K1 | Supervisor + RBAC | Agent supervisor with spawn/stop/restart, per-agent capabilities | 2 weeks |
 | 2 | K2 | A2A IPC | Agent-to-agent messaging, pub/sub topics, JSON-RPC wire format | 2 weeks |
 | 3 | K3 | WASM Sandbox | Wasmtime tool execution, fuel metering, memory limits | 2 weeks |
@@ -60,7 +60,10 @@ Both binaries link to the same `clawft-cli` crate. `weave` is a thin alias that 
 ### Internal Dependencies (Phase-to-Phase)
 
 ```
-K0 (Foundation) -- no deps
+K0 (Foundation) -- COMPLETE
+  |  + ClusterMembership (universal peer tracker, all platforms)
+  |  + ClusterService (ruvector-cluster, native-only, feature-gated)
+  |  + weaver daemon (Unix socket RPC) + weaver cluster CLI
   |
   +---> K1 (Supervisor/RBAC) -- depends on K0 (process table, capabilities)
   |         |
@@ -94,6 +97,11 @@ K0 (Foundation) -- no deps
 | `wasmtime` | 27.0 | `clawft-kernel` (optional, `wasm-sandbox` feature) | K3 |
 | `bollard` | 0.17 | `clawft-kernel` (optional, `containers` feature) | K4 |
 | `dashmap` | 6.0 | `clawft-kernel` | K0 |
+| `ruvector-cluster` | 0.1 (path) | `clawft-kernel` (optional, `cluster` feature) | K0 |
+| `ruvector-raft` | 0.1 (path) | `clawft-kernel` (optional, `cluster` feature) | K0 |
+| `ruvector-replication` | 0.1 (path) | `clawft-kernel` (optional, `cluster` feature) | K0 |
+| `parking_lot` | 0.12 | `clawft-kernel` (optional, `cluster` feature) | K0 |
+| `futures` | 0.3 | `clawft-kernel` (optional, `cluster` feature) | K0 |
 | `exo-core` | 0.1 | `exo-resource-tree` | K0 |
 | `exo-identity` | 0.1 | `exo-resource-tree` | K0 |
 | `exo-consent` | 0.1 | `exo-resource-tree` | K0 |
@@ -299,7 +307,7 @@ pub enum MessagePayload {
 
 | File | Action | Owner |
 |---|---|---|
-| `crates/clawft-kernel/src/cluster.rs` | Create | K6 |
+| `crates/clawft-kernel/src/cluster.rs` | Modify (exists from K0) | K6 |
 | `crates/clawft-kernel/src/cross_node_ipc.rs` | Create | K6 |
 | `crates/clawft-kernel/src/filesystem.rs` | Create | K6 |
 | `crates/clawft-kernel/src/environment.rs` | Create | K6 |
@@ -447,9 +455,12 @@ pub enum MessagePayload {
 ## 10. Quality Gates Between Phases
 
 ### K0 -> K1 Gate
-- [ ] `Kernel<P>` boots successfully with empty process table
+- [x] `Kernel<P>` boots successfully with process table (PID 0 = kernel)
 - [ ] At least one `SystemService` registered (CronService wrapper)
-- [ ] `weave kernel status` CLI command works
+- [x] `weaver kernel status` CLI command works (daemon + ephemeral modes)
+- [x] `weaver cluster status/nodes/join/leave/health/shards` CLI works
+- [x] ClusterMembership universal peer tracker compiles on all targets
+- [x] ClusterService (ruvector) registers behind `cluster` feature
 - [ ] ADR-028 committed
 
 ### K1 -> K2 Gate

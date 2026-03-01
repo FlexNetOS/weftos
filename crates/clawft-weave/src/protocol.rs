@@ -12,14 +12,32 @@ use serde::{Deserialize, Serialize};
 /// Default socket path (relative to config dir).
 pub const SOCKET_NAME: &str = "kernel.sock";
 
-/// Resolve the full socket path.
-///
-/// Uses `~/.clawft/kernel.sock` by default.
-pub fn socket_path() -> std::path::PathBuf {
-    let base = dirs::home_dir()
+/// PID file name.
+pub const PID_FILE_NAME: &str = "kernel.pid";
+
+/// Log file name.
+pub const LOG_FILE_NAME: &str = "kernel.log";
+
+/// Resolve the WeftOS runtime directory (`~/.clawft/`).
+pub fn runtime_dir() -> std::path::PathBuf {
+    dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".clawft");
-    base.join(SOCKET_NAME)
+        .join(".clawft")
+}
+
+/// Resolve the full socket path (`~/.clawft/kernel.sock`).
+pub fn socket_path() -> std::path::PathBuf {
+    runtime_dir().join(SOCKET_NAME)
+}
+
+/// Resolve the PID file path (`~/.clawft/kernel.pid`).
+pub fn pid_path() -> std::path::PathBuf {
+    runtime_dir().join(PID_FILE_NAME)
+}
+
+/// Resolve the log file path (`~/.clawft/kernel.log`).
+pub fn log_path() -> std::path::PathBuf {
+    runtime_dir().join(LOG_FILE_NAME)
 }
 
 // ── Requests ───────────────────────────────────────────────
@@ -158,6 +176,64 @@ pub struct LogsParams {
     /// Minimum level filter: "debug", "info", "warn", "error".
     #[serde(default)]
     pub level: Option<String>,
+}
+
+// ── Cluster result types ──────────────────────────────────
+
+/// Result of `cluster.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterStatusResult {
+    pub total_nodes: usize,
+    pub healthy_nodes: usize,
+    pub total_shards: usize,
+    pub active_shards: usize,
+    pub consensus_enabled: bool,
+}
+
+/// A single node entry for `cluster.nodes`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterNodeInfo {
+    pub node_id: String,
+    pub name: String,
+    pub platform: String,
+    pub state: String,
+    pub address: Option<String>,
+    pub last_seen: String,
+}
+
+/// A single shard entry for `cluster.shards`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterShardInfo {
+    pub shard_id: u32,
+    pub primary_node: String,
+    pub replica_nodes: Vec<String>,
+    pub vector_count: usize,
+    pub status: String,
+}
+
+/// Parameters for `cluster.join`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterJoinParams {
+    /// Address of the node to join (for native nodes).
+    #[serde(default)]
+    pub address: Option<String>,
+    /// Platform type: "native", "browser", "edge", "wasi".
+    #[serde(default = "default_platform")]
+    pub platform: String,
+    /// Node display name.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+fn default_platform() -> String {
+    "native".into()
+}
+
+/// Parameters for `cluster.leave`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterLeaveParams {
+    /// Node ID to remove from the cluster.
+    pub node_id: String,
 }
 
 #[cfg(test)]

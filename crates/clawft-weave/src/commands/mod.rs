@@ -1,5 +1,6 @@
 //! Command implementations for `weaver`.
 
+pub mod cluster_cmd;
 pub mod kernel_cmd;
 
 use std::path::Path;

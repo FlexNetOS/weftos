@@ -118,6 +118,13 @@ instant-distance = "0.6"
 # Concurrent hash map
 dashmap = "6"
 
+# Distributed coordination (ruvector)
+ruvector-cluster = { path = "../ruvector/crates/ruvector-cluster" }
+ruvector-raft = { path = "../ruvector/crates/ruvector-raft" }
+ruvector-replication = { path = "../ruvector/crates/ruvector-replication" }
+parking_lot = "0.12"
+futures = "0.3"
+
 # Internal crates
 clawft-types = { path = "crates/clawft-types", default-features = false }
 clawft-platform = { path = "crates/clawft-platform", default-features = false }

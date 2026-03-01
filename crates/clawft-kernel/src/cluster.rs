@@ -331,6 +331,206 @@ impl ClusterMembership {
     }
 }
 
+// ── ClusterService (native coordinator layer) ────────────────────────
+//
+// Wraps ruvector's ClusterManager behind the `cluster` feature flag.
+// Only runs on native coordinator nodes; browser/edge nodes participate
+// through the universal ClusterMembership layer via WebSocket.
+
+#[cfg(feature = "cluster")]
+mod cluster_service {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use tracing::{debug, info};
+
+    use ruvector_cluster::{
+        ClusterConfig as RuvectorClusterConfig, ClusterManager, ClusterNode, DiscoveryService,
+        NodeStatus, ShardInfo, StaticDiscovery,
+    };
+
+    use crate::cluster::{ClusterMembership, NodePlatform, NodeState, PeerNode};
+    use crate::health::HealthStatus;
+    use crate::service::{ServiceType, SystemService};
+    use clawft_types::config::ClusterNetworkConfig;
+
+    /// Native coordinator cluster service.
+    ///
+    /// Wraps ruvector's [`ClusterManager`] and syncs discovered nodes
+    /// into the kernel's universal [`ClusterMembership`] tracker.
+    pub struct ClusterService {
+        manager: ClusterManager,
+        membership: Arc<ClusterMembership>,
+        config: ClusterNetworkConfig,
+    }
+
+    impl ClusterService {
+        /// Create a new cluster service.
+        ///
+        /// `membership` is the kernel's universal peer tracker that
+        /// all platforms share. The ClusterService syncs ruvector
+        /// native node state into it.
+        pub fn new(
+            config: ClusterNetworkConfig,
+            node_id: String,
+            discovery: Box<dyn DiscoveryService>,
+            membership: Arc<ClusterMembership>,
+        ) -> Result<Self, ruvector_cluster::ClusterError> {
+            let ruvector_config = RuvectorClusterConfig {
+                replication_factor: config.replication_factor,
+                shard_count: config.shard_count,
+                heartbeat_interval: Duration::from_secs(config.heartbeat_interval_secs),
+                node_timeout: Duration::from_secs(config.node_timeout_secs),
+                enable_consensus: config.enable_consensus,
+                min_quorum_size: config.min_quorum_size,
+            };
+
+            let manager = ClusterManager::new(ruvector_config, node_id, discovery)?;
+
+            Ok(Self {
+                manager,
+                membership,
+                config,
+            })
+        }
+
+        /// Create with default config and static (empty) discovery.
+        pub fn with_defaults(
+            node_id: String,
+            membership: Arc<ClusterMembership>,
+        ) -> Result<Self, ruvector_cluster::ClusterError> {
+            let config = ClusterNetworkConfig::default();
+            let discovery = Box::new(StaticDiscovery::new(vec![]));
+            Self::new(config, node_id, discovery, membership)
+        }
+
+        /// Sync ruvector's native node list into the kernel's
+        /// [`ClusterMembership`] tracker.
+        ///
+        /// Converts ruvector [`ClusterNode`] entries into kernel
+        /// [`PeerNode`] entries, mapping `SocketAddr` → `String`
+        /// and `NodeStatus` → `NodeState`.
+        pub fn sync_to_membership(&self) {
+            let nodes = self.manager.list_nodes();
+            for node in &nodes {
+                let peer = Self::cluster_node_to_peer(node);
+                if self.membership.get_peer(&peer.id).is_some() {
+                    // Update existing peer's state
+                    let new_state = Self::map_status(node.status);
+                    let _ = self.membership.update_state(&peer.id, new_state);
+                    let _ = self.membership.heartbeat(&peer.id);
+                } else {
+                    // Add new peer
+                    if let Err(e) = self.membership.add_peer(peer) {
+                        debug!(error = %e, "failed to sync node to membership");
+                    }
+                }
+            }
+        }
+
+        /// Get the cluster network configuration.
+        pub fn config(&self) -> &ClusterNetworkConfig {
+            &self.config
+        }
+
+        /// Get the underlying cluster manager (for advanced operations).
+        pub fn manager(&self) -> &ClusterManager {
+            &self.manager
+        }
+
+        /// Get cluster statistics.
+        pub fn stats(&self) -> ruvector_cluster::ClusterStats {
+            self.manager.get_stats()
+        }
+
+        /// List all shards.
+        pub fn list_shards(&self) -> Vec<ShardInfo> {
+            self.manager.list_shards()
+        }
+
+        /// List all ruvector nodes.
+        pub fn list_nodes(&self) -> Vec<ClusterNode> {
+            self.manager.list_nodes()
+        }
+
+        /// Convert a ruvector `NodeStatus` to a kernel `NodeState`.
+        fn map_status(status: NodeStatus) -> NodeState {
+            match status {
+                NodeStatus::Leader | NodeStatus::Follower | NodeStatus::Candidate => {
+                    NodeState::Active
+                }
+                NodeStatus::Offline => NodeState::Unreachable,
+            }
+        }
+
+        /// Convert a ruvector `ClusterNode` to a kernel `PeerNode`.
+        fn cluster_node_to_peer(node: &ClusterNode) -> PeerNode {
+            PeerNode {
+                id: node.node_id.clone(),
+                name: node
+                    .metadata
+                    .get("name")
+                    .cloned()
+                    .unwrap_or_else(|| node.node_id.clone()),
+                platform: NodePlatform::CloudNative,
+                state: Self::map_status(node.status),
+                address: Some(node.address.to_string()),
+                first_seen: node.last_seen, // best approximation
+                last_heartbeat: node.last_seen,
+                capabilities: Vec::new(),
+                labels: node.metadata.clone(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SystemService for ClusterService {
+        fn name(&self) -> &str {
+            "cluster"
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Core
+        }
+
+        async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            info!("starting cluster service");
+            self.manager
+                .start()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+            self.sync_to_membership();
+            info!(
+                nodes = self.manager.list_nodes().len(),
+                shards = self.manager.list_shards().len(),
+                "cluster service started"
+            );
+            Ok(())
+        }
+
+        async fn stop(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            info!("stopping cluster service");
+            // Mark self as leaving in membership
+            let local_id = self.membership.local_node_id().to_owned();
+            let _ = self.membership.update_state(&local_id, NodeState::Left);
+            Ok(())
+        }
+
+        async fn health_check(&self) -> HealthStatus {
+            let stats = self.manager.get_stats();
+            if stats.healthy_nodes > 0 {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Degraded("no healthy cluster nodes".into())
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cluster")]
+pub use cluster_service::ClusterService;
+
 #[cfg(test)]
 mod tests {
     use super::*;

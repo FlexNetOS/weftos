@@ -38,9 +38,28 @@
 
 **Rationale**: The project requires clippy-clean builds. Fixing pre-existing issues is necessary for the gate to pass.
 
+### 7. Two-layer cluster architecture
+**Problem**: WeftOS must connect all ephemeral instances — native, browser, edge, IoT — but ruvector's distributed crates use `std::net::SocketAddr` which doesn't compile to WASM.
+
+**Decision**: Two-layer architecture. `ClusterMembership` is a universal peer tracker that compiles on all platforms (uses `Option<String>` addresses and `NodePlatform` enum). `ClusterService` (ruvector-powered, native-only) wraps `ruvector_cluster::ClusterManager` behind `#[cfg(feature = "cluster")]` and syncs state into `ClusterMembership`. Browser/edge nodes join via WebSocket to a coordinator and get full cluster visibility.
+
+**Rationale**: Keeps the universal layer WASM-compatible while still leveraging ruvector's tested coordination primitives (consistent hashing, discovery, shard routing) on native coordinator nodes.
+
+### 8. Ruvector-core feature-gating
+**Problem**: All 3 ruvector distributed crates (`ruvector-cluster`, `ruvector-raft`, `ruvector-replication`) list `ruvector-core` as a dependency, but none of them import from it. `ruvector-core` pulls in heavy deps (hnsw, quantization) that bloat the build and are not needed for coordination primitives.
+
+**Decision**: Feature-gate `ruvector-core` as optional behind a `vector-store` feature in all 3 crates. Pushed to `weave-logic-ai/ruvector` fork.
+
+**Rationale**: Allows using the coordination primitives (cluster, consensus, replication) without pulling in the entire vector store stack. When vector operations are needed, enable `vector-store`.
+
+### 9. ClusterMembership always present
+**Decision**: `ClusterMembership` is a field on `Kernel<P>` and is always created during boot, even without the `cluster` feature. It tracks the local node at minimum.
+
+**Rationale**: All kernel subsystems and CLI commands can query cluster state uniformly. Without `cluster` feature, the membership contains only the local node. With `cluster`, the `ClusterService` syncs discovered native nodes into it. Browser nodes that join via WS also get registered here.
+
 ## What Was Skipped
 
-1. **Ruvector integration** -- feature-gated with TODO comments in boot.rs
+1. ~~**Ruvector integration**~~ -- **Done**: `ClusterMembership` (universal) + `ClusterService` (native, feature-gated) integrated. `weaver cluster` CLI added. See decisions 7-9 above.
 2. **Exo-resource-tree** -- feature-gated with TODO comments in boot.rs
 3. **Interactive console REPL** -- only event types and formatting implemented
 4. **CronService wrapper** -- no built-in services registered at boot (ServiceRegistry starts empty)

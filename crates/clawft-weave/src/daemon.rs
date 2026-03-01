@@ -17,10 +17,73 @@ use clawft_platform::NativePlatform;
 use clawft_types::config::{Config, KernelConfig};
 
 use crate::protocol::{
-    self, KernelStatusResult, LogEntry, LogsParams, ProcessInfo, Request, Response, ServiceInfo,
+    self, ClusterJoinParams, ClusterLeaveParams, ClusterNodeInfo, ClusterStatusResult,
+    KernelStatusResult, LogEntry, LogsParams, ProcessInfo, Request, Response, ServiceInfo,
 };
 
-/// Run the kernel daemon.
+/// Fork the daemon into the background.
+///
+/// Spawns `weaver kernel start --foreground` as a detached child process,
+/// redirecting stdout/stderr to the kernel log file. Writes the child PID
+/// to the PID file. The parent process exits immediately after confirming
+/// the daemon started.
+pub fn daemonize(config_override: Option<&str>) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    let runtime_dir = protocol::runtime_dir();
+    std::fs::create_dir_all(&runtime_dir)?;
+
+    let log_path = protocol::log_path();
+    let pid_path = protocol::pid_path();
+
+    // Check if already running
+    if pid_path.exists()
+        && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
+    {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            // Check if process is alive
+            let check = Command::new("kill").args(["-0", &pid.to_string()]).output();
+            if check.map(|o| o.status.success()).unwrap_or(false) {
+                anyhow::bail!("kernel already running (pid {pid})");
+            }
+        }
+        // Stale PID file
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_err = log_file.try_clone()?;
+
+    let mut cmd = Command::new(std::env::current_exe()?);
+    cmd.args(["kernel", "start", "--foreground"]);
+    if let Some(cfg) = config_override {
+        cmd.args(["--config", cfg]);
+    }
+
+    let child = cmd
+        .stdout(log_file)
+        .stderr(log_err)
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+
+    let pid = child.id();
+    std::fs::write(&pid_path, pid.to_string())?;
+
+    println!("WeftOS kernel started (pid {pid})");
+    println!("  Socket: {}", protocol::socket_path().display());
+    println!("  Log:    {}", log_path.display());
+    println!("  PID:    {}", pid_path.display());
+    println!();
+    println!("Use 'weaver kernel status' to check, 'weaver kernel attach' to view logs.");
+    println!("Use 'weaver kernel stop' to shut down.");
+
+    Ok(())
+}
+
+/// Run the kernel daemon in the foreground.
 ///
 /// Boots the kernel, binds to a Unix socket, and serves requests
 /// until shutdown is requested (via `kernel.shutdown` RPC or signal).
@@ -133,9 +196,13 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
         }
     }
 
-    // Clean up socket
+    // Clean up socket and PID file
     if socket_path.exists() {
         let _ = std::fs::remove_file(&socket_path);
+    }
+    let pid_path = protocol::pid_path();
+    if pid_path.exists() {
+        let _ = std::fs::remove_file(&pid_path);
     }
 
     println!("Daemon stopped.");
@@ -287,6 +354,110 @@ async fn dispatch(
             let _ = shutdown_tx.send(true);
             Response::success(serde_json::json!("shutting down"))
         }
+        "cluster.status" => {
+            let k = kernel.read().await;
+            let membership = k.cluster_membership();
+            let active = membership.count_by_state(&clawft_kernel::NodeState::Active);
+            let total = membership.len();
+
+            let result = ClusterStatusResult {
+                total_nodes: total,
+                healthy_nodes: active,
+                total_shards: 0,
+                active_shards: 0,
+                consensus_enabled: false,
+            };
+            Response::success(serde_json::to_value(result).unwrap())
+        }
+        "cluster.nodes" => {
+            let k = kernel.read().await;
+            let membership = k.cluster_membership();
+            let peers = membership.list_peers();
+            let nodes: Vec<ClusterNodeInfo> = peers
+                .iter()
+                .map(|(id, state, platform)| {
+                    let peer = membership.get_peer(id);
+                    ClusterNodeInfo {
+                        node_id: id.clone(),
+                        name: peer
+                            .as_ref()
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| id.clone()),
+                        platform: platform.to_string(),
+                        state: state.to_string(),
+                        address: peer.and_then(|p| p.address),
+                        last_seen: String::new(),
+                    }
+                })
+                .collect();
+            Response::success(serde_json::to_value(nodes).unwrap())
+        }
+        "cluster.join" => {
+            let join_params: ClusterJoinParams =
+                match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+
+            let k = kernel.read().await;
+            let membership = k.cluster_membership();
+            let node_id = uuid::Uuid::new_v4().to_string();
+            let platform = match join_params.platform.as_str() {
+                "browser" => clawft_kernel::NodePlatform::Browser,
+                "edge" => clawft_kernel::NodePlatform::Edge,
+                "wasi" => clawft_kernel::NodePlatform::Wasi,
+                _ => clawft_kernel::NodePlatform::CloudNative,
+            };
+            let peer = clawft_kernel::PeerNode {
+                id: node_id.clone(),
+                name: join_params.name.unwrap_or_else(|| node_id.clone()),
+                platform,
+                state: clawft_kernel::NodeState::Active,
+                address: join_params.address,
+                first_seen: chrono::Utc::now(),
+                last_heartbeat: chrono::Utc::now(),
+                capabilities: Vec::new(),
+                labels: std::collections::HashMap::new(),
+            };
+            match membership.add_peer(peer) {
+                Ok(()) => Response::success(serde_json::json!({ "node_id": node_id })),
+                Err(e) => Response::error(format!("join failed: {e}")),
+            }
+        }
+        "cluster.leave" => {
+            let leave_params: ClusterLeaveParams =
+                match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+
+            let k = kernel.read().await;
+            let membership = k.cluster_membership();
+            match membership.remove_peer(&leave_params.node_id) {
+                Ok(_) => Response::success(serde_json::json!("ok")),
+                Err(e) => Response::error(format!("leave failed: {e}")),
+            }
+        }
+        "cluster.health" => {
+            let k = kernel.read().await;
+            let membership = k.cluster_membership();
+            let peers = membership.list_peers();
+            let health: Vec<serde_json::Value> = peers
+                .iter()
+                .map(|(id, state, _)| {
+                    serde_json::json!({
+                        "node_id": id,
+                        "healthy": matches!(state, clawft_kernel::NodeState::Active),
+                        "state": state.to_string(),
+                    })
+                })
+                .collect();
+            Response::success(serde_json::to_value(health).unwrap())
+        }
+        "cluster.shards" => {
+            // Shards are only available with the cluster feature
+            Response::success(serde_json::json!([]))
+        }
         "ping" => Response::success(serde_json::json!("pong")),
         other => Response::error(format!("unknown method: {other}")),
     }
@@ -294,8 +465,6 @@ async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn socket_path_resolves() {
         let path = crate::protocol::socket_path();

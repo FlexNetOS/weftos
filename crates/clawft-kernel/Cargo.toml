@@ -19,6 +19,13 @@ native = [
     "clawft-platform/native",
     "clawft-types/native",
 ]
+cluster = [
+    "dep:ruvector-cluster",
+    "dep:ruvector-raft",
+    "dep:ruvector-replication",
+    "dep:parking_lot",
+    "dep:futures",
+]
 wasm-sandbox = []
 containers = []
 
@@ -30,6 +37,11 @@ clawft-plugin = { workspace = true, default-features = false }
 dashmap = { workspace = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
+ruvector-cluster = { workspace = true, optional = true }
+ruvector-raft = { workspace = true, optional = true }
+ruvector-replication = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

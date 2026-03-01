@@ -40,6 +40,9 @@ enum Commands {
     /// Kernel management (boot, status, services, processes).
     Kernel(commands::kernel_cmd::KernelArgs),
 
+    /// Cluster management (nodes, shards, health).
+    Cluster(commands::cluster_cmd::ClusterArgs),
+
     /// Show version and build info.
     Version,
 }
@@ -58,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Kernel(args) => commands::kernel_cmd::run(args).await?,
+        Commands::Cluster(args) => commands::cluster_cmd::run(args).await?,
         Commands::Version => {
             println!("weaver {} (WeftOS)", env!("CARGO_PKG_VERSION"));
         }

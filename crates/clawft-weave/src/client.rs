@@ -47,6 +47,7 @@ impl DaemonClient {
 }
 
 /// Check if a daemon is running (socket exists and accepts connections).
+#[allow(dead_code)]
 pub async fn is_daemon_running() -> bool {
     DaemonClient::connect().await.is_some()
 }

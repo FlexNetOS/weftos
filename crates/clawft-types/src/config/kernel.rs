@@ -16,6 +16,83 @@ fn default_health_check_interval_secs() -> u64 {
     30
 }
 
+/// Cluster networking configuration for distributed WeftOS nodes.
+///
+/// Controls the ruvector-powered clustering layer that coordinates
+/// native nodes. Browser/edge nodes join via WebSocket to a
+/// coordinator and do not need this configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterNetworkConfig {
+    /// Number of replica copies for each shard (default: 3).
+    #[serde(default = "default_replication_factor", alias = "replicationFactor")]
+    pub replication_factor: usize,
+
+    /// Total number of shards in the cluster (default: 64).
+    #[serde(default = "default_shard_count", alias = "shardCount")]
+    pub shard_count: u32,
+
+    /// Interval between heartbeat checks in seconds (default: 5).
+    #[serde(
+        default = "default_cluster_heartbeat",
+        alias = "heartbeatIntervalSecs"
+    )]
+    pub heartbeat_interval_secs: u64,
+
+    /// Timeout before marking a node offline in seconds (default: 30).
+    #[serde(default = "default_node_timeout", alias = "nodeTimeoutSecs")]
+    pub node_timeout_secs: u64,
+
+    /// Whether to enable DAG-based consensus (default: true).
+    #[serde(default = "default_enable_consensus", alias = "enableConsensus")]
+    pub enable_consensus: bool,
+
+    /// Minimum nodes required for quorum (default: 2).
+    #[serde(default = "default_min_quorum", alias = "minQuorumSize")]
+    pub min_quorum_size: usize,
+
+    /// Seed node addresses for discovery (coordinator addresses).
+    #[serde(default, alias = "seedNodes")]
+    pub seed_nodes: Vec<String>,
+
+    /// Human-readable display name for this node.
+    #[serde(default, alias = "nodeName")]
+    pub node_name: Option<String>,
+}
+
+fn default_replication_factor() -> usize {
+    3
+}
+fn default_shard_count() -> u32 {
+    64
+}
+fn default_cluster_heartbeat() -> u64 {
+    5
+}
+fn default_node_timeout() -> u64 {
+    30
+}
+fn default_enable_consensus() -> bool {
+    true
+}
+fn default_min_quorum() -> usize {
+    2
+}
+
+impl Default for ClusterNetworkConfig {
+    fn default() -> Self {
+        Self {
+            replication_factor: default_replication_factor(),
+            shard_count: default_shard_count(),
+            heartbeat_interval_secs: default_cluster_heartbeat(),
+            node_timeout_secs: default_node_timeout(),
+            enable_consensus: default_enable_consensus(),
+            min_quorum_size: default_min_quorum(),
+            seed_nodes: Vec::new(),
+            node_name: None,
+        }
+    }
+}
+
 /// Kernel subsystem configuration.
 ///
 /// Embedded in the root `Config` under the `kernel` key. All fields
@@ -52,6 +129,10 @@ pub struct KernelConfig {
         alias = "healthCheckIntervalSecs"
     )]
     pub health_check_interval_secs: u64,
+
+    /// Cluster networking configuration (native coordinator nodes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterNetworkConfig>,
 }
 
 impl Default for KernelConfig {
@@ -60,6 +141,7 @@ impl Default for KernelConfig {
             enabled: false,
             max_processes: default_max_processes(),
             health_check_interval_secs: default_health_check_interval_secs(),
+            cluster: None,
         }
     }
 }
@@ -97,6 +179,7 @@ mod tests {
             enabled: true,
             max_processes: 256,
             health_check_interval_secs: 10,
+            cluster: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: KernelConfig = serde_json::from_str(&json).unwrap();

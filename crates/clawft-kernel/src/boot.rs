@@ -16,6 +16,7 @@ use clawft_platform::Platform;
 use clawft_types::config::Config;
 
 use crate::capability::AgentCapabilities;
+use crate::cluster::{ClusterConfig, ClusterMembership};
 use crate::console::{BootEvent, BootLog, BootPhase, KernelEventLog};
 use crate::error::{KernelError, KernelResult};
 use crate::health::HealthSystem;
@@ -73,6 +74,7 @@ pub struct Kernel<P: Platform> {
     boot_log: BootLog,
     event_log: Arc<KernelEventLog>,
     boot_time: Instant,
+    cluster_membership: Arc<ClusterMembership>,
 }
 
 impl<P: Platform> Kernel<P> {
@@ -148,14 +150,85 @@ impl<P: Platform> Kernel<P> {
             "Service registry ready",
         ));
 
-        // 6. Start services (none registered by default at boot)
+        // 6. Create cluster membership (universal, always present)
+        let cluster_config = ClusterConfig {
+            node_id: uuid::Uuid::new_v4().to_string(),
+            node_name: kernel_config
+                .cluster
+                .as_ref()
+                .and_then(|c| c.node_name.clone())
+                .unwrap_or_else(|| "local".into()),
+            heartbeat_interval_secs: kernel_config
+                .cluster
+                .as_ref()
+                .map(|c| c.heartbeat_interval_secs)
+                .unwrap_or(5),
+            ..ClusterConfig::default()
+        };
+        let cluster_membership = Arc::new(ClusterMembership::new(cluster_config));
+
+        boot_log.push(BootEvent::info(
+            BootPhase::Network,
+            format!(
+                "Cluster membership ready (node {})",
+                cluster_membership.local_node_id()
+            ),
+        ));
+
+        // 7. Register cluster service (when feature-gated ruvector integration is enabled)
+        #[cfg(feature = "cluster")]
+        {
+            use crate::cluster::ClusterService;
+            use ruvector_cluster::StaticDiscovery;
+
+            let net_config = kernel_config
+                .cluster
+                .clone()
+                .unwrap_or_default();
+            let seed_addrs: Vec<std::net::SocketAddr> = net_config
+                .seed_nodes
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            let seed_nodes: Vec<ruvector_cluster::ClusterNode> = seed_addrs
+                .into_iter()
+                .map(|addr| ruvector_cluster::ClusterNode::new(addr.to_string(), addr))
+                .collect();
+            let discovery = Box::new(StaticDiscovery::new(seed_nodes));
+            let node_id = cluster_membership.local_node_id().to_owned();
+
+            match ClusterService::new(
+                net_config,
+                node_id,
+                discovery,
+                Arc::clone(&cluster_membership),
+            ) {
+                Ok(cluster_svc) => {
+                    let svc = Arc::new(cluster_svc);
+                    if let Err(e) = service_registry.register(svc) {
+                        error!(error = %e, "failed to register cluster service");
+                    } else {
+                        boot_log.push(BootEvent::info(
+                            BootPhase::Network,
+                            "Cluster service registered (ruvector)",
+                        ));
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to create cluster service");
+                    boot_log.push(BootEvent::info(
+                        BootPhase::Network,
+                        format!("Cluster service failed: {e}"),
+                    ));
+                }
+            }
+        }
+
+        // 8. Start services (none registered by default at boot, unless cluster feature added one)
         service_registry
             .start_all()
             .await
             .map_err(|e| KernelError::Boot(format!("service start failed: {e}")))?;
-
-        // TODO: ruvector integration -- when ruvector-cluster feature is enabled,
-        // use ClusterManager for service registry and health checking.
 
         // TODO: exo-resource-tree -- when exo-dag feature is enabled,
         // load resource tree from checkpoint during boot.
@@ -178,14 +251,14 @@ impl<P: Platform> Kernel<P> {
             "kernel boot complete"
         );
 
-        // 7. Create agent supervisor
+        // 9. Create agent supervisor
         let supervisor = AgentSupervisor::new(
             process_table.clone(),
             ipc.clone(),
             AgentCapabilities::default(),
         );
 
-        // 8. Seed the event ring buffer with boot events
+        // 10. Seed the event ring buffer with boot events
         let event_log = Arc::new(KernelEventLog::new());
         event_log.ingest_boot_log(&boot_log);
 
@@ -202,6 +275,7 @@ impl<P: Platform> Kernel<P> {
             boot_log,
             event_log,
             boot_time,
+            cluster_membership,
         })
     }
 
@@ -298,6 +372,11 @@ impl<P: Platform> Kernel<P> {
         self.boot_time.elapsed()
     }
 
+    /// Get the cluster membership tracker.
+    pub fn cluster_membership(&self) -> &Arc<ClusterMembership> {
+        &self.cluster_membership
+    }
+
     /// Take ownership of the AppContext for agent loop consumption.
     ///
     /// This is a one-shot operation: after calling this, the kernel
@@ -335,6 +414,7 @@ mod tests {
             enabled: true,
             max_processes: 16,
             health_check_interval_secs: 5,
+            cluster: None,
         }
     }
 

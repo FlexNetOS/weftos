@@ -42,6 +42,7 @@ mod tests {
             enabled: true,
             max_processes: 128,
             health_check_interval_secs: 10,
+            cluster: None,
         };
         let ext = KernelConfigExt::from(base.clone());
         assert_eq!(ext.base.enabled, true);
