@@ -99,9 +99,6 @@ enum Commands {
     /// Security scanning, auditing, and hardening.
     Security(commands::security_cmd::SecurityArgs),
 
-    /// WeftOS kernel management (status, services, ps, boot).
-    Kernel(commands::kernel_cmd::KernelArgs),
-
     /// Start the web dashboard (gateway + API + browser).
     #[cfg(feature = "api")]
     Ui(commands::ui_cmd::UiArgs),
@@ -459,7 +456,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Workspace(args) => commands::workspace_cmd::run(args)?,
         Commands::Onboard(args) => commands::onboard::run(args).await?,
         Commands::Security(args) => commands::security_cmd::run(args)?,
-        Commands::Kernel(args) => commands::kernel_cmd::run(args).await?,
         #[cfg(feature = "api")]
         Commands::Ui(args) => commands::ui_cmd::run(args).await?,
         #[cfg(feature = "voice")]
@@ -517,7 +513,8 @@ mod tests {
         assert!(sub_names.contains(&"workspace"));
         assert!(sub_names.contains(&"onboard"));
         assert!(sub_names.contains(&"ui"));
-        assert!(sub_names.contains(&"kernel"));
+        // kernel commands moved to `weave` binary (clawft-weave crate)
+        assert!(!sub_names.contains(&"kernel"));
         assert!(sub_names.contains(&"help"));
         assert!(sub_names.contains(&"completions"));
     }

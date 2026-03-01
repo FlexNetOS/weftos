@@ -20,6 +20,7 @@ members = [
     "crates/clawft-plugin-containers",
     "crates/clawft-security",
     "crates/clawft-kernel",
+    "crates/clawft-weave",
 ]
 
 [workspace.package]

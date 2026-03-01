@@ -1,0 +1,31 @@
+[package]
+name = "clawft-weave"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WeftOS operator CLI (weave) — kernel management, services, and agent orchestration"
+keywords = ["cli", "kernel", "os", "agent", "operator"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "weave"
+path = "src/main.rs"
+
+[features]
+default = []
+
+[dependencies]
+clawft-kernel = { workspace = true }
+clawft-platform = { workspace = true }
+clawft-types = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+comfy-table = { workspace = true }
+dirs = { workspace = true }

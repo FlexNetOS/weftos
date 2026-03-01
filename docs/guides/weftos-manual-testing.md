@@ -15,19 +15,19 @@ each item as you go. Every checklist item links to its corresponding section.
 
 ### Prerequisites (Section 1)
 
-- [ ] **P.1** Rust toolchain installed (1.75+) — [Section 1.1](#11-required-tools)
-- [ ] **P.2** Build script present and executable — [Section 1.1](#11-required-tools)
-- [ ] **P.3** Native debug build succeeds — [Section 1.2](#12-build-the-kernel-crate)
-- [ ] **P.4** All-features build succeeds — [Section 1.2](#12-build-the-kernel-crate)
-- [ ] **P.5** Test suite runs (259 tests, 0 failures) — [Section 1.3](#13-verify-test-suite-runs)
+- [x] **P.1** Rust toolchain installed (1.75+) — [Section 1.1](#11-required-tools)
+- [x] **P.2** Build script present and executable — [Section 1.1](#11-required-tools)
+- [x] **P.3** Native debug build succeeds — [Section 1.2](#12-build-the-kernel-crate)
+- [x] **P.4** All-features build succeeds — [Section 1.2](#12-build-the-kernel-crate)
+- [x] **P.5** Test suite runs (259 tests, 0 failures) — [Section 1.3](#13-verify-test-suite-runs)
 
 ### Automated Test Validation (Section 2)
 
-- [ ] **A.1** Full workspace tests pass (`scripts/build.sh test`) — [Section 2.1](#21-full-test-suite)
-- [ ] **A.2** Kernel-only tests pass (`cargo test -p clawft-kernel`) — [Section 2.1](#21-full-test-suite)
-- [ ] **A.3** Per-module test filters work (boot, process, service) — [Section 2.1](#21-full-test-suite)
-- [ ] **A.4** Test count matches expected (259) — [Section 2.2](#22-coverage-check)
-- [ ] **A.5** Test execution under 1 second — [Section 2.3](#23-performance-benchmarking)
+- [x] **A.1** Full workspace tests pass (`scripts/build.sh test`) — [Section 2.1](#21-full-test-suite)
+- [x] **A.2** Kernel-only tests pass (`cargo test -p clawft-kernel`) — [Section 2.1](#21-full-test-suite)
+- [x] **A.3** Per-module test filters work (boot, process, service) — [Section 2.1](#21-full-test-suite)
+- [x] **A.4** Test count matches expected (259) — [Section 2.2](#22-coverage-check)
+- [x] **A.5** Test execution under 1 second — [Section 2.3](#23-performance-benchmarking)
 
 ### K0: Foundation — 9 Modules (Section 3.1)
 

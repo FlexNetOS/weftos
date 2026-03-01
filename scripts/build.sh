@@ -111,7 +111,7 @@ cmd_native() {
     header "Building native CLI binary (profile: $profile)"
     force_clean_pkg clawft-cli
     timer_start
-    local args=(cargo build --bin weft)
+    local args=(cargo build --bin weft --bin weave)
     if [ "$profile" = "release" ] || [ "$profile" = "release-wasm" ]; then
         args+=(--profile "$profile")
     fi
@@ -119,11 +119,14 @@ cmd_native() {
     run_cmd "${args[@]}"
     timer_end
     if [ "$profile" = "release" ]; then
-        report_binary_size "target/release/weft" "Native binary"
+        report_binary_size "target/release/weft" "Native binary (weft)"
+        report_binary_size "target/release/weave" "Native binary (weave)"
     elif [ "$profile" = "release-wasm" ]; then
-        report_binary_size "target/release-wasm/weft" "Native binary"
+        report_binary_size "target/release-wasm/weft" "Native binary (weft)"
+        report_binary_size "target/release-wasm/weave" "Native binary (weave)"
     else
-        report_binary_size "target/debug/weft" "Native binary"
+        report_binary_size "target/debug/weft" "Native binary (weft)"
+        report_binary_size "target/debug/weave" "Native binary (weave)"
     fi
 }
 
@@ -131,11 +134,12 @@ cmd_native_debug() {
     header "Building native CLI binary (debug)"
     force_clean_pkg clawft-cli
     timer_start
-    local args=(cargo build --bin weft)
+    local args=(cargo build --bin weft --bin weave)
     [ -n "$FEATURES" ] && args+=(--features "$FEATURES")
     run_cmd "${args[@]}"
     timer_end
-    report_binary_size "target/debug/weft" "Native binary (debug)"
+    report_binary_size "target/debug/weft" "Native binary (weft, debug)"
+    report_binary_size "target/debug/weave" "Native binary (weave, debug)"
 }
 
 cmd_wasi() {
@@ -363,9 +367,9 @@ cmd_gate() {
     run_gate_check 1 "cargo test --workspace" \
         cargo test --workspace
 
-    # 2. Release binary
-    run_gate_check 2 "cargo build --release --bin weft" \
-        cargo build --release --bin weft
+    # 2. Release binaries (weft + weave)
+    run_gate_check 2 "cargo build --release --bin weft --bin weave" \
+        cargo build --release --bin weft --bin weave
 
     # 3. WASI WASM
     if check_target_installed wasm32-wasip1; then

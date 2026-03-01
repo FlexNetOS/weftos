@@ -478,7 +478,6 @@ dependencies = [
  "clap",
  "clawft-channels",
  "clawft-core",
- "clawft-kernel",
  "clawft-llm",
  "clawft-platform",
  "clawft-plugin",
@@ -821,6 +820,23 @@ dependencies = [
  "wasmtime",
  "wat",
  "web-sys",
+]
+
+[[package]]
+name = "clawft-weave"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clawft-kernel",
+ "clawft-platform",
+ "clawft-types",
+ "comfy-table",
+ "dirs",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
