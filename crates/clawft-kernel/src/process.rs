@@ -191,11 +191,7 @@ impl ProcessTable {
     }
 
     /// Update resource usage for a process.
-    pub fn update_resources(
-        &self,
-        pid: Pid,
-        usage: ResourceUsage,
-    ) -> Result<(), KernelError> {
+    pub fn update_resources(&self, pid: Pid, usage: ResourceUsage) -> Result<(), KernelError> {
         let mut entry = self
             .entries
             .get_mut(&pid)
@@ -239,10 +235,7 @@ impl ProcessTable {
 
     /// Count processes in the given state.
     pub fn count_by_state(&self, state: &ProcessState) -> usize {
-        self.entries
-            .iter()
-            .filter(|e| &e.state == state)
-            .count()
+        self.entries.iter().filter(|e| &e.state == state).count()
     }
 }
 
@@ -326,9 +319,7 @@ mod tests {
         assert_eq!(table.get(pid).unwrap().state, ProcessState::Stopping);
 
         // Stopping -> Exited
-        table
-            .update_state(pid, ProcessState::Exited(0))
-            .unwrap();
+        table.update_state(pid, ProcessState::Exited(0)).unwrap();
         assert_eq!(table.get(pid).unwrap().state, ProcessState::Exited(0));
     }
 

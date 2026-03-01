@@ -242,14 +242,10 @@ impl ClusterMembership {
     /// Register a peer node.
     pub fn add_peer(&self, peer: PeerNode) -> Result<(), ClusterError> {
         if self.peers.contains_key(&peer.id) {
-            return Err(ClusterError::NodeAlreadyExists {
-                node_id: peer.id,
-            });
+            return Err(ClusterError::NodeAlreadyExists { node_id: peer.id });
         }
 
-        if self.config.max_nodes > 0
-            && self.peers.len() as u32 >= self.config.max_nodes
-        {
+        if self.config.max_nodes > 0 && self.peers.len() as u32 >= self.config.max_nodes {
             return Err(ClusterError::ClusterFull {
                 max: self.config.max_nodes,
             });
@@ -271,11 +267,7 @@ impl ClusterMembership {
     }
 
     /// Update a peer's state.
-    pub fn update_state(
-        &self,
-        node_id: &str,
-        new_state: NodeState,
-    ) -> Result<(), ClusterError> {
+    pub fn update_state(&self, node_id: &str, new_state: NodeState) -> Result<(), ClusterError> {
         let mut entry = self
             .peers
             .get_mut(node_id)
@@ -455,9 +447,7 @@ mod tests {
     fn update_state() {
         let cluster = ClusterMembership::new(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
-        cluster
-            .update_state("node-1", NodeState::Suspect)
-            .unwrap();
+        cluster.update_state("node-1", NodeState::Suspect).unwrap();
         let peer = cluster.get_peer("node-1").unwrap();
         assert_eq!(peer.state, NodeState::Suspect);
     }
@@ -466,9 +456,7 @@ mod tests {
     fn heartbeat_clears_suspect() {
         let cluster = ClusterMembership::new(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
-        cluster
-            .update_state("node-1", NodeState::Suspect)
-            .unwrap();
+        cluster.update_state("node-1", NodeState::Suspect).unwrap();
         cluster.heartbeat("node-1").unwrap();
         let peer = cluster.get_peer("node-1").unwrap();
         assert_eq!(peer.state, NodeState::Active);
@@ -479,9 +467,7 @@ mod tests {
         let cluster = ClusterMembership::new(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.add_peer(make_peer("node-2", "beta")).unwrap();
-        cluster
-            .update_state("node-2", NodeState::Suspect)
-            .unwrap();
+        cluster.update_state("node-2", NodeState::Suspect).unwrap();
         assert_eq!(cluster.count_by_state(&NodeState::Active), 1);
         assert_eq!(cluster.count_by_state(&NodeState::Suspect), 1);
     }
@@ -491,9 +477,7 @@ mod tests {
         let cluster = ClusterMembership::new(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.add_peer(make_peer("node-2", "beta")).unwrap();
-        cluster
-            .update_state("node-2", NodeState::Leaving)
-            .unwrap();
+        cluster.update_state("node-2", NodeState::Leaving).unwrap();
         let active = cluster.active_peers();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0], "node-1");

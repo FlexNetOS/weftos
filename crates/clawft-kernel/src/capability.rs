@@ -75,7 +75,6 @@ pub enum IpcScope {
     None,
 }
 
-
 /// Capabilities assigned to an agent process.
 ///
 /// Governs what the agent is allowed to do within the kernel.
@@ -266,9 +265,7 @@ impl CapabilityChecker {
             }
 
             // Check allow list (empty = all allowed)
-            if !perms.allow.is_empty()
-                && !perms.allow.iter().any(|a| a == tool_name)
-            {
+            if !perms.allow.is_empty() && !perms.allow.iter().any(|a| a == tool_name) {
                 return Err(KernelError::CapabilityDenied {
                     pid,
                     action: format!("execute tool '{tool_name}'"),
@@ -622,7 +619,11 @@ mod tests {
     #[test]
     fn checker_tool_access_allowed_by_default() {
         let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
-        assert!(checker.check_tool_access(pid, "read_file", None, None).is_ok());
+        assert!(
+            checker
+                .check_tool_access(pid, "read_file", None, None)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -666,8 +667,16 @@ mod tests {
             allow: vec!["read_file".into(), "write_file".into()],
             ..Default::default()
         };
-        assert!(checker.check_tool_access(pid, "read_file", Some(&perms), None).is_ok());
-        assert!(checker.check_tool_access(pid, "web_search", Some(&perms), None).is_err());
+        assert!(
+            checker
+                .check_tool_access(pid, "read_file", Some(&perms), None)
+                .is_ok()
+        );
+        assert!(
+            checker
+                .check_tool_access(pid, "web_search", Some(&perms), None)
+                .is_err()
+        );
     }
 
     #[test]
@@ -688,7 +697,11 @@ mod tests {
             allow_shell: true,
             ..Default::default()
         };
-        assert!(checker.check_tool_access(pid, "shell_exec", None, Some(&sb)).is_ok());
+        assert!(
+            checker
+                .check_tool_access(pid, "shell_exec", None, Some(&sb))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -747,7 +760,11 @@ mod tests {
         let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
         // Empty service_access = all services allowed
         let perms = ToolPermissions::default();
-        assert!(checker.check_service_access(pid, "memory", Some(&perms)).is_ok());
+        assert!(
+            checker
+                .check_service_access(pid, "memory", Some(&perms))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -757,15 +774,31 @@ mod tests {
             service_access: vec!["memory".into(), "cron".into()],
             ..Default::default()
         };
-        assert!(checker.check_service_access(pid, "memory", Some(&perms)).is_ok());
-        assert!(checker.check_service_access(pid, "cron", Some(&perms)).is_ok());
-        assert!(checker.check_service_access(pid, "network", Some(&perms)).is_err());
+        assert!(
+            checker
+                .check_service_access(pid, "memory", Some(&perms))
+                .is_ok()
+        );
+        assert!(
+            checker
+                .check_service_access(pid, "cron", Some(&perms))
+                .is_ok()
+        );
+        assert!(
+            checker
+                .check_service_access(pid, "network", Some(&perms))
+                .is_err()
+        );
     }
 
     #[test]
     fn checker_resource_limit_memory_ok() {
         let (checker, pid) = make_checker_with_entry(AgentCapabilities::default());
-        assert!(checker.check_resource_limit(pid, &ResourceType::Memory(1024)).is_ok());
+        assert!(
+            checker
+                .check_resource_limit(pid, &ResourceType::Memory(1024))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -814,9 +847,17 @@ mod tests {
     fn checker_nonexistent_pid() {
         let table = Arc::new(ProcessTable::new(16));
         let checker = CapabilityChecker::new(table);
-        assert!(checker.check_tool_access(999, "read_file", None, None).is_err());
+        assert!(
+            checker
+                .check_tool_access(999, "read_file", None, None)
+                .is_err()
+        );
         assert!(checker.check_ipc_target(999, 1).is_err());
-        assert!(checker.check_resource_limit(999, &ResourceType::Memory(0)).is_err());
+        assert!(
+            checker
+                .check_resource_limit(999, &ResourceType::Memory(0))
+                .is_err()
+        );
     }
 
     #[test]

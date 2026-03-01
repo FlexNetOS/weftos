@@ -122,7 +122,7 @@ impl TopicRouter {
 
     /// Get all subscribers for a topic (including potentially dead ones).
     ///
-    /// Use [`live_subscribers`] for a filtered list.
+    /// Use [`TopicRouter::live_subscribers`] for a filtered list.
     pub fn subscribers(&self, topic: &str) -> Vec<Pid> {
         self.subscriptions
             .get(topic)
@@ -319,9 +319,7 @@ mod tests {
             parent_pid: None,
         };
         let pid2 = table.insert(entry2).unwrap();
-        table
-            .update_state(pid2, ProcessState::Exited(0))
-            .unwrap();
+        table.update_state(pid2, ProcessState::Exited(0)).unwrap();
 
         let router = TopicRouter::new(table);
         router.subscribe(pid1, "build");

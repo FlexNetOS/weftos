@@ -166,9 +166,7 @@ impl<P: Platform> AgentSupervisor<P> {
         if graceful {
             info!(pid, "gracefully stopping agent");
             // Transition to Stopping, then cancel the token
-            let _ = self
-                .process_table
-                .update_state(pid, ProcessState::Stopping);
+            let _ = self.process_table.update_state(pid, ProcessState::Stopping);
             entry.cancel_token.cancel();
         } else {
             info!(pid, "force stopping agent");

@@ -260,9 +260,7 @@ impl EnvironmentManager {
     /// Set the active environment.
     pub fn set_active(&self, id: &str) -> Result<(), EnvironmentError> {
         if !self.environments.contains_key(id) {
-            return Err(EnvironmentError::NotFound {
-                id: id.to_owned(),
-            });
+            return Err(EnvironmentError::NotFound { id: id.to_owned() });
         }
         let mut active = self.active.write().unwrap();
         *active = Some(id.to_owned());
@@ -309,9 +307,7 @@ impl EnvironmentManager {
         self.environments
             .remove(id)
             .map(|(_, env)| env)
-            .ok_or_else(|| EnvironmentError::NotFound {
-                id: id.to_owned(),
-            })
+            .ok_or_else(|| EnvironmentError::NotFound { id: id.to_owned() })
     }
 
     /// Count environments.
@@ -560,9 +556,7 @@ mod tests {
 
     #[test]
     fn environment_error_display() {
-        let err = EnvironmentError::NotFound {
-            id: "prod".into(),
-        };
+        let err = EnvironmentError::NotFound { id: "prod".into() };
         assert!(err.to_string().contains("prod"));
 
         let err = EnvironmentError::InvalidRiskThreshold { value: 1.5 };

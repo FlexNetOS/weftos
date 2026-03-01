@@ -137,9 +137,15 @@ impl EffectVector {
 
     /// Get the maximum dimension value.
     pub fn max_dimension(&self) -> f64 {
-        [self.risk, self.fairness, self.privacy, self.novelty, self.security]
-            .into_iter()
-            .fold(0.0_f64, f64::max)
+        [
+            self.risk,
+            self.fairness,
+            self.privacy,
+            self.novelty,
+            self.security,
+        ]
+        .into_iter()
+        .fold(0.0_f64, f64::max)
     }
 }
 
@@ -275,8 +281,10 @@ impl GovernanceEngine {
                 RuleSeverity::Blocking | RuleSeverity::Critical => {
                     if threshold_exceeded {
                         has_blocking = true;
-                        blocking_reason =
-                            format!("rule '{}': effect magnitude {magnitude:.2} > threshold {:.2}", rule.id, self.risk_threshold);
+                        blocking_reason = format!(
+                            "rule '{}': effect magnitude {magnitude:.2} > threshold {:.2}",
+                            rule.id, self.risk_threshold
+                        );
                     }
                 }
                 RuleSeverity::Warning => {
@@ -393,9 +401,11 @@ mod tests {
     #[test]
     fn governance_decision_display() {
         assert_eq!(GovernanceDecision::Permit.to_string(), "permit");
-        assert!(GovernanceDecision::Deny("too risky".into())
-            .to_string()
-            .contains("too risky"));
+        assert!(
+            GovernanceDecision::Deny("too risky".into())
+                .to_string()
+                .contains("too risky")
+        );
     }
 
     #[test]
@@ -514,9 +524,21 @@ mod tests {
     #[test]
     fn rules_by_branch() {
         let mut engine = GovernanceEngine::new(0.5, false);
-        engine.add_rule(make_rule("r1", RuleSeverity::Warning, GovernanceBranch::Legislative));
-        engine.add_rule(make_rule("r2", RuleSeverity::Blocking, GovernanceBranch::Judicial));
-        engine.add_rule(make_rule("r3", RuleSeverity::Advisory, GovernanceBranch::Judicial));
+        engine.add_rule(make_rule(
+            "r1",
+            RuleSeverity::Warning,
+            GovernanceBranch::Legislative,
+        ));
+        engine.add_rule(make_rule(
+            "r2",
+            RuleSeverity::Blocking,
+            GovernanceBranch::Judicial,
+        ));
+        engine.add_rule(make_rule(
+            "r3",
+            RuleSeverity::Advisory,
+            GovernanceBranch::Judicial,
+        ));
 
         let judicial = engine.rules_by_branch(&GovernanceBranch::Judicial);
         assert_eq!(judicial.len(), 2);

@@ -16,7 +16,6 @@ use clawft_platform::Platform;
 use clawft_types::config::Config;
 
 use crate::capability::AgentCapabilities;
-use clawft_types::config::KernelConfig;
 use crate::console::{BootEvent, BootLog, BootPhase};
 use crate::error::{KernelError, KernelResult};
 use crate::health::HealthSystem;
@@ -24,6 +23,7 @@ use crate::ipc::KernelIpc;
 use crate::process::{ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 use crate::service::ServiceRegistry;
 use crate::supervisor::AgentSupervisor;
+use clawft_types::config::KernelConfig;
 
 /// Kernel lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,10 +97,7 @@ impl<P: Platform> Kernel<P> {
         let mut boot_log = BootLog::new();
 
         info!("WeftOS kernel booting");
-        boot_log.push(BootEvent::info(
-            BootPhase::Init,
-            "WeftOS v0.1.0 booting...",
-        ));
+        boot_log.push(BootEvent::info(BootPhase::Init, "WeftOS v0.1.0 booting..."));
         boot_log.push(BootEvent::info(BootPhase::Init, "PID 0 (kernel)"));
 
         // 1. Create subsystems
@@ -141,11 +138,14 @@ impl<P: Platform> Kernel<P> {
             cancel_token: tokio_util::sync::CancellationToken::new(),
             parent_pid: None,
         };
-        process_table.insert_with_pid(kernel_entry).map_err(|e| {
-            KernelError::Boot(format!("failed to register kernel process: {e}"))
-        })?;
+        process_table
+            .insert_with_pid(kernel_entry)
+            .map_err(|e| KernelError::Boot(format!("failed to register kernel process: {e}")))?;
 
-        boot_log.push(BootEvent::info(BootPhase::Services, "Service registry ready"));
+        boot_log.push(BootEvent::info(
+            BootPhase::Services,
+            "Service registry ready",
+        ));
 
         // 6. Start services (none registered by default at boot)
         service_registry

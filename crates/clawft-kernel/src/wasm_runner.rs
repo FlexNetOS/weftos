@@ -40,10 +40,7 @@ pub struct WasmSandboxConfig {
 
     /// Wall-clock timeout for execution.
     /// Default: 30 seconds.
-    #[serde(
-        default = "default_max_execution_secs",
-        alias = "maxExecutionTimeSecs"
-    )]
+    #[serde(default = "default_max_execution_secs", alias = "maxExecutionTimeSecs")]
     pub max_execution_time_secs: u64,
 
     /// Host function calls the WASM module is allowed to make.
@@ -271,12 +268,8 @@ impl WasmToolRunner {
         let mut warnings = Vec::new();
 
         // Parse version (bytes 4-7 in little-endian)
-        let version = u32::from_le_bytes([
-            wasm_bytes[4],
-            wasm_bytes[5],
-            wasm_bytes[6],
-            wasm_bytes[7],
-        ]);
+        let version =
+            u32::from_le_bytes([wasm_bytes[4], wasm_bytes[5], wasm_bytes[6], wasm_bytes[7]]);
         if version != 1 {
             warnings.push(format!("unexpected WASM version: {version} (expected 1)"));
         }
@@ -315,18 +308,12 @@ impl WasmToolRunner {
     /// `wasm-sandbox` feature is not enabled.
     /// Returns [`WasmError::ModuleTooLarge`] if the module
     /// exceeds the configured size limit.
-    pub fn load_tool(
-        &self,
-        name: &str,
-        wasm_bytes: &[u8],
-    ) -> Result<WasmTool, WasmError> {
+    pub fn load_tool(&self, name: &str, wasm_bytes: &[u8]) -> Result<WasmTool, WasmError> {
         // Validate first
         let validation = self.validate_wasm(wasm_bytes)?;
 
         if !validation.valid {
-            return Err(WasmError::InvalidModule(
-                validation.warnings.join("; "),
-            ));
+            return Err(WasmError::InvalidModule(validation.warnings.join("; ")));
         }
 
         #[cfg(not(feature = "wasm-sandbox"))]

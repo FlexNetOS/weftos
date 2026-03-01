@@ -32,7 +32,6 @@ impl From<KernelConfig> for KernelConfigExt {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

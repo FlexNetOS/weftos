@@ -426,9 +426,7 @@ impl AppManager {
         let name = manifest.name.clone();
 
         if self.apps.contains_key(&name) {
-            return Err(AppError::AlreadyInstalled {
-                name: name.clone(),
-            });
+            return Err(AppError::AlreadyInstalled { name: name.clone() });
         }
 
         debug!(app = %name, version = %manifest.version, "installing application");
@@ -460,12 +458,9 @@ impl AppManager {
     ///
     /// Returns `AppError::NotFound` or `AppError::InvalidState`.
     pub fn transition_to(&self, name: &str, new_state: AppState) -> Result<(), AppError> {
-        let mut entry = self
-            .apps
-            .get_mut(name)
-            .ok_or_else(|| AppError::NotFound {
-                name: name.to_owned(),
-            })?;
+        let mut entry = self.apps.get_mut(name).ok_or_else(|| AppError::NotFound {
+            name: name.to_owned(),
+        })?;
 
         let valid = matches!(
             (&entry.state, &new_state),
@@ -493,24 +488,18 @@ impl AppManager {
 
     /// Record an agent PID for a running app.
     pub fn add_agent_pid(&self, name: &str, pid: Pid) -> Result<(), AppError> {
-        let mut entry = self
-            .apps
-            .get_mut(name)
-            .ok_or_else(|| AppError::NotFound {
-                name: name.to_owned(),
-            })?;
+        let mut entry = self.apps.get_mut(name).ok_or_else(|| AppError::NotFound {
+            name: name.to_owned(),
+        })?;
         entry.agent_pids.push(pid);
         Ok(())
     }
 
     /// Record a service name for a running app.
     pub fn add_service_name(&self, name: &str, service_name: String) -> Result<(), AppError> {
-        let mut entry = self
-            .apps
-            .get_mut(name)
-            .ok_or_else(|| AppError::NotFound {
-                name: name.to_owned(),
-            })?;
+        let mut entry = self.apps.get_mut(name).ok_or_else(|| AppError::NotFound {
+            name: name.to_owned(),
+        })?;
         entry.service_names.push(service_name);
         Ok(())
     }
@@ -954,7 +943,10 @@ mod tests {
     fn namespaced_ids() {
         let manifest = sample_manifest();
         let agent_ids = AppManager::namespaced_agent_ids(&manifest);
-        assert_eq!(agent_ids, vec!["code-reviewer/reviewer", "code-reviewer/reporter"]);
+        assert_eq!(
+            agent_ids,
+            vec!["code-reviewer/reviewer", "code-reviewer/reporter"]
+        );
 
         let tool_names = AppManager::namespaced_tool_names(&manifest);
         assert_eq!(tool_names, vec!["code-reviewer/diff-analyzer"]);

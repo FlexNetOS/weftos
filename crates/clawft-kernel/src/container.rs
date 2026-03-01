@@ -294,12 +294,12 @@ impl ContainerManager {
     /// Returns [`ContainerError::DockerNotAvailable`] when the
     /// `containers` feature is not enabled.
     pub fn start_container(&self, name: &str) -> Result<(), ContainerError> {
-        let mut entry = self
-            .managed
-            .get_mut(name)
-            .ok_or_else(|| ContainerError::ContainerNotFound {
-                name: name.to_owned(),
-            })?;
+        let mut entry =
+            self.managed
+                .get_mut(name)
+                .ok_or_else(|| ContainerError::ContainerNotFound {
+                    name: name.to_owned(),
+                })?;
 
         #[cfg(not(feature = "containers"))]
         {
@@ -314,9 +314,7 @@ impl ContainerManager {
         #[cfg(feature = "containers")]
         {
             // TODO: Use bollard to pull image, create container, start
-            entry.state = ContainerState::Failed(
-                "Docker runtime not yet implemented".into(),
-            );
+            entry.state = ContainerState::Failed("Docker runtime not yet implemented".into());
             Err(ContainerError::DockerNotAvailable(
                 "Docker runtime not yet implemented".into(),
             ))
@@ -325,12 +323,12 @@ impl ContainerManager {
 
     /// Stop a managed container.
     pub fn stop_container(&self, name: &str) -> Result<(), ContainerError> {
-        let mut entry = self
-            .managed
-            .get_mut(name)
-            .ok_or_else(|| ContainerError::ContainerNotFound {
-                name: name.to_owned(),
-            })?;
+        let mut entry =
+            self.managed
+                .get_mut(name)
+                .ok_or_else(|| ContainerError::ContainerNotFound {
+                    name: name.to_owned(),
+                })?;
 
         debug!(name, "stopping container");
         entry.state = ContainerState::Stopped;
@@ -579,10 +577,7 @@ mod tests {
         #[cfg(not(feature = "containers"))]
         {
             let result = manager.start_container("redis");
-            assert!(matches!(
-                result,
-                Err(ContainerError::DockerNotAvailable(_))
-            ));
+            assert!(matches!(result, Err(ContainerError::DockerNotAvailable(_))));
         }
     }
 

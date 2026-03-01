@@ -52,9 +52,7 @@ impl std::fmt::Display for OverallHealth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OverallHealth::Healthy => write!(f, "healthy"),
-            OverallHealth::Degraded {
-                unhealthy_services,
-            } => {
+            OverallHealth::Degraded { unhealthy_services } => {
                 write!(f, "degraded ({})", unhealthy_services.join(", "))
             }
             OverallHealth::Down => write!(f, "down"),

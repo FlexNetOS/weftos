@@ -143,21 +143,12 @@ impl A2ARouter {
                         }
                     }
                 }
-                debug!(
-                    from,
-                    topic,
-                    delivered,
-                    "published to topic"
-                );
+                debug!(from, topic, delivered, "published to topic");
                 Ok(())
             }
             MessageTarget::Broadcast => {
                 let mut delivered = 0u32;
-                let pids: Vec<Pid> = self
-                    .inboxes
-                    .iter()
-                    .map(|entry| *entry.key())
-                    .collect();
+                let pids: Vec<Pid> = self.inboxes.iter().map(|entry| *entry.key()).collect();
 
                 for pid in pids {
                     if pid != from {
@@ -192,9 +183,7 @@ impl A2ARouter {
         let tx = self
             .inboxes
             .get(&pid)
-            .ok_or(KernelError::Ipc(format!(
-                "no inbox for PID {pid}"
-            )))?;
+            .ok_or(KernelError::Ipc(format!("no inbox for PID {pid}")))?;
 
         match tx.try_send(msg) {
             Ok(()) => {
@@ -330,11 +319,7 @@ mod tests {
         router.topic_router().subscribe(pids[1], "build");
         router.topic_router().subscribe(pids[2], "build");
 
-        let msg = KernelMessage::text(
-            pids[0],
-            MessageTarget::Topic("build".into()),
-            "build done",
-        );
+        let msg = KernelMessage::text(pids[0], MessageTarget::Topic("build".into()), "build done");
         router.send(msg).await.unwrap();
 
         // Sender not subscribed, should not receive
@@ -353,11 +338,7 @@ mod tests {
         router.topic_router().subscribe(pids[0], "build");
         router.topic_router().subscribe(pids[1], "build");
 
-        let msg = KernelMessage::text(
-            pids[0],
-            MessageTarget::Topic("build".into()),
-            "done",
-        );
+        let msg = KernelMessage::text(pids[0], MessageTarget::Topic("build".into()), "done");
         router.send(msg).await.unwrap();
 
         // Sender should not receive their own publish
@@ -410,11 +391,7 @@ mod tests {
         // Create inbox only for sender
         let _rx = router.create_inbox(sender_pid);
 
-        let msg = KernelMessage::text(
-            sender_pid,
-            MessageTarget::Process(target_pid),
-            "hello",
-        );
+        let msg = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "hello");
         let result = router.send(msg).await;
         assert!(result.is_err());
     }
@@ -457,11 +434,7 @@ mod tests {
         let _rx1 = router.create_inbox(sender_pid);
         let _rx2 = router.create_inbox(target_pid);
 
-        let msg = KernelMessage::text(
-            sender_pid,
-            MessageTarget::Process(target_pid),
-            "blocked",
-        );
+        let msg = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "blocked");
         let result = router.send(msg).await;
         assert!(result.is_err());
     }
@@ -503,11 +476,7 @@ mod tests {
         let _rx1 = router.create_inbox(sender_pid);
         let _rx2 = router.create_inbox(target_pid);
 
-        let msg = KernelMessage::text(
-            sender_pid,
-            MessageTarget::Process(target_pid),
-            "blocked",
-        );
+        let msg = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "blocked");
         let result = router.send(msg).await;
         assert!(result.is_err());
     }
