@@ -14,6 +14,7 @@ pub mod config_cmd;
 pub mod cron;
 pub mod gateway;
 pub mod help_cmd;
+pub mod kernel_cmd;
 #[cfg(feature = "services")]
 pub mod mcp_server;
 pub mod memory_cmd;
@@ -23,6 +24,8 @@ pub mod sessions;
 pub mod skills_cmd;
 pub mod status;
 pub mod tools_cmd;
+#[cfg(feature = "api")]
+pub mod ui_cmd;
 #[cfg(feature = "voice")]
 pub mod voice;
 pub mod workspace_cmd;

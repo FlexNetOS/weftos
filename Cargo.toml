@@ -19,6 +19,7 @@ members = [
     "crates/clawft-plugin-calendar",
     "crates/clawft-plugin-containers",
     "crates/clawft-security",
+    "crates/clawft-kernel",
 ]
 
 [workspace.package]
@@ -113,6 +114,9 @@ rvf-types = { version = "0.2", default-features = false, features = ["std"] }
 # HNSW approximate nearest neighbor search
 instant-distance = "0.6"
 
+# Concurrent hash map
+dashmap = "6"
+
 # Internal crates
 clawft-types = { path = "crates/clawft-types", default-features = false }
 clawft-platform = { path = "crates/clawft-platform", default-features = false }
@@ -130,6 +134,7 @@ clawft-plugin-browser = { path = "crates/clawft-plugin-browser" }
 clawft-plugin-calendar = { path = "crates/clawft-plugin-calendar" }
 clawft-plugin-containers = { path = "crates/clawft-plugin-containers" }
 clawft-security = { path = "crates/clawft-security" }
+clawft-kernel = { path = "crates/clawft-kernel", default-features = false }
 
 [profile.release]
 opt-level = "z"

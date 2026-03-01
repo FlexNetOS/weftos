@@ -10,12 +10,14 @@
 //! - [`policies`] -- Security policy configurations (command execution, URL safety)
 
 pub mod channels;
+pub mod kernel;
 pub mod personality;
 pub mod policies;
 pub mod voice;
 
 // Re-export channel types at the config level for backward compatibility.
 pub use channels::*;
+pub use kernel::*;
 pub use personality::*;
 pub use policies::*;
 pub use voice::*;
@@ -72,6 +74,10 @@ pub struct Config {
     /// Voice pipeline configuration (STT, TTS, VAD, wake word).
     #[serde(default)]
     pub voice: VoiceConfig,
+
+    /// Kernel subsystem configuration (WeftOS).
+    #[serde(default)]
+    pub kernel: KernelConfig,
 }
 
 impl Config {
@@ -83,10 +89,10 @@ impl Config {
     pub fn workspace_path(&self) -> PathBuf {
         let raw = &self.agents.defaults.workspace;
         #[cfg(feature = "native")]
-        if let Some(rest) = raw.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(rest);
-            }
+        if let Some(rest) = raw.strip_prefix("~/")
+            && let Some(home) = dirs::home_dir()
+        {
+            return home.join(rest);
         }
         PathBuf::from(raw)
     }
@@ -97,10 +103,10 @@ impl Config {
     /// Pass `None` for `home` to skip `~/` expansion.
     pub fn workspace_path_with_home(&self, home: Option<&std::path::Path>) -> PathBuf {
         let raw = &self.agents.defaults.workspace;
-        if let Some(rest) = raw.strip_prefix("~/") {
-            if let Some(home) = home {
-                return home.join(rest);
-            }
+        if let Some(rest) = raw.strip_prefix("~/")
+            && let Some(home) = home
+        {
+            return home.join(rest);
         }
         PathBuf::from(raw)
     }
@@ -264,6 +270,10 @@ pub struct ProvidersConfig {
     /// xAI (Grok).
     #[serde(default)]
     pub xai: ProviderConfig,
+
+    /// ElevenLabs (TTS).
+    #[serde(default)]
+    pub elevenlabs: ProviderConfig,
 }
 
 // ── Gateway ──────────────────────────────────────────────────────────────

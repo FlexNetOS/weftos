@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::personality::VoicePersonality;
 
 /// Voice pipeline configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VoiceConfig {
     /// Enable voice features globally.
     #[serde(default)]
@@ -46,21 +46,6 @@ pub struct VoiceConfig {
     /// Agents not in this map use the default personality.
     #[serde(default, alias = "personalities")]
     pub personalities: HashMap<String, VoicePersonality>,
-}
-
-impl Default for VoiceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            audio: AudioConfig::default(),
-            stt: SttConfig::default(),
-            tts: TtsConfig::default(),
-            vad: VadConfig::default(),
-            wake: WakeConfig::default(),
-            cloud_fallback: CloudFallbackConfig::default(),
-            personalities: HashMap::new(),
-        }
-    }
 }
 
 /// Audio capture/playback configuration.
@@ -146,6 +131,10 @@ pub struct TtsConfig {
     #[serde(default = "super::default_true")]
     pub enabled: bool,
 
+    /// TTS provider: "browser" (Web Speech API), "openai", or "elevenlabs".
+    #[serde(default = "default_tts_provider")]
+    pub provider: String,
+
     /// TTS model name or path.
     #[serde(default = "default_tts_model")]
     pub model: String,
@@ -159,6 +148,9 @@ pub struct TtsConfig {
     pub speed: f32,
 }
 
+fn default_tts_provider() -> String {
+    "browser".into()
+}
 fn default_tts_model() -> String {
     "vits-piper-en_US-amy-medium".into()
 }
@@ -170,6 +162,7 @@ impl Default for TtsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            provider: default_tts_provider(),
             model: default_tts_model(),
             voice: String::new(),
             speed: default_speed(),
@@ -252,7 +245,7 @@ impl Default for WakeConfig {
 }
 
 /// Cloud STT/TTS fallback configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudFallbackConfig {
     /// Enable cloud fallback when local models fail.
     #[serde(default)]
@@ -265,14 +258,4 @@ pub struct CloudFallbackConfig {
     /// Cloud TTS provider ("elevenlabs" or "openai").
     #[serde(default, alias = "ttsProvider")]
     pub tts_provider: String,
-}
-
-impl Default for CloudFallbackConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            stt_provider: String::new(),
-            tts_provider: String::new(),
-        }
-    }
 }

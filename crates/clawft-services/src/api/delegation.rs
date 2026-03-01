@@ -242,9 +242,9 @@ async fn delegation_history(
             params
                 .session
                 .as_ref()
-                .map_or(true, |s| &e.session_key == s)
+                .is_none_or(|s| &e.session_key == s)
         })
-        .filter(|e| params.target.as_ref().map_or(true, |t| &e.target == t))
+        .filter(|e| params.target.as_ref().is_none_or(|t| &e.target == t))
         .collect();
 
     let total = filtered.len();
