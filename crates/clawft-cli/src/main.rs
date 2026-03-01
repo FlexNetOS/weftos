@@ -513,7 +513,7 @@ mod tests {
         assert!(sub_names.contains(&"workspace"));
         assert!(sub_names.contains(&"onboard"));
         assert!(sub_names.contains(&"ui"));
-        // kernel commands moved to `weave` binary (clawft-weave crate)
+        // kernel commands moved to `weaver` binary (clawft-weave crate)
         assert!(!sub_names.contains(&"kernel"));
         assert!(sub_names.contains(&"help"));
         assert!(sub_names.contains(&"completions"));

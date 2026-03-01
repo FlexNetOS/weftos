@@ -1,10 +1,10 @@
-//! `weave kernel` subcommand implementation.
+//! `weaver kernel` subcommand implementation.
 //!
 //! Provides kernel introspection and lifecycle commands:
-//! - `weave kernel status` -- kernel state, uptime, process/service counts
-//! - `weave kernel services` -- list registered services with health
-//! - `weave kernel ps` -- list process table entries
-//! - `weave kernel boot` -- boot kernel (foreground or print-and-exit)
+//! - `weaver kernel status` -- kernel state, uptime, process/service counts
+//! - `weaver kernel services` -- list registered services with health
+//! - `weaver kernel ps` -- list process table entries
+//! - `weaver kernel boot` -- boot kernel (foreground or print-and-exit)
 
 use std::sync::Arc;
 

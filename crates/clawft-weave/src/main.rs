@@ -1,14 +1,14 @@
-//! `weave` — WeftOS operator CLI.
+//! `weaver` — WeftOS operator CLI.
 //!
 //! The human-facing CLI for kernel management, agent orchestration,
 //! and system administration. Complement to `weft` (the agent CLI).
 //!
 //! # Commands
 //!
-//! - `weave kernel` — Boot, status, process table, services.
-//! - `weave agent` — Spawn, stop, restart, inspect agents (planned).
-//! - `weave app` — Install, start, stop applications (planned).
-//! - `weave ipc` — Send messages, manage topics (planned).
+//! - `weaver kernel` — Boot, status, process table, services.
+//! - `weaver agent` — Spawn, stop, restart, inspect agents (planned).
+//! - `weaver app` — Install, start, stop applications (planned).
+//! - `weaver ipc` — Send messages, manage topics (planned).
 
 use clap::{Parser, Subcommand};
 
@@ -17,7 +17,7 @@ mod commands;
 /// WeftOS operator CLI.
 #[derive(Parser)]
 #[command(
-    name = "weave",
+    name = "weaver",
     about = "WeftOS operator CLI — kernel, agents, and system management",
     version,
     disable_help_subcommand = true
@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Kernel(args) => commands::kernel_cmd::run(args).await?,
         Commands::Version => {
-            println!("weave {} (WeftOS)", env!("CARGO_PKG_VERSION"));
+            println!("weaver {} (WeftOS)", env!("CARGO_PKG_VERSION"));
         }
     }
 
@@ -76,6 +76,6 @@ mod tests {
     #[test]
     fn cli_help_contains_binary_name() {
         let help = Cli::command().render_help().to_string();
-        assert!(help.contains("weave"));
+        assert!(help.contains("weaver"));
     }
 }

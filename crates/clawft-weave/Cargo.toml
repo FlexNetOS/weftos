@@ -6,12 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "WeftOS operator CLI (weave) — kernel management, services, and agent orchestration"
+description = "WeftOS operator CLI (weaver) — kernel management, services, and agent orchestration"
 keywords = ["cli", "kernel", "os", "agent", "operator"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "weave"
+name = "weaver"
 path = "src/main.rs"
 
 [features]

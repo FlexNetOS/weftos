@@ -1,4 +1,4 @@
-//! Command implementations for `weave`.
+//! Command implementations for `weaver`.
 
 pub mod kernel_cmd;
 
