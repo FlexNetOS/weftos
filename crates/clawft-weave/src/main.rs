@@ -12,7 +12,10 @@
 
 use clap::{Parser, Subcommand};
 
+mod client;
 mod commands;
+mod daemon;
+mod protocol;
 
 /// WeftOS operator CLI.
 #[derive(Parser)]

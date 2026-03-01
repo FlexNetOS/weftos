@@ -1,10 +1,15 @@
 //! `weaver kernel` subcommand implementation.
 //!
-//! Provides kernel introspection and lifecycle commands:
-//! - `weaver kernel status` -- kernel state, uptime, process/service counts
+//! Provides kernel lifecycle and introspection commands:
+//! - `weaver kernel start`    -- start the kernel daemon (persistent)
+//! - `weaver kernel stop`     -- stop a running daemon
+//! - `weaver kernel status`   -- kernel state, uptime, process/service counts
 //! - `weaver kernel services` -- list registered services with health
-//! - `weaver kernel ps` -- list process table entries
-//! - `weaver kernel boot` -- boot kernel (foreground or print-and-exit)
+//! - `weaver kernel ps`       -- list process table entries
+//!
+//! Query commands (`status`, `services`, `ps`) connect to a running daemon
+//! first. If no daemon is running, they boot an ephemeral kernel, display
+//! results, and exit.
 
 use std::sync::Arc;
 
@@ -14,9 +19,12 @@ use comfy_table::{presets, Table};
 use clawft_kernel::{Kernel, KernelState};
 use clawft_platform::NativePlatform;
 
+use crate::client::DaemonClient;
+use crate::protocol;
+
 /// Kernel management subcommand.
 #[derive(Parser)]
-#[command(about = "WeftOS kernel management (boot, status, services, processes)")]
+#[command(about = "WeftOS kernel management (start, stop, status, services, processes)")]
 pub struct KernelArgs {
     /// Kernel subcommand.
     #[command(subcommand)]
@@ -30,6 +38,12 @@ pub struct KernelArgs {
 /// Kernel subcommands.
 #[derive(Subcommand)]
 pub enum KernelAction {
+    /// Start the kernel daemon (persistent, runs in foreground).
+    Start,
+
+    /// Stop a running kernel daemon.
+    Stop,
+
     /// Show kernel state, uptime, process count, service count.
     Status,
 
@@ -38,50 +52,158 @@ pub enum KernelAction {
 
     /// List process table entries.
     Ps,
-
-    /// Boot the kernel (non-interactive, foreground).
-    Boot {
-        /// Stay running in foreground until Ctrl+C.
-        #[arg(long)]
-        foreground: bool,
-    },
 }
 
 /// Run the kernel subcommand.
 pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
-    let platform = NativePlatform::new();
-    let config = super::load_config(&platform, args.config.as_deref()).await?;
-    let kernel_config = config.kernel.clone();
-
     match args.action {
+        KernelAction::Start => {
+            let platform = NativePlatform::new();
+            let config = super::load_config(&platform, args.config.as_deref()).await?;
+            let kernel_config = config.kernel.clone();
+            crate::daemon::run(config, kernel_config).await?;
+        }
+        KernelAction::Stop => {
+            let mut client = DaemonClient::connect()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("no daemon running"))?;
+            let resp = client.simple_call("kernel.shutdown").await?;
+            if resp.ok {
+                println!("Daemon shutdown initiated.");
+            } else {
+                let msg = resp.error.unwrap_or_else(|| "unknown error".into());
+                anyhow::bail!("shutdown failed: {msg}");
+            }
+        }
         KernelAction::Status => {
-            let kernel = boot_or_exit(config, kernel_config, platform).await;
-            print_status(&kernel);
+            if let Some(mut client) = DaemonClient::connect().await {
+                let resp = client.simple_call("kernel.status").await?;
+                if resp.ok {
+                    let result: protocol::KernelStatusResult =
+                        serde_json::from_value(resp.result.unwrap())?;
+                    print_daemon_status(&result);
+                } else {
+                    let msg = resp.error.unwrap_or_else(|| "unknown error".into());
+                    eprintln!("daemon error: {msg}");
+                }
+            } else {
+                eprintln!("(no daemon running — booting ephemeral kernel)\n");
+                let platform = NativePlatform::new();
+                let config = super::load_config(&platform, args.config.as_deref()).await?;
+                let kernel = boot_or_exit(config.clone(), config.kernel.clone(), platform).await;
+                print_status(&kernel);
+            }
         }
         KernelAction::Services => {
-            let kernel = boot_or_exit(config, kernel_config, platform).await;
-            print_services(&kernel).await;
+            if let Some(mut client) = DaemonClient::connect().await {
+                let resp = client.simple_call("kernel.services").await?;
+                if resp.ok {
+                    let infos: Vec<protocol::ServiceInfo> =
+                        serde_json::from_value(resp.result.unwrap())?;
+                    print_daemon_services(&infos);
+                } else {
+                    let msg = resp.error.unwrap_or_else(|| "unknown error".into());
+                    eprintln!("daemon error: {msg}");
+                }
+            } else {
+                eprintln!("(no daemon running — booting ephemeral kernel)\n");
+                let platform = NativePlatform::new();
+                let config = super::load_config(&platform, args.config.as_deref()).await?;
+                let kernel = boot_or_exit(config.clone(), config.kernel.clone(), platform).await;
+                print_services(&kernel).await;
+            }
         }
         KernelAction::Ps => {
-            let kernel = boot_or_exit(config, kernel_config, platform).await;
-            print_ps(&kernel);
-        }
-        KernelAction::Boot { foreground } => {
-            let kernel = boot_or_exit(config, kernel_config, platform).await;
-
-            print!("{}", clawft_kernel::console::boot_banner());
-            print!("{}", kernel.boot_log().format_all());
-
-            if foreground {
-                println!("\nKernel running in foreground. Press Ctrl+C to stop.");
-                tokio::signal::ctrl_c().await?;
-                println!("\nShutting down...");
+            if let Some(mut client) = DaemonClient::connect().await {
+                let resp = client.simple_call("kernel.ps").await?;
+                if resp.ok {
+                    let entries: Vec<protocol::ProcessInfo> =
+                        serde_json::from_value(resp.result.unwrap())?;
+                    print_daemon_ps(&entries);
+                } else {
+                    let msg = resp.error.unwrap_or_else(|| "unknown error".into());
+                    eprintln!("daemon error: {msg}");
+                }
+            } else {
+                eprintln!("(no daemon running — booting ephemeral kernel)\n");
+                let platform = NativePlatform::new();
+                let config = super::load_config(&platform, args.config.as_deref()).await?;
+                let kernel = boot_or_exit(config.clone(), config.kernel.clone(), platform).await;
+                print_ps(&kernel);
             }
         }
     }
 
     Ok(())
 }
+
+// ── Daemon-mode display (from protocol types) ─────────────────────
+
+/// Print kernel status from a daemon response.
+fn print_daemon_status(result: &protocol::KernelStatusResult) {
+    let uptime_str = format_uptime(result.uptime_secs);
+
+    println!("WeftOS Kernel Status (daemon)");
+    println!("-----------------------------");
+    println!("State:      {}", result.state);
+    println!("Uptime:     {uptime_str}");
+    println!("Processes:  {}", result.process_count);
+    println!("Services:   {}", result.service_count);
+    println!("Max procs:  {}", result.max_processes);
+    println!("Health chk: {}s", result.health_check_interval_secs);
+}
+
+/// Print services from a daemon response.
+fn print_daemon_services(infos: &[protocol::ServiceInfo]) {
+    if infos.is_empty() {
+        println!("No services registered.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table.load_preset(presets::UTF8_FULL_CONDENSED);
+    table.set_header(vec!["Name", "Type", "Health"]);
+
+    for info in infos {
+        table.add_row(vec![&info.name, &info.service_type, &info.health]);
+    }
+
+    println!("{table}");
+}
+
+/// Print process table from a daemon response.
+fn print_daemon_ps(entries: &[protocol::ProcessInfo]) {
+    if entries.is_empty() {
+        println!("No agents running.");
+        return;
+    }
+
+    let mut table = Table::new();
+    table.load_preset(presets::UTF8_FULL_CONDENSED);
+    table.set_header(vec!["PID", "Agent", "State", "Mem", "CPU", "Parent"]);
+
+    for entry in entries {
+        let mem = format_bytes(entry.memory_bytes);
+        let cpu = format!("{:.1}s", entry.cpu_time_ms as f64 / 1000.0);
+        let parent = entry
+            .parent_pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into());
+
+        table.add_row(vec![
+            &entry.pid.to_string(),
+            &entry.agent_id,
+            &entry.state,
+            &mem,
+            &cpu,
+            &parent,
+        ]);
+    }
+
+    println!("{table}");
+}
+
+// ── Ephemeral-mode display (from Kernel<P>) ───────────────────────
 
 /// Boot the kernel or exit with an error message.
 async fn boot_or_exit(
@@ -98,7 +220,7 @@ async fn boot_or_exit(
     }
 }
 
-/// Print kernel status summary.
+/// Print kernel status from an ephemeral kernel.
 fn print_status<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     let state_str = match kernel.state() {
         KernelState::Booting => "booting",
@@ -107,22 +229,10 @@ fn print_status<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
         KernelState::Halted => "halted",
     };
 
-    let uptime = kernel.uptime();
-    let uptime_str = if uptime.as_secs() > 3600 {
-        format!(
-            "{}h {}m {}s",
-            uptime.as_secs() / 3600,
-            (uptime.as_secs() % 3600) / 60,
-            uptime.as_secs() % 60
-        )
-    } else if uptime.as_secs() > 60 {
-        format!("{}m {}s", uptime.as_secs() / 60, uptime.as_secs() % 60)
-    } else {
-        format!("{:.1}s", uptime.as_secs_f64())
-    };
+    let uptime_str = format_uptime(kernel.uptime().as_secs_f64());
 
-    println!("WeftOS Kernel Status");
-    println!("--------------------");
+    println!("WeftOS Kernel Status (ephemeral)");
+    println!("--------------------------------");
     println!("State:      {state_str}");
     println!("Uptime:     {uptime_str}");
     println!("Processes:  {}", kernel.process_table().len());
@@ -137,7 +247,7 @@ fn print_status<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     );
 }
 
-/// Print services table.
+/// Print services table from an ephemeral kernel.
 async fn print_services<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     let services = kernel.services().list();
     if services.is_empty() {
@@ -164,7 +274,7 @@ async fn print_services<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     println!("{table}");
 }
 
-/// Print process table.
+/// Print process table from an ephemeral kernel.
 fn print_ps<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     let entries = kernel.process_table().list();
     if entries.is_empty() {
@@ -203,6 +313,25 @@ fn print_ps<P: clawft_platform::Platform>(kernel: &Kernel<P>) {
     println!("{table}");
 }
 
+// ── Shared helpers ────────────────────────────────────────────────
+
+/// Format an uptime in seconds as a human-readable string.
+fn format_uptime(secs: f64) -> String {
+    let total_secs = secs as u64;
+    if total_secs > 3600 {
+        format!(
+            "{}h {}m {}s",
+            total_secs / 3600,
+            (total_secs % 3600) / 60,
+            total_secs % 60
+        )
+    } else if total_secs > 60 {
+        format!("{}m {}s", total_secs / 60, total_secs % 60)
+    } else {
+        format!("{:.1}s", secs)
+    }
+}
+
 /// Format a byte count as a human-readable string.
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
@@ -227,6 +356,14 @@ mod tests {
         assert_eq!(format_bytes(1024), "1.0KB");
         assert_eq!(format_bytes(1024 * 1024), "1.0MB");
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0GB");
+    }
+
+    #[test]
+    fn format_uptime_units() {
+        assert_eq!(format_uptime(0.5), "0.5s");
+        assert_eq!(format_uptime(42.0), "42.0s");
+        assert_eq!(format_uptime(90.0), "1m 30s");
+        assert_eq!(format_uptime(3661.0), "1h 1m 1s");
     }
 
     #[test]

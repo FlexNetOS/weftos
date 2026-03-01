@@ -833,6 +833,7 @@ dependencies = [
  "clawft-types",
  "comfy-table",
  "dirs",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
