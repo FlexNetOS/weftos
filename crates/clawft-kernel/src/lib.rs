@@ -26,6 +26,7 @@
 //! - `wasm-sandbox` -- enables WASM tool runner (Phase K3).
 //! - `containers` -- enables container manager (Phase K4).
 
+pub mod a2a;
 pub mod boot;
 pub mod capability;
 pub mod config;
@@ -36,8 +37,10 @@ pub mod ipc;
 pub mod process;
 pub mod service;
 pub mod supervisor;
+pub mod topic;
 
 // Re-export key types at the crate level for convenience.
+pub use a2a::A2ARouter;
 pub use boot::{Kernel, KernelState};
 pub use capability::{
     AgentCapabilities, CapabilityChecker, IpcScope, ResourceLimits, ResourceType, SandboxPolicy,
@@ -52,3 +55,4 @@ pub use ipc::{KernelIpc, KernelMessage, KernelSignal, MessagePayload, MessageTar
 pub use process::{Pid, ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 pub use service::{ServiceRegistry, ServiceType, SystemService};
 pub use supervisor::{AgentSupervisor, SpawnRequest, SpawnResult};
+pub use topic::{Subscription, TopicRouter};

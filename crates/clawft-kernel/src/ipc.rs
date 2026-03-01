@@ -20,6 +20,8 @@ use crate::process::Pid;
 pub enum MessageTarget {
     /// Send to a specific process by PID.
     Process(Pid),
+    /// Publish to a named topic (all subscribers receive).
+    Topic(String),
     /// Broadcast to all processes.
     Broadcast,
     /// Send to a named service.
@@ -35,6 +37,20 @@ pub enum MessagePayload {
     Text(String),
     /// Structured JSON data.
     Json(serde_json::Value),
+    /// Tool call delegation from one agent to another.
+    ToolCall {
+        /// Name of the tool to call.
+        name: String,
+        /// Tool arguments.
+        args: serde_json::Value,
+    },
+    /// Result of a delegated tool call.
+    ToolResult {
+        /// Correlation ID linking to the original request.
+        call_id: String,
+        /// Tool execution result.
+        result: serde_json::Value,
+    },
     /// System control signal.
     Signal(KernelSignal),
 }
@@ -67,6 +83,13 @@ pub struct KernelMessage {
     pub payload: MessagePayload,
     /// Creation timestamp.
     pub timestamp: DateTime<Utc>,
+    /// Optional correlation ID for request-response patterns.
+    ///
+    /// When set, this links a response message back to the original
+    /// request that triggered it. Used by the A2A protocol's
+    /// request-response tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 impl KernelMessage {
@@ -78,6 +101,24 @@ impl KernelMessage {
             target,
             payload,
             timestamp: Utc::now(),
+            correlation_id: None,
+        }
+    }
+
+    /// Create a new kernel message with a correlation ID.
+    pub fn with_correlation(
+        from: Pid,
+        target: MessageTarget,
+        payload: MessagePayload,
+        correlation_id: String,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            from,
+            target,
+            payload,
+            timestamp: Utc::now(),
+            correlation_id: Some(correlation_id),
         }
     }
 
@@ -89,6 +130,40 @@ impl KernelMessage {
     /// Create a signal message.
     pub fn signal(from: Pid, target: MessageTarget, signal: KernelSignal) -> Self {
         Self::new(from, target, MessagePayload::Signal(signal))
+    }
+
+    /// Create a tool call message.
+    pub fn tool_call(
+        from: Pid,
+        target: MessageTarget,
+        name: impl Into<String>,
+        args: serde_json::Value,
+    ) -> Self {
+        Self::new(
+            from,
+            target,
+            MessagePayload::ToolCall {
+                name: name.into(),
+                args,
+            },
+        )
+    }
+
+    /// Create a tool result message (response to a tool call).
+    pub fn tool_result(
+        from: Pid,
+        target: MessageTarget,
+        call_id: impl Into<String>,
+        result: serde_json::Value,
+    ) -> Self {
+        Self::new(
+            from,
+            target,
+            MessagePayload::ToolResult {
+                call_id: call_id.into(),
+                result,
+            },
+        )
     }
 }
 
@@ -230,5 +305,99 @@ mod tests {
             let json = serde_json::to_string(&signal).unwrap();
             let _: KernelSignal = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    #[test]
+    fn message_with_correlation_id() {
+        let msg = KernelMessage::with_correlation(
+            1,
+            MessageTarget::Process(2),
+            MessagePayload::Text("request".into()),
+            "req-123".into(),
+        );
+        assert_eq!(msg.correlation_id, Some("req-123".into()));
+        assert_eq!(msg.from, 1);
+    }
+
+    #[test]
+    fn message_without_correlation_id() {
+        let msg = KernelMessage::text(1, MessageTarget::Process(2), "hello");
+        assert!(msg.correlation_id.is_none());
+    }
+
+    #[test]
+    fn tool_call_message() {
+        let msg = KernelMessage::tool_call(
+            1,
+            MessageTarget::Process(2),
+            "read_file",
+            serde_json::json!({"path": "/src/main.rs"}),
+        );
+        match &msg.payload {
+            MessagePayload::ToolCall { name, args } => {
+                assert_eq!(name, "read_file");
+                assert_eq!(args["path"], "/src/main.rs");
+            }
+            other => panic!("expected ToolCall, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_message() {
+        let msg = KernelMessage::tool_result(
+            2,
+            MessageTarget::Process(1),
+            "call-123",
+            serde_json::json!({"content": "file contents"}),
+        );
+        match &msg.payload {
+            MessagePayload::ToolResult { call_id, result } => {
+                assert_eq!(call_id, "call-123");
+                assert_eq!(result["content"], "file contents");
+            }
+            other => panic!("expected ToolResult, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn topic_target() {
+        let msg = KernelMessage::text(1, MessageTarget::Topic("build-status".into()), "done");
+        assert!(matches!(msg.target, MessageTarget::Topic(ref t) if t == "build-status"));
+    }
+
+    #[test]
+    fn tool_call_serde_roundtrip() {
+        let msg = KernelMessage::tool_call(
+            1,
+            MessageTarget::Process(2),
+            "search",
+            serde_json::json!({"query": "test"}),
+        );
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: KernelMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            restored.payload,
+            MessagePayload::ToolCall { ref name, .. } if name == "search"
+        ));
+    }
+
+    #[test]
+    fn correlation_id_serde_roundtrip() {
+        let msg = KernelMessage::with_correlation(
+            1,
+            MessageTarget::Process(2),
+            MessagePayload::Text("req".into()),
+            "corr-456".into(),
+        );
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: KernelMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.correlation_id, Some("corr-456".into()));
+    }
+
+    #[test]
+    fn correlation_id_absent_in_json_when_none() {
+        let msg = KernelMessage::text(1, MessageTarget::Process(2), "hello");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("correlation_id"));
     }
 }
