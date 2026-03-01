@@ -21,6 +21,8 @@
 //!   settings embedded in the root config.
 //! - **Containers** ([`container::ContainerManager`]) -- sidecar
 //!   container lifecycle and health integration.
+//! - **Applications** ([`app::AppManager`]) -- application manifest
+//!   parsing, validation, and lifecycle state machine.
 //!
 //! # Feature Flags
 //!
@@ -28,6 +30,7 @@
 //! - `wasm-sandbox` -- enables WASM tool runner (Phase K3).
 //! - `containers` -- enables container manager (Phase K4).
 
+pub mod app;
 pub mod a2a;
 pub mod boot;
 pub mod capability;
@@ -44,6 +47,10 @@ pub mod container;
 pub mod wasm_runner;
 
 // Re-export key types at the crate level for convenience.
+pub use app::{
+    AppCapabilities, AppError, AppHooks, AppManager, AppManifest, AppState, AgentSpec,
+    InstalledApp, ServiceSpec, ToolSource, ToolSpec,
+};
 pub use a2a::A2ARouter;
 pub use boot::{Kernel, KernelState};
 pub use capability::{
