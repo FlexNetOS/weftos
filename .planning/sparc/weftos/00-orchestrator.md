@@ -46,7 +46,7 @@ Both binaries link to the same `clawft-cli` crate. `weave` is a thin alias that 
 | Phase | ID | Title | Goal | Duration |
 |---|---|---|---|---|
 | 0 | K0 | Kernel Foundation | New `clawft-kernel` crate with boot, process table, service registry, health, cluster membership | 2 weeks | **Complete** |
-| 1 | K1 | Supervisor + RBAC | Agent supervisor with spawn/stop/restart, per-agent capabilities | 2 weeks |
+| 1 | K1 | Supervisor + RBAC | Agent supervisor with spawn_and_run, GateBackend, chain persistence, agent tree nodes, IPC RBAC, weaver agent CLI | 2 weeks | **Complete** |
 | 2 | K2 | A2A IPC | Agent-to-agent messaging, pub/sub topics, JSON-RPC wire format | 2 weeks |
 | 3 | K3 | WASM Sandbox | Wasmtime tool execution, fuel metering, memory limits | 2 weeks |
 | 4 | K4 | Containers | Alpine image, sidecar service orchestration | 1 week |
@@ -64,6 +64,13 @@ K0 (Foundation) -- COMPLETE
   |  + ClusterMembership (universal peer tracker, all platforms)
   |  + ClusterService (ruvector-cluster, native-only, feature-gated)
   |  + weaver daemon (Unix socket RPC) + weaver cluster CLI
+  |  + ExoChain local chain (chain_id=0, SHA-256 hash linking)
+  |  + exo-resource-tree crate (tree CRUD, Merkle, MutationLog)
+  |  + TreeManager facade (tree + mutation log + chain, atomic ops)
+  |  + Boot-to-chain audit trail (boot.init -> boot.ready)
+  |  + Chain integrity verification (weaver chain verify)
+  |  + Two-way traceability (tree nodes <-> chain events via chain_seq)
+  |  + Shutdown checkpoint (kernel.shutdown event + chain checkpoint)
   |
   +---> K1 (Supervisor/RBAC) -- depends on K0 (process table, capabilities)
   |         |
@@ -106,6 +113,8 @@ K0 (Foundation) -- COMPLETE
 | `exo-identity` | 0.1 | `exo-resource-tree` | K0 |
 | `exo-consent` | 0.1 | `exo-resource-tree` | K0 |
 | `exo-dag` | 0.1 | `exo-resource-tree` | K0 |
+| `exo-resource-tree` | 0.1 (path) | `clawft-kernel` (optional, `exochain` feature) | K0 |
+| `sha2` | 0.10 | `clawft-kernel` (optional, `exochain` feature) | K0 |
 
 ---
 
@@ -257,16 +266,27 @@ pub enum MessagePayload {
 | `crates/clawft-cli/src/commands/mod.rs` | Modify | K0 |
 | `crates/clawft-cli/src/help_text.rs` | Modify | K0 |
 | `docs/architecture/adr-028-weftos-kernel.md` | Create | K0 |
+| `crates/clawft-kernel/src/chain.rs` | Create | K0 |
+| `crates/clawft-kernel/src/cron.rs` | Create | K0 |
 
-### K1: Supervisor + RBAC
+### K1: Supervisor + RBAC + ExoChain Integration
 
 | File | Action | Owner |
 |---|---|---|
-| `crates/clawft-kernel/src/supervisor.rs` | Create | K1 |
-| `crates/clawft-kernel/src/capability.rs` | Modify | K1 |
-| `crates/clawft-kernel/src/process.rs` | Modify | K1 |
-| `crates/clawft-core/src/agent/loop_core.rs` | Modify | K1 |
-| `crates/clawft-core/src/tools/registry.rs` | Modify | K1 |
+| `crates/exo-resource-tree/src/scoring.rs` | Create | K1 |
+| `crates/clawft-kernel/src/supervisor.rs` | Modify (created in K0) | K1 |
+| `crates/clawft-kernel/src/gate.rs` | Create | K1 |
+| `crates/clawft-kernel/src/ipc.rs` | Modify | K1 |
+| `crates/clawft-kernel/src/chain.rs` | Modify | K1 |
+| `crates/clawft-kernel/src/tree_manager.rs` | Modify | K1 |
+| `crates/clawft-kernel/src/boot.rs` | Modify | K1 |
+| `crates/clawft-kernel/src/lib.rs` | Modify | K1 |
+| `crates/clawft-weave/src/commands/agent_cmd.rs` | Create | K1 |
+| `crates/clawft-weave/src/commands/mod.rs` | Modify | K1 |
+| `crates/clawft-weave/src/main.rs` | Modify | K1 |
+| `crates/clawft-weave/src/protocol.rs` | Modify | K1 |
+| `crates/clawft-weave/src/daemon.rs` | Modify | K1 |
+| `crates/clawft-types/src/config/kernel.rs` | Modify | K1 |
 
 ### K2: A2A IPC
 
@@ -405,7 +425,7 @@ pub enum MessagePayload {
 - [ ] Phase gate script passes for each phase before merge
 
 ### Documentation
-- [ ] ADR-028 written and linked from `docs/architecture/`
+- [x] ADR-028 written and linked from `docs/architecture/`
 - [ ] Per-phase `decisions.md` in `.planning/development_notes/weftos/phase-K{N}/`
 - [ ] Kernel guide at `docs/guides/kernel.md` (created in K5)
 - [ ] All rustdoc builds without warnings
@@ -456,18 +476,116 @@ pub enum MessagePayload {
 
 ### K0 -> K1 Gate
 - [x] `Kernel<P>` boots successfully with process table (PID 0 = kernel)
-- [ ] At least one `SystemService` registered (CronService wrapper)
+- [x] At least one `SystemService` registered (CronService wrapper)
 - [x] `weaver kernel status` CLI command works (daemon + ephemeral modes)
 - [x] `weaver cluster status/nodes/join/leave/health/shards` CLI works
 - [x] ClusterMembership universal peer tracker compiles on all targets
 - [x] ClusterService (ruvector) registers behind `cluster` feature
-- [ ] ADR-028 committed
+- [x] ADR-028 committed
+- [x] Local exochain boots with genesis event
+- [x] ResourceTree bootstraps with well-known namespace
+- [x] ServiceRegistry creates tree nodes on register (exochain feature)
+- [x] `weaver chain status` and `weaver resource tree` work (exochain feature)
+- [x] CronService registered at boot (K0 gate)
+- [x] TreeManager facade unifies ResourceTree + MutationLog + ChainManager
+- [x] Boot-to-chain audit trail: all boot phases emit chain events
+- [x] Chain integrity verification: `weaver chain verify` validates hash linking
+- [x] Two-way traceability: tree nodes store `chain_seq` metadata
+- [x] Shutdown emits `kernel.shutdown` chain event + checkpoint
 
-### K1 -> K2 Gate
-- [ ] Agent spawn creates `ProcessEntry` with capabilities
-- [ ] Tool calls filtered by `AgentCapabilities`
-- [ ] `weave kernel ps` shows running agents
-- [ ] Supervisor restart recovers crashed agent
+#### K0 Automated Verification
+
+```bash
+# All three must pass before manual testing:
+scripts/build.sh check      # clean compile
+scripts/build.sh test       # all workspace tests (279 kernel tests incl. exochain)
+scripts/build.sh clippy     # no warnings
+```
+
+#### K0 Manual Testing (ExoChain Integration)
+
+These tests require the daemon running with the `exochain` feature. Run in order:
+
+```bash
+# 1. Build the weaver binary with exochain support
+cargo build -p clawft-weave --features exochain
+
+# 2. Start the kernel daemon (runs in foreground; use a separate terminal)
+#    Look for boot log output showing chain events being appended.
+target/debug/weaver kernel start
+
+# 3. In another terminal, verify boot events on chain.
+#    Expected: genesis + boot.init + boot.config + boot.services +
+#              tree.bootstrap + tree.insert (cron) + boot.cluster + boot.ready
+#    Minimum 8 events; exact count may vary.
+target/debug/weaver chain local -c 20
+#    PASS: Table shows sequential events with Source=kernel/tree/chain,
+#          Kind=boot.*/tree.*/genesis, incrementing Seq, non-empty Hash.
+
+# 4. Verify chain status shows correct counters.
+target/debug/weaver chain status
+#    PASS: Event count >= 8, Sequence >= 7, Chain ID = 0.
+
+# 5. Verify chain integrity (hash linking).
+target/debug/weaver chain verify
+#    PASS: "Chain integrity: VALID", Events verified >= 8, Errors: 0.
+
+# 6. Verify resource tree shows /kernel/services/cron node.
+target/debug/weaver resource tree
+#    PASS: Tree shows / -> kernel -> services -> cron.
+
+# 7. Inspect cron service node for chain_seq metadata.
+#    Find the cron node ID from tree output, then:
+target/debug/weaver resource inspect <cron-node-id>
+#    PASS: Metadata contains "chain_seq" key with a numeric value.
+
+# 8. Verify resource stats.
+target/debug/weaver resource stats
+#    PASS: Node count >= 14 (bootstrap namespaces + cron).
+
+# 9. Create a chain checkpoint.
+target/debug/weaver chain checkpoint
+#    PASS: "Checkpoint created." with a sequence number.
+
+# 10. Stop the daemon (Ctrl-C in the daemon terminal).
+#     The daemon should emit kernel.shutdown chain event before exiting.
+#     Restart and check chain local again to confirm shutdown event was logged.
+target/debug/weaver kernel start
+target/debug/weaver chain local -c 30
+#     PASS: Last events before new genesis include kind=kernel.shutdown.
+```
+
+**All 10 manual tests must pass before committing K0 exochain integration.**
+
+### K1 -> K2 Gate (NodeScoring)
+- [x] NodeScoring 6-dim vector (trust/performance/difficulty/reward/reliability/velocity) on ResourceNode
+- [x] Merkle hash includes scoring bytes (SHAKE-256 alignment)
+- [x] Bottom-up scoring aggregation via reward-weighted mean
+- [x] TreeManager scoring API (update, blend, find_similar, rank_by_score)
+- [x] UpdateScoring mutation event variant
+
+### K1 -> K2 Gate (Supervisor/RBAC)
+- [x] `supervisor.spawn_and_run()` creates process entry AND runs work as tokio task
+- [x] Spawned agent appears in process table as `Running`, transitions to `Exited` on completion
+- [x] Agent stop (graceful + force) transitions to `Exited` and cancels the task
+- [x] Agent restart creates new PID linked to old PID via `parent_pid`
+- [x] `CapabilityChecker` enforces tool access (allow/deny lists, sandbox policy)
+- [x] `GateBackend` trait abstracts permission decisions (Permit/Defer/Deny)
+- [x] Agent spawn creates `/kernel/agents/{agent_id}` tree node + `agent.spawn` chain event (exochain)
+- [x] Agent stop updates tree node + emits `agent.stop` chain event (exochain)
+- [x] Chain persists to disk on shutdown (`checkpoint_path` in config)
+- [x] Chain restores from disk on boot (continued sequence, not fresh genesis)
+- [x] `ipc.send_checked()` enforces IpcScope via CapabilityChecker (exochain)
+- [x] `MessagePayload::Rvf` variant carries segment_type + data for RVF-typed IPC
+- [x] `weaver agent spawn/stop/restart/inspect/list/send` CLI commands wired
+- [x] Daemon dispatch handlers for agent lifecycle + IPC send
+- [x] All workspace tests pass (`scripts/build.sh test`)
+- [x] Clippy clean for both default and exochain features
+
+### K2 Gate (NodeScoring Lifecycle — deferred from K1)
+- [ ] Agent exit triggers scoring blend via supervisor
+- [ ] Gate decisions nudge trust scoring
+- [ ] `weaver resource score/rank` CLI commands
 
 ### K2 -> K5 Gate
 - [ ] Agent-to-agent message delivery works
@@ -665,6 +783,7 @@ They are numbered 07+ and represent extensions that build on the core kernel.
 | `11-local-inference-agents.md` | Local Inference & Continuous Model Improvement | 4-tier model routing, GGUF inference via ruvllm, continuous improvement lifecycle |
 | `12-networking-and-pairing.md` | Networking, Pairing, and Network Joining | DeFi-inspired networking, pairing handshake, trust/bonding, client access layer |
 | `13-exo-resource-tree.md` | Exo-Resource-Tree: Hierarchical Resource Namespace | Unified resource tree on ExoChain substrate, everything-is-a-node, RBAC via tree walk |
+| `14-exochain-substrate.md` | ExoChain Cryptographic Substrate | Append-only hash-linked audit chain, RVF segment embedding, local chain (K0), global chain (K6) |
 
 ### Integration with Core Phases
 

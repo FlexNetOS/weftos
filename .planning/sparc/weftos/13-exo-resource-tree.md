@@ -13,6 +13,43 @@ Depends-On:  08-ephemeral-os-architecture.md, 10-agent-first-single-user.md,
 
 ---
 
+## 0. Implementation Status
+
+### K0 (Implemented)
+- Core types: ResourceId, ResourceKind, ResourceNode, Role, Action
+- ResourceTree: CRUD, Merkle recomputation, namespace bootstrap
+- MutationEvent: DAG-backed mutations with signatures
+- Boot: from_checkpoint() and bootstrap_fresh()
+- ServiceRegistry integration (tree nodes on register)
+- CLI: weaver resource {tree, inspect, stats}
+- **TreeManager facade**: Unified wrapper (`tree_manager.rs`) holding ResourceTree +
+  MutationLog + ChainManager. Every tree mutation atomically produces a chain event
+  and stores `chain_seq` metadata on the node for two-way traceability.
+- **MutationLog wired**: MutationLog now receives events on every tree operation
+  through TreeManager (previously created but never connected to tree operations).
+- **Boot-to-chain logging**: All boot phases emit chain events; tree bootstrap and
+  service registration go through TreeManager.
+- **Chain integrity verification**: `ChainManager::verify_integrity()` walks all
+  events, recomputes hashes, verifies linkage. Available via `weaver chain verify`.
+- **Shutdown checkpoint**: Kernel shutdown emits `kernel.shutdown` chain event with
+  tree_root_hash + chain_seq, then creates a chain checkpoint.
+
+### K1 (Deferred — stubs only in K0)
+- Permission engine: check() with delegation shortcut (Section 5)
+- EffectiveAclCache (Section 5.2)
+- DelegationCert lifecycle: grant/revoke/prune (Section 9)
+- CapabilityChecker delegation to tree.check() (Section 7.2)
+- CLI: weaver resource {grant, revoke, check}
+
+### K2+ (Not started)
+- IPC topic tree nodes (Section 7.3)
+- WASM sandbox gating (Section 7.4)
+- Container tree nodes (Section 7.5)
+- App subtrees (Section 7.6)
+- Environment subtrees (Section 7.7)
+
+---
+
 ## 1. Core Insight: Everything Is a Resource Node
 
 WeftOS has agents, services, processes, IPC topics, files, capabilities,

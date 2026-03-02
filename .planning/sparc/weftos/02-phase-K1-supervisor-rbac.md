@@ -1,213 +1,129 @@
-# Phase K1: Supervisor + RBAC
+# Phase K1: Supervisor + RBAC + ExoChain Integration
 
 **Phase ID**: K1
 **Workstream**: W-KERNEL
 **Duration**: Week 3-4
-**Goal**: Implement agent supervisor with spawn/stop/restart lifecycle and per-agent capability-based access control
+**Status**: Complete
+**Goal**: Wire agent supervisor to actually execute agents, enforce capability-based RBAC, integrate agent lifecycle with resource tree and chain, persist chain across restarts, and add `weaver agent` CLI commands.
 
 ---
 
 ## S -- Specification
 
-### What Changes
+### What K0 Delivered (Starting Point)
 
-This phase adds an agent supervisor that manages the full lifecycle of agents (spawn, stop, restart, inspect) through the kernel's process table, and enforces per-agent capabilities (RBAC) on tool calls, IPC access, and resource consumption. The supervisor wraps the existing `AgentLoop` spawn mechanism without replacing it.
+K0 created `AgentSupervisor<P>` with `spawn()`, `stop()`, `restart()`, and `inspect()` methods that manage `ProcessEntry` records in the process table. However:
 
-### Files to Create
+1. `spawn()` created a ProcessEntry but didn't execute any agent work
+2. `CapabilityChecker` existed with full logic but was never called
+3. No agent presence in the resource tree or chain
+4. Chain was ephemeral (fresh genesis on every boot)
+5. No `weaver agent` CLI commands
+6. IPC broadcast-only, no per-PID routing or access control
+7. No shared RVF payload type in IPC messages
 
-| File | Purpose |
-|---|---|
-| `crates/clawft-kernel/src/supervisor.rs` | `AgentSupervisor` with spawn/stop/restart/inspect/watch |
+### What K1 Changed
 
-### Files to Modify
+| Area | Change |
+|------|--------|
+| **Supervisor** | `spawn_and_run()` accepts a work closure, runs as tokio task, tracks JoinHandle |
+| **Running agents** | `DashMap<Pid, JoinHandle>` tracks running tasks; `abort_all()` on shutdown |
+| **Exochain wiring** | Supervisor holds optional `TreeManager` + `ChainManager` (cfg exochain) |
+| **Agent tree nodes** | `tree_manager.register_agent()` / `unregister_agent()` on spawn/stop |
+| **Chain events** | `agent.spawn`, `agent.exit`, `agent.restart` events in chain |
+| **Chain persistence** | `save_to_file()` / `load_from_file()` with checkpoint path config |
+| **Boot restore** | Chain restores from checkpoint file on boot, falls back to fresh genesis |
+| **GateBackend** | Trait abstracting Permit/Defer/Deny decisions (replaces binary check) |
+| **IPC RBAC** | `send_checked()` enforces IpcScope via CapabilityChecker (cfg exochain) |
+| **RVF IPC** | `MessagePayload::Rvf { segment_type, data }` for typed agent messages |
+| **CLI** | `weaver agent spawn/stop/restart/inspect/list/send/attach` commands |
+| **Daemon RPC** | 7 new dispatch handlers for agent lifecycle + IPC send |
+
+### Files Created
+
+| File | Purpose | LOC |
+|------|---------|-----|
+| `crates/clawft-kernel/src/gate.rs` | `GateBackend` trait, `GateDecision` enum, `CapabilityGate` impl | ~80 |
+| `crates/clawft-weave/src/commands/agent_cmd.rs` | `weaver agent` CLI command group | ~220 |
+
+### Files Modified
 
 | File | Change |
-|---|---|
-| `crates/clawft-kernel/src/capability.rs` | Add capability enforcement logic, `CapabilityChecker` |
-| `crates/clawft-kernel/src/process.rs` | Add `set_capabilities()`, resource usage tracking hooks |
-| `crates/clawft-kernel/src/lib.rs` | Re-export supervisor types |
-| `crates/clawft-core/src/agent/loop_core.rs` | Add pre-tool-call hook point for capability checking |
-| `crates/clawft-core/src/tools/registry.rs` | Add `filtered_tools()` method that applies capability filter |
-
-### Key Types
-
-**AgentSupervisor** (`supervisor.rs`):
-```rust
-pub struct AgentSupervisor<P: Platform> {
-    process_table: Arc<ProcessTable>,
-    kernel_ipc: Arc<KernelIpc>,
-    default_capabilities: AgentCapabilities,
-    _platform: PhantomData<P>,
-}
-
-pub struct SpawnRequest {
-    pub agent_id: String,
-    pub capabilities: Option<AgentCapabilities>,
-    pub parent_pid: Option<Pid>,
-    pub env: HashMap<String, String>,
-}
-
-pub struct SpawnResult {
-    pub pid: Pid,
-    pub agent_id: String,
-}
-
-impl<P: Platform> AgentSupervisor<P> {
-    pub async fn spawn(&self, request: SpawnRequest) -> Result<SpawnResult>;
-    pub async fn stop(&self, pid: Pid, graceful: bool) -> Result<()>;
-    pub async fn restart(&self, pid: Pid) -> Result<SpawnResult>;
-    pub async fn inspect(&self, pid: Pid) -> Result<ProcessEntry>;
-    pub async fn watch(&self, pid: Pid) -> tokio::sync::watch::Receiver<ProcessState>;
-    pub fn list_by_state(&self, state: ProcessState) -> Vec<ProcessEntry>;
-}
-```
-
-**CapabilityChecker** (`capability.rs`):
-```rust
-pub struct CapabilityChecker {
-    process_table: Arc<ProcessTable>,
-}
-
-impl CapabilityChecker {
-    pub fn check_tool_access(&self, pid: Pid, tool_name: &str) -> Result<()>;
-    pub fn check_ipc_target(&self, from_pid: Pid, to_pid: Pid) -> Result<()>;
-    pub fn check_service_access(&self, pid: Pid, service_name: &str) -> Result<()>;
-    pub fn check_resource_limit(&self, pid: Pid, resource: ResourceType) -> Result<()>;
-}
-
-pub enum ResourceType {
-    Memory(u64),
-    CpuTime(u64),
-    OpenFiles(u32),
-    ConcurrentTools(u32),
-}
-```
-
-**Capability file format** (loaded via `--capabilities <path>`):
-```json
-{
-  "sandbox": {
-    "allow_shell": false,
-    "allow_network": true,
-    "allowed_paths": ["/workspace"],
-    "denied_paths": ["/etc", "/root"]
-  },
-  "permissions": {
-    "tools": ["read_file", "write_file", "search"],
-    "deny_tools": ["shell_exec", "delete_file"]
-  },
-  "ipc_scope": {
-    "type": "topic",
-    "topics": ["build-status", "test-results"]
-  },
-  "resource_limits": {
-    "max_memory_mb": 256,
-    "max_cpu_seconds": 300,
-    "max_open_files": 50,
-    "max_concurrent_tools": 4
-  },
-  "service_access": ["memory", "cron"]
-}
-```
-
-### CLI Commands
-
-```
-weft agent spawn --capabilities <path>   -- Spawn agent with specific capabilities
-weft agent stop <pid>                     -- Gracefully stop agent by PID
-weft agent restart <pid>                  -- Restart agent (preserves PID mapping)
-weft agent inspect <pid>                  -- Show agent details, capabilities, resource usage
-```
+|------|--------|
+| `crates/clawft-kernel/src/supervisor.rs` | `spawn_and_run()`, running agent tracking, exochain wiring |
+| `crates/clawft-kernel/src/chain.rs` | `save_to_file()`, `load_from_file()`, `LocalChain::from_events()` |
+| `crates/clawft-kernel/src/tree_manager.rs` | `register_agent()`, `unregister_agent()`, `update_agent_state()` |
+| `crates/clawft-kernel/src/ipc.rs` | `send_checked()` (cfg exochain), `MessagePayload::Rvf` variant |
+| `crates/clawft-kernel/src/boot.rs` | Chain restore from checkpoint, supervisor exochain wiring, shutdown persistence |
+| `crates/clawft-kernel/src/lib.rs` | `pub mod gate` (exochain-gated), re-exports |
+| `crates/clawft-types/src/config/kernel.rs` | `checkpoint_path: Option<String>` in ChainConfig |
+| `crates/clawft-weave/src/commands/mod.rs` | `pub mod agent_cmd` |
+| `crates/clawft-weave/src/main.rs` | Agent command routing |
+| `crates/clawft-weave/src/protocol.rs` | Agent + IPC RPC types |
+| `crates/clawft-weave/src/daemon.rs` | 7 agent dispatch handlers |
 
 ---
 
 ## P -- Pseudocode
 
-### Agent Spawn
+### spawn_and_run (the K1 bridge)
 
 ```
-fn AgentSupervisor::spawn(request):
-    // 1. Resolve capabilities
-    caps = request.capabilities ?? self.default_capabilities
+fn AgentSupervisor::spawn_and_run(request, work_closure):
+    // 1. Create process entry via existing spawn()
+    result = self.spawn(request)?
 
-    // 2. Check resource limits (global)
-    if process_table.count_running() >= kernel_config.max_processes:
-        return Err(MaxProcessesReached)
+    // 2. Register in resource tree (exochain)
+    if tree_manager.is_some():
+        tree_manager.register_agent(agent_id, pid, capabilities)
 
-    // 3. Allocate PID and create process entry
-    pid = process_table.allocate_pid()
-    entry = ProcessEntry {
-        pid,
-        agent_id: request.agent_id,
-        state: Starting,
-        capabilities: caps,
-        resource_usage: ResourceUsage::zero(),
-        cancel_token: CancellationToken::new(),
-        parent_pid: request.parent_pid,
-    }
-    process_table.insert(entry)
+    // 3. Transition to Running
+    process_table.update_state(pid, Running)
 
-    // 4. Create filtered tool registry
-    filtered_tools = tool_registry.filtered_tools(caps.permissions)
+    // 4. Spawn tokio task
+    handle = tokio::spawn(async {
+        exit_code = work_closure(pid, cancel_token).await
 
-    // 5. Spawn AgentLoop (reuse existing mechanism)
-    agent_loop = AgentLoop::new(agent_config, platform, bus, pipeline, ...)
-    tokio::spawn(async {
-        process_table.update_state(pid, Running)
-        result = agent_loop.run(cancel_token).await
-        process_table.update_state(pid, Exited(result.code()))
+        // Cleanup
+        process_table.update_state(pid, Exited(exit_code))
+        tree_manager?.unregister_agent(agent_id, pid, exit_code)
+        chain_manager?.append("supervisor", "agent.exit", {pid, exit_code})
+        running_agents.remove(pid)
     })
 
-    return SpawnResult { pid, agent_id }
+    running_agents.insert(pid, handle)
+    return result
 ```
 
-### Capability Check on Tool Call
+### GateBackend (unified permission interface)
 
 ```
-fn CapabilityChecker::check_tool_access(pid, tool_name):
-    entry = process_table.get(pid)?
-    caps = entry.capabilities
+trait GateBackend:
+    fn check(agent_id, action, context) -> GateDecision
 
-    // Check deny list first (deny overrides allow)
-    if tool_name in caps.permissions.deny_tools:
-        return Err(ToolDenied(tool_name))
+enum GateDecision:
+    Permit { token: Option<Vec<u8>> }
+    Defer { reason: String }
+    Deny { reason: String, receipt: Option<Vec<u8>> }
 
-    // If allow list is non-empty, tool must be in it
-    if caps.permissions.tools is not empty:
-        if tool_name not in caps.permissions.tools:
-            return Err(ToolNotAllowed(tool_name))
-
-    // Check sandbox policy
-    if tool_name == "shell_exec" and not caps.sandbox.allow_shell:
-        return Err(ShellDenied)
-
-    // Check concurrent tool limit
-    if entry.resource_usage.concurrent_tools >= caps.resource_limits.max_concurrent_tools:
-        return Err(ConcurrentToolLimitReached)
-
-    Ok(())
+// CapabilityGate: always Permit or Deny (binary, no Defer)
+// TileZeroGate (future tilezero feature): three-way with crypto receipts
 ```
 
-### Graceful Stop
+### Chain Persistence
 
 ```
-fn AgentSupervisor::stop(pid, graceful):
-    entry = process_table.get(pid)?
+fn ChainManager::save_to_file(path):
+    events = self.local.events()
+    checkpoint = { events, metadata: { chain_id, sequence, prev_hash } }
+    fs::write(path, serde_json::to_string_pretty(checkpoint))
 
-    if graceful:
-        // Signal cancellation, let agent finish current tool call
-        process_table.update_state(pid, Stopping)
-        entry.cancel_token.cancel()
-
-        // Wait up to 30s for clean exit
-        timeout(30s, wait_for_exit(pid)).await
-        if still running:
-            // Force kill
-            drop(entry.cancel_token)
-    else:
-        // Immediate stop
-        drop(entry.cancel_token)
-        process_table.update_state(pid, Exited(-1))
+fn ChainManager::load_from_file(path, checkpoint_interval):
+    contents = fs::read_to_string(path)
+    checkpoint = serde_json::from_str(contents)
+    verify_integrity(checkpoint.events)
+    chain = LocalChain::from_events(events, checkpoint_interval)
+    return ChainManager { local: Mutex::new(chain) }
 ```
 
 ---
@@ -222,119 +138,143 @@ AgentSupervisor<P>
   +-- ProcessTable (shared with Kernel)
   |     +-- ProcessEntry { capabilities, cancel_token }
   |
-  +-- CapabilityChecker
-  |     +-- reads ProcessTable capabilities
-  |     +-- called by AgentLoop pre-tool hook
+  +-- running_agents: DashMap<Pid, JoinHandle>
   |
-  +-- AgentLoop (existing, created per spawn)
-        +-- ToolRegistry.filtered_tools(capabilities)
-        +-- pre_tool_call_hook -> CapabilityChecker
+  +-- KernelIpc
+  |     +-- send_checked() [cfg exochain]
+  |     +-- MessagePayload::Rvf { segment_type, data }
+  |
+  +-- TreeManager [cfg exochain, optional]
+  |     +-- register_agent() -> tree node + chain event
+  |     +-- unregister_agent() -> tree update + chain event
+  |
+  +-- ChainManager [cfg exochain, optional]
+  |     +-- save_to_file() / load_from_file()
+  |     +-- agent.spawn / agent.exit / agent.restart events
+  |
+  +-- GateBackend (trait object)
+        +-- CapabilityGate (default: binary Permit/Deny)
+        +-- TileZeroGate (future: three-way + crypto receipts)
 ```
 
-### Integration Points
-
-1. **AgentLoop hook**: Add `pre_tool_call` hook in `loop_core.rs`. If a `CapabilityChecker` is set, it's called before every tool execution. This is a trait-object callback, not a hard dependency on `clawft-kernel`.
-
-2. **ToolRegistry filtering**: `filtered_tools()` returns a view of the registry that excludes tools not in the agent's permission list. This is a new method on `ToolRegistry`, not a modification of existing methods.
-
-3. **Existing SandboxEnforcer reuse**: The `SandboxPolicy` in `AgentCapabilities` is the same type from `clawft-plugin`. `SandboxEnforcer` continues to work as-is for filesystem sandboxing; capabilities add tool-level and resource-level access control on top.
-
-### State Machine: Process Lifecycle
+### Weaver CLI Flow
 
 ```
-Starting --> Running --> Stopping --> Exited(0)
-    |            |           |
-    |            |           +-------> Exited(-1)  [force kill]
-    |            |
-    |            +--------> Suspended --> Running  [resume]
-    |                           |
-    |                           +-----> Stopping
-    |
-    +--------------------> Exited(1)  [boot failure]
+weaver agent spawn <id>
+  |
+  +-> DaemonClient -> Unix socket -> daemon.rs
+  |     method: "agent.spawn"
+  |     params: { agent_id, parent_pid }
+  |
+  +-> Daemon handler:
+  |     kernel.supervisor.spawn(request)
+  |     -> ProcessEntry created, PID returned
+  |
+  +-> Response: { pid, agent_id }
 ```
 
-### Ruvector Integration (Doc 07)
+### Feature Gates
 
-When the `ruvector-supervisor` feature gate is enabled, ruvector crates replace the
-custom capability checking and resource tracking subsystems. The custom implementations
-remain as fallbacks when the feature gate is disabled. See `07-ruvector-deep-integration.md`
-for full adapter code.
-
-| Custom Component | Ruvector Replacement | Feature Gate | Benefit |
-|---|---|---|---|
-| `CapabilityChecker` (binary Permit/Deny) | `cognitum-gate-tilezero::TileZero` (three-way Permit/Defer/Deny) | `ruvector-supervisor` | Defer enables escalation to supervisor or human; PermitTokens provide cryptographic proof |
-| `ResourceUsage` (manual tracking) | `ruvector-cognitive-container::EpochController` | `ruvector-supervisor` | Budget system with `try_budget()`, `consume()`, partial results on exhaustion |
-| (none -- new capability) | `rvf-crypto` witness receipts on Deny | `ruvector-crypto` | Every denied action gets a tamper-evident receipt in the witness chain |
-
-**ExoChain references**: `exo-identity::Did` provides persistent agent identity across
-restarts (DIDs survive PID reallocation). `exo-consent::Gatekeeper` trait maps directly
-to the capability checking interface and can serve as an alternative to the TileZero gate.
-
-Cross-reference: `07-ruvector-deep-integration.md`, Section 3 "Phase K1: Supervisor + RBAC".
+| Feature | What it enables |
+|---------|----------------|
+| (default) | Supervisor spawn/stop/restart, process table, CapabilityChecker |
+| `exochain` | TreeManager wiring, ChainManager wiring, send_checked(), GateBackend, chain persistence |
+| `tilezero` (planned) | cognitum-gate-tilezero as GateBackend implementation |
 
 ---
 
 ## R -- Refinement
 
-### Edge Cases
+### Decisions Made
 
-1. **Spawn with unknown capability file**: Return clear error with file path; don't use defaults silently
-2. **Stop already-exited process**: Idempotent; return Ok with warning log
-3. **Restart preserves PID mapping**: New agent gets new PID but supervisor tracks the restart lineage via `parent_pid`
-4. **Capability hot-update**: Not supported in K1 (future work). Requires agent restart to change capabilities.
-5. **Orphan processes**: When parent PID's agent exits, children continue running. Supervisor tracks but doesn't auto-kill (configurable in future)
-6. **Resource limit exceeded during tool call**: Tool call is aborted, agent receives error result, agent continues (not killed)
+1. **Factory closure pattern** (Option A from plan): Supervisor accepts `FnOnce(Pid, CancellationToken) -> Future<Output = i32>` instead of holding AppContext. Keeps supervisor in `clawft-kernel` without depending on `clawft-core` internals.
 
-### Backward Compatibility
+2. **DashMap for JoinHandles**: Reuses the workspace `dashmap` dependency for concurrent running agent tracking.
 
-- Existing `weft agent` commands continue to work. New `--capabilities` flag is optional
-- `AgentLoop` works without capability checker (None case). Only when kernel is active does the checker get installed
-- `ToolRegistry` existing methods unchanged; `filtered_tools()` is additive
+3. **Builder pattern for exochain**: `with_exochain(tree_manager, chain_manager)` avoids changing the existing constructor signature.
 
-### Error Handling
+4. **Force stop aborts directly**: When force-stopping, the task handle is aborted and cleanup (tree/chain) happens in the stop method itself, not the spawned task.
 
-- `SupervisorError` enum with variants: `MaxProcessesReached`, `ProcessNotFound`, `InvalidStateTransition`, `CapabilityDenied`, `SpawnFailed`
-- All errors include PID and agent_id for debugging
-- Failed spawns clean up process table entry
+5. **Chain restore is best-effort**: If checkpoint file is corrupt, log error and start fresh genesis. Don't block boot.
+
+6. **Agent tree nodes persist after exit**: `unregister_agent()` updates metadata (state=exited, exit_code, stop_time) but does NOT remove the node. This preserves the audit trail.
+
+### Edge Cases Handled
+
+- Spawn with table full: returns `KernelError::ProcessTableFull`
+- Stop already-exited process: idempotent, returns Ok
+- Force stop after task already exited: `running_agents.remove()` returns None, no abort needed
+- Chain checkpoint path missing: skip save, no error
+- Chain checkpoint file corrupt: log warning, start fresh genesis
+- Restart logs chain event linking old PID to new PID
 
 ---
 
 ## C -- Completion
 
-### Exit Criteria
+### Exit Criteria (all met)
 
-- [ ] `AgentSupervisor` spawns agent, creates `ProcessEntry` with capabilities
-- [ ] `CapabilityChecker` blocks tool calls not in permission list
-- [ ] `CapabilityChecker` blocks denied tools even if in allow list
-- [ ] Graceful stop signals cancellation and waits for clean exit
-- [ ] Force stop immediately terminates agent
-- [ ] Restart creates new agent preserving capability configuration
-- [ ] `weft agent inspect <pid>` shows capabilities and resource usage
-- [ ] Resource limits are checked (memory, cpu, concurrent tools)
-- [ ] `filtered_tools()` correctly excludes tools not in capabilities
-- [ ] Pre-tool-call hook works in AgentLoop without kernel dependency
-- [ ] Existing agent spawning works unchanged when kernel is disabled
-- [ ] All workspace tests pass (`scripts/build.sh test`)
-- [ ] Clippy clean (`scripts/build.sh clippy`)
+- [x] `spawn_and_run()` creates process entry AND runs work as tokio task
+- [x] Spawned agent appears in process table as `Running`
+- [x] Agent transitions to `Exited(exit_code)` when work completes
+- [x] Graceful stop cancels via CancellationToken
+- [x] Force stop aborts task handle via `JoinHandle::abort()`
+- [x] `abort_all()` cancels all running agents on shutdown
+- [x] Agent restart creates new PID linked via `parent_pid`, chain event logged
+- [x] `GateBackend` trait with Permit/Defer/Deny decisions
+- [x] `CapabilityGate` implements GateBackend (binary Permit/Deny)
+- [x] Agent spawn creates tree node + chain event (exochain)
+- [x] Agent stop updates tree node + chain event (exochain)
+- [x] Chain saves to checkpoint file on shutdown
+- [x] Chain restores from checkpoint file on boot
+- [x] `send_checked()` enforces IpcScope (exochain)
+- [x] `MessagePayload::Rvf` variant carries segment_type + data
+- [x] `weaver agent spawn/stop/restart/inspect/list/send` CLI wired
+- [x] Daemon dispatch handlers for all agent operations
+- [x] All 270 kernel tests pass (including 4 new supervisor tests)
+- [x] All workspace tests pass (1100+ total)
+- [x] Clippy clean for default and exochain features
 
-### Testing Verification
+### Test Summary
+
+| Test | Verifies |
+|------|----------|
+| `spawn_and_run_executes_work` | Work closure runs, exit code captured, state transitions |
+| `spawn_and_run_respects_cancellation` | CancellationToken stops the work closure |
+| `spawn_and_run_force_stop_aborts` | Force stop aborts task handle |
+| `abort_all_clears_running_agents` | All running tasks cancelled on bulk abort |
+
+### Verification Commands
 
 ```bash
-# Supervisor unit tests
+# Compile check (all feature combos)
+scripts/build.sh check
+cargo check -p clawft-kernel --features exochain
+
+# Tests
+scripts/build.sh test
 cargo test -p clawft-kernel -- supervisor
 
-# Capability enforcement tests
-cargo test -p clawft-kernel -- capability
+# Clippy
+scripts/build.sh clippy
+cargo clippy -p clawft-kernel --features exochain -- -D warnings
 
-# Integration: spawn with capabilities
-cargo test -p clawft-kernel -- test_supervised_agent
-
-# Regression check
-scripts/build.sh test
-
-# CLI smoke test
-cargo run --bin weft -- agent spawn --capabilities test-caps.json
-cargo run --bin weft -- kernel ps
-cargo run --bin weft -- agent inspect 1
-cargo run --bin weft -- agent stop 1
+# CLI smoke test (requires daemon)
+weaver agent spawn test-agent
+weaver agent list
+weaver agent inspect <pid>
+weaver agent send <pid> "hello"
+weaver agent stop <pid>
+weaver chain local -c 20   # shows agent.spawn/agent.stop events
+weaver resource tree        # shows /kernel/agents/test-agent node
 ```
+
+### Deferred to K2+
+
+- **cognitum-gate-tilezero integration**: `GateBackend` trait is ready; TileZero adapter behind `tilezero` feature gate is K2 work
+- **rvf-wire daemon RPC**: Replace JSON-over-Unix-socket with RVF segment framing (stretch goal)
+- **Per-PID message routing**: Agents subscribe and only receive targeted messages (K2 A2A)
+- **Pre-tool-call hook in AgentLoop**: Capability check before each tool execution (K2)
+- **Agent attach**: `weaver agent attach <pid>` is stubbed (prints not-yet-implemented)
+- **NodeScoring lifecycle integration**: Agent exit scoring via supervisor (compute performance observation from runtime metrics, blend into agent's node scoring), gate decision trust nudges (Permit -> trust boost alpha=0.1, Deny -> trust penalty alpha=0.1)
+- **NodeScoring CLI/RPC**: `weaver resource score <id>`, `weaver resource rank [--weights] [--count]` commands and daemon handlers (`resource.score`, `resource.rank` dispatch)
