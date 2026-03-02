@@ -29,6 +29,9 @@ use crate::ipc::{KernelMessage, MessageTarget};
 use crate::process::{Pid, ProcessState, ProcessTable};
 use crate::topic::TopicRouter;
 
+#[cfg(feature = "exochain")]
+use crate::chain::ChainManager;
+
 /// Default inbox channel capacity per agent.
 const DEFAULT_INBOX_CAPACITY: usize = 1024;
 
@@ -200,6 +203,38 @@ impl A2ARouter {
                 Err(KernelError::Ipc(format!("inbox closed for PID {pid}")))
             }
         }
+    }
+
+    /// Send a message with chain-event logging.
+    ///
+    /// This mirrors [`KernelIpc::send_checked`] but for the A2ARouter:
+    /// every routed message is logged as an `ipc.send` chain event with
+    /// sender, target, payload type, and message ID — forming a
+    /// tamper-evident IPC audit trail in the exochain.
+    ///
+    /// When the `exochain` feature is disabled this is equivalent to
+    /// a plain `send()`.
+    #[cfg(feature = "exochain")]
+    pub async fn send_checked(
+        &self,
+        msg: KernelMessage,
+        chain: Option<&ChainManager>,
+    ) -> KernelResult<()> {
+        // Log the IPC event before delivery so the chain records intent
+        // even if the inbox is full or closed.
+        if let Some(cm) = chain {
+            cm.append(
+                "ipc",
+                "ipc.send",
+                Some(serde_json::json!({
+                    "from": msg.from,
+                    "target": format!("{:?}", msg.target),
+                    "payload_type": msg.payload.type_name(),
+                    "msg_id": msg.id,
+                })),
+            );
+        }
+        self.send(msg).await
     }
 
     /// Get the topic router.
@@ -532,6 +567,70 @@ mod tests {
         assert!(matches!(
             received.payload,
             MessagePayload::ToolResult { ref call_id, .. } if call_id == "call-1"
+        ));
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn send_checked_logs_chain_event() {
+        let (router, pids, mut receivers) = setup_router(2);
+
+        let chain = crate::chain::ChainManager::new(0, 1000);
+        let initial_seq = chain.sequence();
+
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "audited");
+        router.send_checked(msg, Some(&chain)).await.unwrap();
+
+        // Message should still be delivered
+        let received = receivers[1].try_recv().unwrap();
+        assert!(matches!(
+            received.payload,
+            MessagePayload::Text(ref t) if t == "audited"
+        ));
+
+        // Chain should have a new ipc.send event
+        assert_eq!(chain.sequence(), initial_seq + 1);
+        let events = chain.tail(1);
+        assert_eq!(events[0].kind, "ipc.send");
+        assert_eq!(events[0].source, "ipc");
+        let payload = events[0].payload.as_ref().unwrap();
+        assert_eq!(payload["from"], pids[0]);
+        assert_eq!(payload["payload_type"], "text");
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn send_checked_without_chain_still_delivers() {
+        let (router, pids, mut receivers) = setup_router(2);
+
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "no-chain");
+        router.send_checked(msg, None).await.unwrap();
+
+        let received = receivers[1].try_recv().unwrap();
+        assert!(matches!(
+            received.payload,
+            MessagePayload::Text(ref t) if t == "no-chain"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rvf_payload_routes() {
+        let (router, pids, mut receivers) = setup_router(2);
+
+        let msg = KernelMessage::new(
+            pids[0],
+            MessageTarget::Process(pids[1]),
+            MessagePayload::Rvf {
+                segment_type: 0x40,
+                data: vec![0xCA, 0xFE],
+            },
+        );
+        router.send(msg).await.unwrap();
+
+        let received = receivers[1].try_recv().unwrap();
+        assert!(matches!(
+            received.payload,
+            MessagePayload::Rvf { segment_type: 0x40, .. }
         ));
     }
 }

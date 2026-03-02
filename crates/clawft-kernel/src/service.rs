@@ -153,6 +153,28 @@ impl ServiceRegistry {
         results
     }
 
+    /// Register a service and create a resource tree node + chain event.
+    ///
+    /// When the exochain feature is enabled and a tree manager is provided,
+    /// creates a node at `/kernel/services/{name}` in the resource tree
+    /// and appends a corresponding chain event via [`TreeManager`].
+    #[cfg(feature = "exochain")]
+    pub fn register_with_tree(
+        &self,
+        service: Arc<dyn SystemService>,
+        tree_manager: &crate::tree_manager::TreeManager,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let name = service.name().to_owned();
+        self.register(service)?;
+
+        // Create tree node + chain event through the unified TreeManager path
+        if let Err(e) = tree_manager.register_service(&name) {
+            tracing::debug!(service = %name, error = %e, "failed to register service in tree");
+        }
+
+        Ok(())
+    }
+
     /// Get the number of registered services.
     pub fn len(&self) -> usize {
         self.services.len()

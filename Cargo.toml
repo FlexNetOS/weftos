@@ -21,6 +21,7 @@ members = [
     "crates/clawft-security",
     "crates/clawft-kernel",
     "crates/clawft-weave",
+    "crates/exo-resource-tree",
 ]
 
 [workspace.package]
@@ -110,7 +111,12 @@ notify = "7"
 
 # RVF (RuVector Format) -- vector storage
 rvf-runtime = { version = "0.2", default-features = false, features = ["std"] }
-rvf-types = { version = "0.2", default-features = false, features = ["std"] }
+rvf-types = { path = "../ruvector/crates/rvf/rvf-types", default-features = false, features = ["std"] }
+rvf-crypto = { path = "../ruvector/crates/rvf/rvf-crypto", default-features = false, features = ["std"] }
+rvf-wire = { path = "../ruvector/crates/rvf/rvf-wire" }
+
+# CBOR codec (ExoChain payload format)
+ciborium = "0.2"
 
 # HNSW approximate nearest neighbor search
 instant-distance = "0.6"
@@ -122,6 +128,7 @@ dashmap = "6"
 ruvector-cluster = { path = "../ruvector/crates/ruvector-cluster" }
 ruvector-raft = { path = "../ruvector/crates/ruvector-raft" }
 ruvector-replication = { path = "../ruvector/crates/ruvector-replication" }
+cognitum-gate-tilezero = { path = "../ruvector/crates/cognitum-gate-tilezero" }
 parking_lot = "0.12"
 futures = "0.3"
 
@@ -143,6 +150,7 @@ clawft-plugin-calendar = { path = "crates/clawft-plugin-calendar" }
 clawft-plugin-containers = { path = "crates/clawft-plugin-containers" }
 clawft-security = { path = "crates/clawft-security" }
 clawft-kernel = { path = "crates/clawft-kernel", default-features = false }
+exo-resource-tree = { path = "crates/exo-resource-tree" }
 
 [profile.release]
 opt-level = "z"

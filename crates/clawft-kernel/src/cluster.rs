@@ -321,6 +321,28 @@ impl ClusterMembership {
         self.peers.is_empty()
     }
 
+    /// Add a peer and optionally create a resource tree node.
+    #[cfg(feature = "exochain")]
+    pub fn add_peer_with_tree(
+        &self,
+        peer: PeerNode,
+        tree: &std::sync::Mutex<exo_resource_tree::ResourceTree>,
+    ) -> Result<(), ClusterError> {
+        let peer_name = peer.name.clone();
+        self.add_peer(peer)?;
+
+        // Create tree node for this peer
+        let mut tree = tree.lock().unwrap();
+        let peer_id =
+            exo_resource_tree::ResourceId::new(format!("/network/peers/{peer_name}"));
+        let parent = exo_resource_tree::ResourceId::new("/network/peers");
+        if let Err(e) = tree.insert(peer_id, exo_resource_tree::ResourceKind::Device, parent) {
+            tracing::debug!(peer = %peer_name, error = %e, "failed to create tree node for peer");
+        }
+
+        Ok(())
+    }
+
     /// Get all active peer node IDs.
     pub fn active_peers(&self) -> Vec<NodeId> {
         self.peers

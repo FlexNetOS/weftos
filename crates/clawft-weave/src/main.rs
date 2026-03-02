@@ -16,6 +16,10 @@ mod client;
 mod commands;
 mod daemon;
 mod protocol;
+#[cfg(feature = "rvf-rpc")]
+mod rvf_codec;
+#[cfg(feature = "rvf-rpc")]
+mod rvf_rpc;
 
 /// WeftOS operator CLI.
 #[derive(Parser)]
@@ -40,8 +44,20 @@ enum Commands {
     /// Kernel management (boot, status, services, processes).
     Kernel(commands::kernel_cmd::KernelArgs),
 
+    /// Agent lifecycle management (spawn, stop, restart, inspect).
+    Agent(commands::agent_cmd::AgentArgs),
+
     /// Cluster management (nodes, shards, health).
     Cluster(commands::cluster_cmd::ClusterArgs),
+
+    /// Chain management (status, events, checkpoints).
+    Chain(commands::chain_cmd::ChainArgs),
+
+    /// Resource tree management (tree, inspect, stats).
+    Resource(commands::resource_cmd::ResourceArgs),
+
+    /// Cron job management (add, list, remove).
+    Cron(commands::cron_cmd::CronArgs),
 
     /// Show version and build info.
     Version,
@@ -61,7 +77,11 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Kernel(args) => commands::kernel_cmd::run(args).await?,
+        Commands::Agent(args) => commands::agent_cmd::run(args).await?,
         Commands::Cluster(args) => commands::cluster_cmd::run(args).await?,
+        Commands::Chain(args) => commands::chain_cmd::run(args).await?,
+        Commands::Resource(args) => commands::resource_cmd::run(args).await?,
+        Commands::Cron(args) => commands::cron_cmd::run(args).await?,
         Commands::Version => {
             println!("weaver {} (WeftOS)", env!("CARGO_PKG_VERSION"));
         }

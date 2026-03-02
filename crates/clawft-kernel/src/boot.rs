@@ -15,7 +15,8 @@ use clawft_core::bus::MessageBus;
 use clawft_platform::Platform;
 use clawft_types::config::Config;
 
-use crate::capability::AgentCapabilities;
+use crate::a2a::A2ARouter;
+use crate::capability::{AgentCapabilities, CapabilityChecker};
 use crate::cluster::{ClusterConfig, ClusterMembership};
 use crate::console::{BootEvent, BootLog, BootPhase, KernelEventLog};
 use crate::error::{KernelError, KernelResult};
@@ -24,6 +25,7 @@ use crate::ipc::KernelIpc;
 use crate::process::{ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 use crate::service::ServiceRegistry;
 use crate::supervisor::AgentSupervisor;
+use crate::topic::TopicRouter;
 use clawft_types::config::KernelConfig;
 
 /// Kernel lifecycle state.
@@ -69,12 +71,18 @@ pub struct Kernel<P: Platform> {
     process_table: Arc<ProcessTable>,
     service_registry: Arc<ServiceRegistry>,
     ipc: Arc<KernelIpc>,
+    a2a_router: Arc<A2ARouter>,
+    cron_service: Arc<crate::cron::CronService>,
     health: HealthSystem,
     supervisor: AgentSupervisor<P>,
     boot_log: BootLog,
     event_log: Arc<KernelEventLog>,
     boot_time: Instant,
     cluster_membership: Arc<ClusterMembership>,
+    #[cfg(feature = "exochain")]
+    chain_manager: Option<Arc<crate::chain::ChainManager>>,
+    #[cfg(feature = "exochain")]
+    tree_manager: Option<Arc<crate::tree_manager::TreeManager>>,
 }
 
 impl<P: Platform> Kernel<P> {
@@ -149,6 +157,25 @@ impl<P: Platform> Kernel<P> {
             BootPhase::Services,
             "Service registry ready",
         ));
+
+        // 5a. Construct A2ARouter (per-PID inboxes, capability-checked routing)
+        let capability_checker = Arc::new(CapabilityChecker::new(process_table.clone()));
+        let topic_router = Arc::new(TopicRouter::new(process_table.clone()));
+        let a2a_router = Arc::new(A2ARouter::new(
+            process_table.clone(),
+            capability_checker,
+            topic_router,
+        ));
+
+        boot_log.push(BootEvent::info(BootPhase::Services, "A2A router ready"));
+
+        // 5b. Register cron service (K0 gate requirement)
+        let cron_svc = Arc::new(crate::cron::CronService::new());
+        if let Err(e) = service_registry.register(cron_svc.clone()) {
+            error!(error = %e, "failed to register cron service");
+        } else {
+            boot_log.push(BootEvent::info(BootPhase::Services, "Cron service registered"));
+        }
 
         // 6. Create cluster membership (universal, always present)
         let cluster_config = ClusterConfig {
@@ -230,8 +257,280 @@ impl<P: Platform> Kernel<P> {
             .await
             .map_err(|e| KernelError::Boot(format!("service start failed: {e}")))?;
 
-        // TODO: exo-resource-tree -- when exo-dag feature is enabled,
-        // load resource tree from checkpoint during boot.
+        // 8b. Initialize local exochain (when exochain feature is enabled)
+        //     Restores from checkpoint file if available; otherwise fresh genesis.
+        #[cfg(feature = "exochain")]
+        let chain_manager = {
+            let chain_config = kernel_config.chain.clone().unwrap_or_default();
+            if chain_config.enabled {
+                let cm = if let Some(ref ckpt_path) = chain_config.checkpoint_path {
+                    let json_path = std::path::PathBuf::from(ckpt_path);
+                    // Derive RVF path from JSON path: same directory, `.rvf` extension
+                    let rvf_path = json_path.with_extension("rvf");
+
+                    if rvf_path.exists() {
+                        // Prefer RVF format (cryptographic integrity verification)
+                        match crate::chain::ChainManager::load_from_rvf(&rvf_path, chain_config.checkpoint_interval) {
+                            Ok(restored) => {
+                                let seq = restored.sequence();
+                                boot_log.push(BootEvent::info(
+                                    BootPhase::Services,
+                                    format!(
+                                        "Chain restored from RVF (seq={}, chain_id={})",
+                                        seq, chain_config.chain_id,
+                                    ),
+                                ));
+                                Arc::new(restored)
+                            }
+                            Err(e) => {
+                                error!(error = %e, "failed to restore RVF chain, trying JSON fallback");
+                                // Fall back to JSON
+                                if json_path.exists() {
+                                    match crate::chain::ChainManager::load_from_file(&json_path, chain_config.checkpoint_interval) {
+                                        Ok(restored) => {
+                                            let seq = restored.sequence();
+                                            boot_log.push(BootEvent::info(
+                                                BootPhase::Services,
+                                                format!(
+                                                    "Chain restored from JSON fallback (seq={}, chain_id={})",
+                                                    seq, chain_config.chain_id,
+                                                ),
+                                            ));
+                                            Arc::new(restored)
+                                        }
+                                        Err(e2) => {
+                                            error!(error = %e2, "JSON fallback also failed, starting fresh");
+                                            boot_log.push(BootEvent::info(
+                                                BootPhase::Services,
+                                                format!("Chain restore failed (RVF: {e}, JSON: {e2}), starting fresh"),
+                                            ));
+                                            Arc::new(crate::chain::ChainManager::new(
+                                                chain_config.chain_id,
+                                                chain_config.checkpoint_interval,
+                                            ))
+                                        }
+                                    }
+                                } else {
+                                    boot_log.push(BootEvent::info(
+                                        BootPhase::Services,
+                                        format!("RVF restore failed: {e}, starting fresh"),
+                                    ));
+                                    Arc::new(crate::chain::ChainManager::new(
+                                        chain_config.chain_id,
+                                        chain_config.checkpoint_interval,
+                                    ))
+                                }
+                            }
+                        }
+                    } else if json_path.exists() {
+                        // Legacy JSON format
+                        match crate::chain::ChainManager::load_from_file(&json_path, chain_config.checkpoint_interval) {
+                            Ok(restored) => {
+                                let seq = restored.sequence();
+                                boot_log.push(BootEvent::info(
+                                    BootPhase::Services,
+                                    format!(
+                                        "Chain restored from JSON (seq={}, chain_id={}, will migrate to RVF)",
+                                        seq, chain_config.chain_id,
+                                    ),
+                                ));
+                                Arc::new(restored)
+                            }
+                            Err(e) => {
+                                error!(error = %e, "failed to restore chain, starting fresh");
+                                boot_log.push(BootEvent::info(
+                                    BootPhase::Services,
+                                    format!("Chain restore failed: {e}, starting fresh"),
+                                ));
+                                Arc::new(crate::chain::ChainManager::new(
+                                    chain_config.chain_id,
+                                    chain_config.checkpoint_interval,
+                                ))
+                            }
+                        }
+                    } else {
+                        Arc::new(crate::chain::ChainManager::new(
+                            chain_config.chain_id,
+                            chain_config.checkpoint_interval,
+                        ))
+                    }
+                } else {
+                    Arc::new(crate::chain::ChainManager::new(
+                        chain_config.chain_id,
+                        chain_config.checkpoint_interval,
+                    ))
+                };
+
+                boot_log.push(BootEvent::info(
+                    BootPhase::Services,
+                    format!(
+                        "Local chain ready (chain_id={}, seq={})",
+                        chain_config.chain_id,
+                        cm.sequence(),
+                    ),
+                ));
+
+                // Log boot phases to chain
+                cm.append(
+                    "kernel",
+                    "boot.init",
+                    Some(serde_json::json!({"version": "0.1.0"})),
+                );
+                cm.append(
+                    "kernel",
+                    "boot.config",
+                    Some(serde_json::json!({
+                        "max_processes": kernel_config.max_processes,
+                        "health_interval": kernel_config.health_check_interval_secs,
+                    })),
+                );
+                cm.append(
+                    "kernel",
+                    "boot.services",
+                    Some(serde_json::json!({
+                        "count": service_registry.len(),
+                    })),
+                );
+
+                Some(cm)
+            } else {
+                boot_log.push(BootEvent::info(
+                    BootPhase::Services,
+                    "Local chain disabled",
+                ));
+                None
+            }
+        };
+
+        // 8c. Bootstrap resource tree via TreeManager (when exochain feature is enabled)
+        //     First attempt to restore from checkpoint; fall back to fresh bootstrap.
+        #[cfg(feature = "exochain")]
+        let tree_manager = {
+            let rt_config = kernel_config.resource_tree.clone().unwrap_or_default();
+            if rt_config.enabled {
+                if let Some(ref cm) = chain_manager {
+                    let tm = Arc::new(crate::tree_manager::TreeManager::new(Arc::clone(cm)));
+
+                    // Derive tree checkpoint path from chain checkpoint path
+                    let tree_ckpt_path = kernel_config
+                        .chain
+                        .as_ref()
+                        .and_then(|c| c.checkpoint_path.as_ref())
+                        .map(|p| std::path::PathBuf::from(p).with_extension("tree.json"));
+
+                    let mut restored_from_checkpoint = false;
+                    if let Some(ref tree_path) = tree_ckpt_path {
+                        if tree_path.exists() {
+                            match tm.load_checkpoint(tree_path) {
+                                Ok(()) => {
+                                    let stats = tm.stats();
+                                    boot_log.push(BootEvent::info(
+                                        BootPhase::ResourceTree,
+                                        format!(
+                                            "Resource tree restored from checkpoint ({} nodes, root={}...)",
+                                            stats.node_count,
+                                            &stats.root_hash[..12],
+                                        ),
+                                    ));
+                                    restored_from_checkpoint = true;
+                                }
+                                Err(e) => {
+                                    error!(error = %e, "failed to restore tree checkpoint, bootstrapping fresh");
+                                }
+                            }
+                        }
+                    }
+
+                    if !restored_from_checkpoint {
+                        if let Err(e) = tm.bootstrap() {
+                            error!(error = %e, "failed to bootstrap resource tree");
+                            // Still allow boot to proceed without tree
+                        } else {
+                            let stats = tm.stats();
+                            boot_log.push(BootEvent::info(
+                                BootPhase::ResourceTree,
+                                format!(
+                                    "Resource tree bootstrapped ({} nodes, root={}...)",
+                                    stats.node_count,
+                                    &stats.root_hash[..12],
+                                ),
+                            ));
+                        }
+                    }
+
+                    // Register cron service in tree with manifest (5b wiring)
+                    if let Err(e) = tm.register_service_with_manifest("cron", "scheduler") {
+                        tracing::debug!(error = %e, "failed to register cron in tree (may already exist)");
+                    }
+
+                    Some(tm)
+                } else {
+                    boot_log.push(BootEvent::info(
+                        BootPhase::ResourceTree,
+                        "Resource tree requires chain — skipped",
+                    ));
+                    None
+                }
+            } else {
+                boot_log.push(BootEvent::info(
+                    BootPhase::ResourceTree,
+                    "Resource tree disabled",
+                ));
+                None
+            }
+        };
+
+        // 8d. Log cluster and boot.ready chain events
+        #[cfg(feature = "exochain")]
+        if let Some(ref cm) = chain_manager {
+            cm.append(
+                "kernel",
+                "boot.cluster",
+                Some(serde_json::json!({
+                    "node_id": cluster_membership.local_node_id(),
+                })),
+            );
+
+            let elapsed_ms = boot_time.elapsed().as_millis() as u64;
+            let mut ready_payload = serde_json::json!({
+                "elapsed_ms": elapsed_ms,
+                "processes": process_table.len(),
+                "services": service_registry.len(),
+            });
+
+            if let Some(ref tm) = tree_manager {
+                let root_hash = tm.stats().root_hash;
+                ready_payload
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("tree_root_hash".to_string(), serde_json::json!(root_hash));
+            }
+
+            cm.append("kernel", "boot.ready", Some(ready_payload));
+
+            // Emit boot manifest as a chain event (becomes an ExochainCheckpoint
+            // segment in RVF persistence, capturing the complete boot state).
+            let mut manifest = serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "node_id": cluster_membership.local_node_id(),
+                "process_count": process_table.len(),
+                "service_count": service_registry.len(),
+                "chain_sequence": cm.sequence(),
+                "boot_elapsed_ms": boot_time.elapsed().as_millis() as u64,
+            });
+            if let Some(ref tm) = tree_manager {
+                let stats = tm.stats();
+                manifest.as_object_mut().unwrap().insert(
+                    "tree_root_hash".to_string(),
+                    serde_json::json!(stats.root_hash),
+                );
+                manifest.as_object_mut().unwrap().insert(
+                    "tree_node_count".to_string(),
+                    serde_json::json!(stats.node_count),
+                );
+            }
+            cm.append("kernel", "boot.manifest", Some(manifest));
+        }
 
         let elapsed = boot_time.elapsed();
         boot_log.push(BootEvent::info(
@@ -258,6 +557,16 @@ impl<P: Platform> Kernel<P> {
             AgentCapabilities::default(),
         );
 
+        // 9b. Wire A2ARouter and cron into supervisor
+        let supervisor = supervisor.with_a2a_router(a2a_router.clone(), cron_svc.clone());
+
+        // 9c. Wire exochain managers into supervisor
+        #[cfg(feature = "exochain")]
+        let supervisor = supervisor.with_exochain(
+            tree_manager.clone(),
+            chain_manager.clone(),
+        );
+
         // 10. Seed the event ring buffer with boot events
         let event_log = Arc::new(KernelEventLog::new());
         event_log.ingest_boot_log(&boot_log);
@@ -270,12 +579,18 @@ impl<P: Platform> Kernel<P> {
             process_table,
             service_registry,
             ipc,
+            a2a_router,
+            cron_service: cron_svc,
             health,
             supervisor,
             boot_log,
             event_log,
             boot_time,
             cluster_membership,
+            #[cfg(feature = "exochain")]
+            chain_manager,
+            #[cfg(feature = "exochain")]
+            tree_manager,
         })
     }
 
@@ -300,15 +615,87 @@ impl<P: Platform> Kernel<P> {
             error!(error = %e, "error stopping services during shutdown");
         }
 
+        // Checkpoint tree+chain before shutting down
+        #[cfg(feature = "exochain")]
+        if let Some(ref tm) = self.tree_manager
+            && let Some(ref cm) = self.chain_manager
+        {
+            let stats = tm.stats();
+            cm.append(
+                "kernel",
+                "shutdown",
+                Some(serde_json::json!({
+                    "tree_root_hash": stats.root_hash,
+                    "chain_seq": cm.sequence(),
+                    "tree_nodes": stats.node_count,
+                })),
+            );
+        }
+
+        // Abort all running agent tasks
+        self.supervisor.abort_all();
+
         // Cancel all processes
         for entry in self.process_table.list() {
             if entry.pid == 0 {
                 continue; // Don't cancel the kernel process
             }
             entry.cancel_token.cancel();
+
+            // Log agent stop in tree/chain
+            #[cfg(feature = "exochain")]
+            if let Some(ref tm) = self.tree_manager {
+                let _ = tm.unregister_agent(&entry.agent_id, entry.pid, 0);
+            }
+
             let _ = self
                 .process_table
                 .update_state(entry.pid, ProcessState::Exited(0));
+        }
+
+        // Persist chain to RVF checkpoint (primary), JSON as fallback
+        #[cfg(feature = "exochain")]
+        if let Some(ref cm) = self.chain_manager
+            && let Some(ref ckpt_path) = self
+                .config
+                .chain
+                .as_ref()
+                .and_then(|c| c.checkpoint_path.as_ref())
+        {
+            let json_path = std::path::PathBuf::from(ckpt_path);
+            let rvf_path = json_path.with_extension("rvf");
+
+            // Save RVF format (primary)
+            match cm.save_to_rvf(&rvf_path) {
+                Ok(()) => info!(path = %rvf_path.display(), "chain saved to RVF checkpoint"),
+                Err(e) => {
+                    error!(error = %e, "failed to save RVF checkpoint, falling back to JSON");
+                    // Fallback: save JSON
+                    match cm.save_to_file(&json_path) {
+                        Ok(()) => info!(path = %json_path.display(), "chain saved to JSON checkpoint (fallback)"),
+                        Err(e2) => error!(error = %e2, "failed to save JSON checkpoint fallback"),
+                    }
+                }
+            }
+
+            // Save tree checkpoint alongside chain
+            if let Some(ref tm) = self.tree_manager {
+                let tree_path = json_path.with_extension("tree.json");
+                match tm.save_checkpoint(&tree_path) {
+                    Ok(()) => {
+                        info!(path = %tree_path.display(), "tree checkpoint saved");
+                        cm.append(
+                            "tree",
+                            "tree.checkpoint",
+                            Some(serde_json::json!({
+                                "path": tree_path.display().to_string(),
+                                "root_hash": tm.stats().root_hash,
+                            })),
+                        );
+                    }
+                    Err(e) => error!(error = %e, "failed to save tree checkpoint"),
+                }
+            }
         }
 
         self.state = KernelState::Halted;
@@ -347,6 +734,16 @@ impl<P: Platform> Kernel<P> {
         &self.bus
     }
 
+    /// Get the A2A router.
+    pub fn a2a_router(&self) -> &Arc<A2ARouter> {
+        &self.a2a_router
+    }
+
+    /// Get the cron service.
+    pub fn cron_service(&self) -> &Arc<crate::cron::CronService> {
+        &self.cron_service
+    }
+
     /// Get the health system.
     pub fn health(&self) -> &HealthSystem {
         &self.health
@@ -375,6 +772,18 @@ impl<P: Platform> Kernel<P> {
     /// Get the cluster membership tracker.
     pub fn cluster_membership(&self) -> &Arc<ClusterMembership> {
         &self.cluster_membership
+    }
+
+    /// Get the local chain manager (when exochain feature is enabled).
+    #[cfg(feature = "exochain")]
+    pub fn chain_manager(&self) -> Option<&Arc<crate::chain::ChainManager>> {
+        self.chain_manager.as_ref()
+    }
+
+    /// Get the tree manager (when exochain feature is enabled).
+    #[cfg(feature = "exochain")]
+    pub fn tree_manager(&self) -> Option<&Arc<crate::tree_manager::TreeManager>> {
+        self.tree_manager.as_ref()
     }
 
     /// Take ownership of the AppContext for agent loop consumption.
@@ -415,6 +824,8 @@ mod tests {
             max_processes: 16,
             health_check_interval_secs: 5,
             cluster: None,
+            chain: None,
+            resource_tree: None,
         }
     }
 
@@ -484,7 +895,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(kernel.services().is_empty());
+        assert_eq!(kernel.services().len(), 1); // cron service registered at boot
     }
 
     #[tokio::test]

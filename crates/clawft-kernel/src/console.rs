@@ -231,6 +231,21 @@ impl KernelEventLog {
         });
     }
 
+    /// Push an info event and optionally append to the local chain.
+    #[cfg(feature = "exochain")]
+    pub fn info_with_chain(
+        &self,
+        source: &str,
+        message: impl Into<String>,
+        chain: Option<&crate::chain::ChainManager>,
+    ) {
+        let msg = message.into();
+        self.info(source, &msg);
+        if let Some(cm) = chain {
+            cm.append(source, "log.info", Some(serde_json::json!({ "message": msg })));
+        }
+    }
+
     /// Ingest all events from a BootLog (used to seed boot events).
     pub fn ingest_boot_log(&self, boot_log: &BootLog) {
         for event in boot_log.events() {

@@ -1,7 +1,11 @@
 //! Command implementations for `weaver`.
 
+pub mod agent_cmd;
+pub mod chain_cmd;
 pub mod cluster_cmd;
+pub mod cron_cmd;
 pub mod kernel_cmd;
+pub mod resource_cmd;
 
 use std::path::Path;
 

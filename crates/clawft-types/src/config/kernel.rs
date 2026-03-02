@@ -133,6 +133,14 @@ pub struct KernelConfig {
     /// Cluster networking configuration (native coordinator nodes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster: Option<ClusterNetworkConfig>,
+
+    /// Local chain configuration (exochain feature).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<ChainConfig>,
+
+    /// Resource tree configuration (exochain feature).
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "resourceTree")]
+    pub resource_tree: Option<ResourceTreeConfig>,
 }
 
 impl Default for KernelConfig {
@@ -142,6 +150,80 @@ impl Default for KernelConfig {
             max_processes: default_max_processes(),
             health_check_interval_secs: default_health_check_interval_secs(),
             cluster: None,
+            chain: None,
+            resource_tree: None,
+        }
+    }
+}
+
+/// Local chain configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainConfig {
+    /// Whether the local chain is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Maximum events before auto-checkpoint.
+    #[serde(default = "default_checkpoint_interval", alias = "checkpointInterval")]
+    pub checkpoint_interval: u64,
+
+    /// Chain ID (0 = local node chain).
+    #[serde(default)]
+    pub chain_id: u32,
+
+    /// Path to the chain checkpoint file for persistence across restarts.
+    /// If `None`, defaults to `~/.clawft/chain/local.json`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "checkpointPath"
+    )]
+    pub checkpoint_path: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_checkpoint_interval() -> u64 {
+    1000
+}
+
+impl Default for ChainConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            checkpoint_interval: default_checkpoint_interval(),
+            chain_id: 0,
+            checkpoint_path: None,
+        }
+    }
+}
+
+/// Resource tree configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceTreeConfig {
+    /// Whether the resource tree is enabled.
+    #[serde(default = "default_true_rt")]
+    pub enabled: bool,
+
+    /// Path to checkpoint file (None = in-memory only).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "checkpointPath"
+    )]
+    pub checkpoint_path: Option<String>,
+}
+
+fn default_true_rt() -> bool {
+    true
+}
+
+impl Default for ResourceTreeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            checkpoint_path: None,
         }
     }
 }
@@ -180,6 +262,8 @@ mod tests {
             max_processes: 256,
             health_check_interval_secs: 10,
             cluster: None,
+            chain: None,
+            resource_tree: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: KernelConfig = serde_json::from_str(&json).unwrap();

@@ -53,6 +53,31 @@ pub enum MessagePayload {
     },
     /// System control signal.
     Signal(KernelSignal),
+    /// RVF-typed payload with segment type hint.
+    ///
+    /// Agents can exchange RVF-typed messages. The segment type tells
+    /// the receiver what format the data is in (using rvf-types
+    /// discriminants, e.g. 0x40 = ExochainEvent).
+    Rvf {
+        /// RVF segment type discriminant.
+        segment_type: u8,
+        /// Payload data (CBOR, JSON, or raw bytes).
+        data: Vec<u8>,
+    },
+}
+
+impl MessagePayload {
+    /// Return the payload type name (for logging/chain events).
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            MessagePayload::Text(_) => "text",
+            MessagePayload::Json(_) => "json",
+            MessagePayload::ToolCall { .. } => "tool_call",
+            MessagePayload::ToolResult { .. } => "tool_result",
+            MessagePayload::Signal(_) => "signal",
+            MessagePayload::Rvf { .. } => "rvf",
+        }
+    }
 }
 
 /// Kernel control signals.
@@ -184,6 +209,42 @@ impl KernelIpc {
     /// Get a reference to the underlying MessageBus.
     pub fn bus(&self) -> &Arc<MessageBus> {
         &self.bus
+    }
+
+    /// Send a kernel message with RBAC enforcement and chain logging.
+    ///
+    /// 1. If the target is `Process(to_pid)`, checks IPC capability
+    ///    via the `CapabilityChecker`.
+    /// 2. Logs the send event to the chain (if provided).
+    /// 3. Publishes via the bus.
+    #[cfg(feature = "exochain")]
+    pub fn send_checked(
+        &self,
+        msg: &KernelMessage,
+        checker: &crate::capability::CapabilityChecker,
+        chain: Option<&crate::chain::ChainManager>,
+    ) -> Result<(), KernelError> {
+        // 1. Check IPC capability
+        if let MessageTarget::Process(to_pid) = &msg.target {
+            checker.check_ipc_target(msg.from, *to_pid)?;
+        }
+
+        // 2. Log to chain
+        if let Some(cm) = chain {
+            cm.append(
+                "ipc",
+                "ipc.send",
+                Some(serde_json::json!({
+                    "from": msg.from,
+                    "target": format!("{:?}", msg.target),
+                    "payload_type": msg.payload.type_name(),
+                    "msg_id": msg.id,
+                })),
+            );
+        }
+
+        // 3. Send via bus
+        self.send(msg)
     }
 
     /// Send a kernel message.
@@ -392,6 +453,40 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let restored: KernelMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.correlation_id, Some("corr-456".into()));
+    }
+
+    #[test]
+    fn rvf_payload_variant() {
+        let payload = MessagePayload::Rvf {
+            segment_type: 0x40,
+            data: vec![0xCA, 0xFE],
+        };
+        let msg = KernelMessage::new(1, MessageTarget::Process(2), payload);
+        assert_eq!(msg.payload.type_name(), "rvf");
+
+        // serde roundtrip
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: KernelMessage = serde_json::from_str(&json).unwrap();
+        match &restored.payload {
+            MessagePayload::Rvf { segment_type, data } => {
+                assert_eq!(*segment_type, 0x40);
+                assert_eq!(data, &[0xCA, 0xFE]);
+            }
+            other => panic!("expected Rvf, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn payload_type_names() {
+        assert_eq!(MessagePayload::Text("hi".into()).type_name(), "text");
+        assert_eq!(
+            MessagePayload::Json(serde_json::json!(1)).type_name(),
+            "json"
+        );
+        assert_eq!(
+            MessagePayload::Signal(KernelSignal::Ping).type_name(),
+            "signal"
+        );
     }
 
     #[test]

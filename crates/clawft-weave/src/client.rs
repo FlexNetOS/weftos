@@ -52,6 +52,66 @@ pub async fn is_daemon_running() -> bool {
     DaemonClient::connect().await.is_some()
 }
 
+// ── RVF-framed client ────────────────────────────────────
+
+/// A client that speaks the RVF-framed protocol to the kernel daemon.
+///
+/// Sends a 4-byte `RVFS` handshake on connect, then exchanges
+/// length-prefixed RVF segments with content-hash integrity.
+#[cfg(feature = "rvf-rpc")]
+#[allow(dead_code)]
+pub struct RvfDaemonClient {
+    reader: crate::rvf_codec::RvfFrameReader<tokio::net::unix::OwnedReadHalf>,
+    writer: crate::rvf_codec::RvfFrameWriter<tokio::net::unix::OwnedWriteHalf>,
+    next_segment_id: u64,
+}
+
+#[cfg(feature = "rvf-rpc")]
+#[allow(dead_code)]
+impl RvfDaemonClient {
+    /// Connect to the daemon in RVF mode. Returns `None` if no daemon is running.
+    pub async fn connect() -> Option<Self> {
+        use tokio::io::AsyncWriteExt;
+
+        let path = protocol::socket_path();
+        let mut stream = UnixStream::connect(&path).await.ok()?;
+
+        // Send RVF handshake magic so the daemon switches to RVF mode.
+        stream.write_all(b"RVFS").await.ok()?;
+
+        let (reader, writer) = stream.into_split();
+        Some(Self {
+            reader: crate::rvf_codec::RvfFrameReader::new(reader),
+            writer: crate::rvf_codec::RvfFrameWriter::new(writer),
+            next_segment_id: 1,
+        })
+    }
+
+    /// Send a request and wait for the RVF-framed response.
+    pub async fn call(&mut self, request: Request) -> anyhow::Result<Response> {
+        let (seg_type, payload, flags, segment_id) =
+            crate::rvf_rpc::encode_request(&request, self.next_segment_id);
+        self.next_segment_id += 1;
+
+        self.writer
+            .write_frame(seg_type, &payload, flags, segment_id)
+            .await?;
+
+        let frame = self
+            .reader
+            .read_frame()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))?;
+
+        crate::rvf_rpc::decode_response(&frame)
+    }
+
+    /// Convenience: send a no-params request.
+    pub async fn simple_call(&mut self, method: &str) -> anyhow::Result<Response> {
+        self.call(Request::new(method)).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

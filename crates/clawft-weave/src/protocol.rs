@@ -236,6 +236,195 @@ pub struct ClusterLeaveParams {
     pub node_id: String,
 }
 
+// ── Chain result types ────────────────────────────────────
+
+/// Result of `chain.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainStatusResult {
+    pub chain_id: u32,
+    pub sequence: u64,
+    pub event_count: usize,
+    pub checkpoint_count: usize,
+    pub events_since_checkpoint: u64,
+    pub last_hash: String,
+}
+
+/// A single chain event for `chain.local`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainEventInfo {
+    pub sequence: u64,
+    pub chain_id: u32,
+    pub timestamp: String,
+    pub source: String,
+    pub kind: String,
+    pub hash: String,
+}
+
+/// Parameters for `chain.local`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainLocalParams {
+    /// Number of recent events to return (0 = all).
+    #[serde(default)]
+    pub count: usize,
+}
+
+/// Result of `chain.verify`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainVerifyResult {
+    pub valid: bool,
+    pub event_count: usize,
+    pub errors: Vec<String>,
+}
+
+// ── Resource tree result types ────────────────────────────
+
+/// Result of `resource.stats`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceStatsResult {
+    pub total_nodes: usize,
+    pub root_hash: String,
+    pub namespaces: usize,
+    pub services: usize,
+    pub agents: usize,
+    pub devices: usize,
+}
+
+/// A single resource node for `resource.tree` / `resource.inspect`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceNodeInfo {
+    pub id: String,
+    pub kind: String,
+    pub parent: Option<String>,
+    pub children: Vec<String>,
+    pub metadata: serde_json::Value,
+    pub merkle_hash: String,
+}
+
+/// Parameters for `resource.inspect`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceInspectParams {
+    /// Resource path to inspect.
+    pub path: String,
+}
+
+// ── Agent result types ───────────────────────────────────
+
+/// Parameters for `agent.spawn`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpawnParams {
+    /// Unique identifier for the agent.
+    pub agent_id: String,
+    /// Optional parent PID.
+    #[serde(default)]
+    pub parent_pid: Option<u64>,
+}
+
+/// Result of `agent.spawn`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpawnResult {
+    pub pid: u64,
+    pub agent_id: String,
+}
+
+/// Parameters for `agent.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStopParams {
+    /// PID of the agent to stop.
+    pub pid: u64,
+    /// Whether to stop gracefully (default: true).
+    #[serde(default = "default_true")]
+    pub graceful: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Parameters for `agent.restart`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRestartParams {
+    /// PID of the agent to restart.
+    pub pid: u64,
+}
+
+/// Full inspection result for `agent.inspect`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInspectResult {
+    pub pid: u64,
+    pub agent_id: String,
+    pub state: String,
+    pub memory_bytes: u64,
+    pub cpu_time_ms: u64,
+    pub parent_pid: Option<u64>,
+    pub can_spawn: bool,
+    pub can_ipc: bool,
+    pub can_exec_tools: bool,
+    pub can_network: bool,
+}
+
+/// Parameters for `agent.send`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSendParams {
+    /// Target PID.
+    pub pid: u64,
+    /// Text message to send.
+    pub message: String,
+}
+
+// ── Chain export types ───────────────────────────────────
+
+/// Parameters for `chain.export`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainExportParams {
+    /// Export format: "json" or "rvf".
+    #[serde(default = "default_export_format")]
+    pub format: String,
+    /// Output file path (daemon-side, used for "rvf" format).
+    #[serde(default)]
+    pub output: Option<String>,
+}
+
+fn default_export_format() -> String {
+    "json".into()
+}
+
+// ── Cron result types ────────────────────────────────────
+
+/// Parameters for `cron.add`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronAddParams {
+    /// Human-readable name for the job.
+    pub name: String,
+    /// Fire every N seconds.
+    pub interval_secs: u64,
+    /// Command payload to send.
+    pub command: String,
+    /// Target agent PID (optional).
+    #[serde(default)]
+    pub target_pid: Option<u64>,
+}
+
+/// Parameters for `cron.remove`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronRemoveParams {
+    /// Job ID to remove.
+    pub id: String,
+}
+
+/// A single cron job entry for `cron.list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronJobInfo {
+    pub id: String,
+    pub name: String,
+    pub interval_secs: u64,
+    pub command: String,
+    pub target_pid: Option<u64>,
+    pub enabled: bool,
+    pub fire_count: u64,
+    pub last_fired: Option<String>,
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

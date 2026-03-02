@@ -40,6 +40,7 @@
 
 pub mod a2a;
 pub mod agency;
+pub mod agent_loop;
 pub mod app;
 pub mod boot;
 pub mod capability;
@@ -47,8 +48,15 @@ pub mod cluster;
 pub mod config;
 pub mod console;
 pub mod container;
+pub mod cron;
+#[cfg(feature = "exochain")]
+pub mod chain;
+#[cfg(feature = "exochain")]
+pub mod tree_manager;
 pub mod environment;
 pub mod error;
+#[cfg(feature = "exochain")]
+pub mod gate;
 pub mod governance;
 pub mod health;
 pub mod ipc;
@@ -73,6 +81,12 @@ pub use capability::{
     AgentCapabilities, CapabilityChecker, IpcScope, ResourceLimits, ResourceType, SandboxPolicy,
     ToolPermissions,
 };
+#[cfg(feature = "exochain")]
+pub use chain::{ChainCheckpoint, ChainEvent, ChainManager, ChainStatus, ChainVerifyResult};
+#[cfg(feature = "exochain")]
+pub use gate::{CapabilityGate, GateBackend, GateDecision};
+#[cfg(feature = "exochain")]
+pub use tree_manager::{TreeManager, TreeStats};
 pub use clawft_types::config::{ClusterNetworkConfig, KernelConfig};
 pub use cluster::{
     ClusterConfig, ClusterError, ClusterMembership, NodeId, NodePlatform, NodeState, PeerNode,
@@ -81,6 +95,7 @@ pub use cluster::{
 pub use cluster::ClusterService;
 pub use config::KernelConfigExt;
 pub use console::{BootEvent, BootLog, BootPhase, KernelEventLog, LogLevel};
+pub use cron::CronService;
 pub use container::{
     ContainerConfig, ContainerError, ContainerManager, ContainerState, ManagedContainer,
     PortMapping, RestartPolicy, VolumeMount,

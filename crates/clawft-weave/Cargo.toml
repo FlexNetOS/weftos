@@ -17,6 +17,8 @@ path = "src/main.rs"
 [features]
 default = []
 cluster = ["clawft-kernel/cluster"]
+exochain = ["clawft-kernel/exochain", "dep:exo-resource-tree"]
+rvf-rpc = ["dep:rvf-wire", "dep:rvf-types"]
 
 [dependencies]
 clawft-kernel = { workspace = true, features = ["native"] }
@@ -33,3 +35,6 @@ comfy-table = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
+exo-resource-tree = { workspace = true, optional = true }
+rvf-wire = { workspace = true, optional = true }
+rvf-types = { workspace = true, optional = true }

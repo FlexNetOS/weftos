@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -71,6 +72,13 @@ pub struct AgentSupervisor<P: Platform> {
     process_table: Arc<ProcessTable>,
     kernel_ipc: Arc<KernelIpc>,
     default_capabilities: AgentCapabilities,
+    running_agents: Arc<DashMap<Pid, tokio::task::JoinHandle<()>>>,
+    a2a_router: Option<Arc<crate::a2a::A2ARouter>>,
+    cron_service: Option<Arc<crate::cron::CronService>>,
+    #[cfg(feature = "exochain")]
+    tree_manager: Option<Arc<crate::tree_manager::TreeManager>>,
+    #[cfg(feature = "exochain")]
+    chain_manager: Option<Arc<crate::chain::ChainManager>>,
     _platform: PhantomData<P>,
 }
 
@@ -92,8 +100,54 @@ impl<P: Platform> AgentSupervisor<P> {
             process_table,
             kernel_ipc,
             default_capabilities,
+            running_agents: Arc::new(DashMap::new()),
+            a2a_router: None,
+            cron_service: None,
+            #[cfg(feature = "exochain")]
+            tree_manager: None,
+            #[cfg(feature = "exochain")]
+            chain_manager: None,
             _platform: PhantomData,
         }
+    }
+
+    /// Configure A2A router and cron service.
+    ///
+    /// When set, `spawn_and_run` will create per-agent inboxes via the
+    /// A2ARouter and pass the cron service handle to the agent work loop.
+    pub fn with_a2a_router(
+        mut self,
+        a2a_router: Arc<crate::a2a::A2ARouter>,
+        cron_service: Arc<crate::cron::CronService>,
+    ) -> Self {
+        self.a2a_router = Some(a2a_router);
+        self.cron_service = Some(cron_service);
+        self
+    }
+
+    /// Get the A2A router (if configured).
+    pub fn a2a_router(&self) -> Option<&Arc<crate::a2a::A2ARouter>> {
+        self.a2a_router.as_ref()
+    }
+
+    /// Get the cron service (if configured).
+    pub fn cron_service(&self) -> Option<&Arc<crate::cron::CronService>> {
+        self.cron_service.as_ref()
+    }
+
+    /// Configure exochain integration (tree + chain managers).
+    ///
+    /// When set, agent spawn/stop/restart events are recorded in
+    /// the resource tree and hash chain.
+    #[cfg(feature = "exochain")]
+    pub fn with_exochain(
+        mut self,
+        tree_manager: Option<Arc<crate::tree_manager::TreeManager>>,
+        chain_manager: Option<Arc<crate::chain::ChainManager>>,
+    ) -> Self {
+        self.tree_manager = tree_manager;
+        self.chain_manager = chain_manager;
+        self
     }
 
     /// Spawn a new supervised agent process.
@@ -138,6 +192,105 @@ impl<P: Platform> AgentSupervisor<P> {
         })
     }
 
+    /// Spawn a supervised agent and run its work as a tokio task.
+    ///
+    /// Unlike [`spawn`], this method also:
+    /// 1. Transitions the process to `Running`
+    /// 2. Registers the agent in the resource tree (if exochain enabled)
+    /// 3. Spawns a tokio task to execute the provided work closure
+    /// 4. On completion: transitions to `Exited`, unregisters from tree,
+    ///    logs chain events, and cleans up the task handle
+    ///
+    /// The `work` closure receives the assigned PID and a
+    /// [`CancellationToken`]; it should return an exit code (0 = success).
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::ProcessTableFull` if the process table
+    /// has reached its maximum capacity.
+    pub fn spawn_and_run<F, Fut>(
+        &self,
+        request: SpawnRequest,
+        work: F,
+    ) -> KernelResult<SpawnResult>
+    where
+        F: FnOnce(Pid, CancellationToken) -> Fut,
+        Fut: std::future::Future<Output = i32> + Send + 'static,
+    {
+        // 1. Create process entry via existing spawn()
+        let result = self.spawn(request)?;
+        let pid = result.pid;
+
+        let entry = self
+            .process_table
+            .get(pid)
+            .ok_or(KernelError::ProcessNotFound { pid })?;
+        let cancel_token = entry.cancel_token.clone();
+
+        // 2. Register in resource tree (exochain)
+        #[cfg(feature = "exochain")]
+        if let Some(ref tm) = self.tree_manager
+            && let Err(e) = tm.register_agent(&result.agent_id, pid, &entry.capabilities)
+        {
+            warn!(error = %e, pid, "failed to register agent in resource tree");
+        }
+
+        // 3. Transition to Running
+        let _ = self
+            .process_table
+            .update_state(pid, ProcessState::Running);
+
+        // 4. Spawn tokio task
+        let process_table = Arc::clone(&self.process_table);
+        let running_agents = Arc::clone(&self.running_agents);
+        let agent_id = result.agent_id.clone();
+        #[cfg(feature = "exochain")]
+        let tree_manager = self.tree_manager.clone();
+        #[cfg(feature = "exochain")]
+        let chain_manager = self.chain_manager.clone();
+
+        let future = work(pid, cancel_token);
+        let handle = tokio::spawn(async move {
+            let exit_code = future.await;
+
+            // Transition to Exited
+            let _ = process_table.update_state(pid, ProcessState::Exited(exit_code));
+
+            // Unregister from tree
+            #[cfg(feature = "exochain")]
+            if let Some(ref tm) = tree_manager
+                && let Err(e) = tm.unregister_agent(&agent_id, pid, exit_code)
+            {
+                tracing::warn!(error = %e, pid, "failed to unregister agent from tree");
+            }
+
+            // Log exit chain event
+            #[cfg(feature = "exochain")]
+            if let Some(ref cm) = chain_manager {
+                cm.append(
+                    "supervisor",
+                    "agent.exit",
+                    Some(serde_json::json!({
+                        "agent_id": agent_id,
+                        "pid": pid,
+                        "exit_code": exit_code,
+                    })),
+                );
+            }
+
+            // Remove from running agents map
+            running_agents.remove(&pid);
+
+            info!(pid, exit_code, agent_id = %agent_id, "agent task completed");
+        });
+
+        self.running_agents.insert(pid, handle);
+
+        info!(pid, agent_id = %result.agent_id, "agent spawned and running");
+
+        Ok(result)
+    }
+
     /// Stop a supervised agent process.
     ///
     /// If `graceful` is true, the process is moved to `Stopping` state
@@ -165,7 +318,9 @@ impl<P: Platform> AgentSupervisor<P> {
 
         if graceful {
             info!(pid, "gracefully stopping agent");
-            // Transition to Stopping, then cancel the token
+            // Transition to Stopping, then cancel the token.
+            // The spawned task (if any) will detect cancellation,
+            // exit, and handle tree/chain cleanup.
             let _ = self.process_table.update_state(pid, ProcessState::Stopping);
             entry.cancel_token.cancel();
         } else {
@@ -174,6 +329,30 @@ impl<P: Platform> AgentSupervisor<P> {
             let _ = self
                 .process_table
                 .update_state(pid, ProcessState::Exited(-1));
+
+            // Abort the running task handle (cleanup won't run)
+            if let Some((_, handle)) = self.running_agents.remove(&pid) {
+                handle.abort();
+            }
+
+            // Since the spawned task was aborted, do tree/chain
+            // cleanup directly here.
+            #[cfg(feature = "exochain")]
+            {
+                if let Some(ref tm) = self.tree_manager {
+                    let _ = tm.unregister_agent(&entry.agent_id, pid, -1);
+                }
+                if let Some(ref cm) = self.chain_manager {
+                    cm.append(
+                        "supervisor",
+                        "agent.force_stop",
+                        Some(serde_json::json!({
+                            "agent_id": entry.agent_id,
+                            "pid": pid,
+                        })),
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -219,7 +398,23 @@ impl<P: Platform> AgentSupervisor<P> {
             env: HashMap::new(),
         };
 
-        self.spawn(request)
+        let result = self.spawn(request)?;
+
+        // Log restart chain event linking old PID to new PID
+        #[cfg(feature = "exochain")]
+        if let Some(ref cm) = self.chain_manager {
+            cm.append(
+                "supervisor",
+                "agent.restart",
+                Some(serde_json::json!({
+                    "agent_id": result.agent_id,
+                    "old_pid": pid,
+                    "new_pid": result.pid,
+                })),
+            );
+        }
+
+        Ok(result)
     }
 
     /// Inspect a supervised agent process.
@@ -277,6 +472,31 @@ impl<P: Platform> AgentSupervisor<P> {
             .iter()
             .filter(|e| e.pid != 0 && e.state == ProcessState::Running)
             .count()
+    }
+
+    /// Get the number of actively tracked running agent tasks.
+    pub fn running_task_count(&self) -> usize {
+        self.running_agents.len()
+    }
+
+    /// Abort all running agent tasks (used during forced shutdown).
+    pub fn abort_all(&self) {
+        for entry in self.running_agents.iter() {
+            entry.value().abort();
+        }
+        self.running_agents.clear();
+    }
+
+    /// Get the tree manager (when exochain feature is enabled).
+    #[cfg(feature = "exochain")]
+    pub fn tree_manager(&self) -> Option<&Arc<crate::tree_manager::TreeManager>> {
+        self.tree_manager.as_ref()
+    }
+
+    /// Get the chain manager (when exochain feature is enabled).
+    #[cfg(feature = "exochain")]
+    pub fn chain_manager(&self) -> Option<&Arc<crate::chain::ChainManager>> {
+        self.chain_manager.as_ref()
     }
 }
 
@@ -588,5 +808,96 @@ mod tests {
         let restored: SpawnResult = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.pid, 42);
         assert_eq!(restored.agent_id, "agent-42");
+    }
+
+    #[tokio::test]
+    async fn spawn_and_run_executes_work() {
+        let sup = make_supervisor();
+
+        let result = sup
+            .spawn_and_run(simple_request("runner-1"), |_pid, _cancel| async { 0 })
+            .unwrap();
+
+        assert!(result.pid > 0);
+        assert_eq!(result.agent_id, "runner-1");
+
+        // Process should be Running immediately after spawn_and_run
+        let entry = sup.inspect(result.pid).unwrap();
+        assert_eq!(entry.state, ProcessState::Running);
+
+        // Wait for the task to complete
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Process should be Exited after work completes
+        let entry = sup.inspect(result.pid).unwrap();
+        assert!(matches!(entry.state, ProcessState::Exited(0)));
+
+        // Running task should be cleaned up
+        assert_eq!(sup.running_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn spawn_and_run_respects_cancellation() {
+        let sup = make_supervisor();
+
+        let result = sup
+            .spawn_and_run(simple_request("cancellable"), |_pid, cancel| async move {
+                cancel.cancelled().await;
+                42
+            })
+            .unwrap();
+
+        assert_eq!(sup.running_task_count(), 1);
+
+        // Stop the agent
+        sup.stop(result.pid, true).unwrap();
+
+        // Wait for the task to detect cancellation and exit
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let entry = sup.inspect(result.pid).unwrap();
+        assert!(matches!(entry.state, ProcessState::Exited(42)));
+        assert_eq!(sup.running_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn spawn_and_run_force_stop_aborts() {
+        let sup = make_supervisor();
+
+        let result = sup
+            .spawn_and_run(simple_request("force-me"), |_pid, cancel| async move {
+                cancel.cancelled().await;
+                0
+            })
+            .unwrap();
+
+        // Force stop should abort the task immediately
+        sup.stop(result.pid, false).unwrap();
+
+        let entry = sup.inspect(result.pid).unwrap();
+        assert!(matches!(entry.state, ProcessState::Exited(-1)));
+        assert_eq!(sup.running_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn abort_all_clears_running_agents() {
+        let sup = make_supervisor();
+
+        sup.spawn_and_run(simple_request("a1"), |_pid, cancel| async move {
+            cancel.cancelled().await;
+            0
+        })
+        .unwrap();
+        sup.spawn_and_run(simple_request("a2"), |_pid, cancel| async move {
+            cancel.cancelled().await;
+            0
+        })
+        .unwrap();
+
+        assert_eq!(sup.running_task_count(), 2);
+
+        sup.abort_all();
+
+        assert_eq!(sup.running_task_count(), 0);
     }
 }
