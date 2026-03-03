@@ -977,6 +977,7 @@ dependencies = [
  "comfy-table",
  "dirs",
  "exo-resource-tree",
+ "nix 0.29.0",
  "rvf-types",
  "rvf-wire",
  "serde",
@@ -2702,7 +2703,7 @@ dependencies = [
  "combine",
  "libc",
  "mach2",
- "nix",
+ "nix 0.30.1",
  "sysctl",
  "thiserror 2.0.18",
  "widestring",
@@ -2768,6 +2769,18 @@ dependencies = [
  "portable-atomic-util",
  "rawpointer",
  "serde",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.11.0",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]

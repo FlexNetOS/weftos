@@ -358,10 +358,23 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
         }
     });
 
-    // Wait for either Ctrl+C or the accept loop to finish (RPC shutdown).
-    let ctrl_c_triggered = tokio::select! {
+    // Wait for shutdown signal (SIGINT, SIGTERM, SIGHUP) or RPC shutdown.
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+
+    let restart_requested = tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("Ctrl+C received, shutting down daemon");
+            info!("SIGINT received, shutting down daemon");
+            let _ = shutdown_tx.send(true);
+            false
+        }
+        _ = sigterm.recv() => {
+            info!("SIGTERM received, shutting down daemon");
+            let _ = shutdown_tx.send(true);
+            false
+        }
+        _ = sighup.recv() => {
+            info!("SIGHUP received — will restart after shutdown");
             let _ = shutdown_tx.send(true);
             true
         }
@@ -372,9 +385,8 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
         }
     };
 
-    // If Ctrl+C triggered, wait for the accept loop to finish.
-    // If it finished on its own (RPC shutdown), the handle is already consumed.
-    if ctrl_c_triggered {
+    // If a signal triggered shutdown, wait for the accept loop to finish.
+    if restart_requested || !accept_handle.is_finished() {
         let _ = accept_handle.await;
     }
 
@@ -405,6 +417,18 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
     }
 
     println!("Daemon stopped.");
+
+    // If SIGHUP requested restart, re-exec the binary (keeps same PID for systemd).
+    if restart_requested {
+        info!("re-exec for restart");
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(std::env::current_exe()?)
+            .args(["kernel", "start", "--foreground"])
+            .exec(); // replaces process; only reached on error
+        eprintln!("re-exec failed: {err}");
+        std::process::exit(1);
+    }
+
     Ok(())
 }
 
@@ -813,6 +837,44 @@ async fn dispatch(
                         .map(|e| {
                             let hash_hex: String =
                                 e.hash.iter().map(|b| format!("{b:02x}")).collect();
+                            // Build condensed detail from payload
+                            let detail = match &e.payload {
+                                Some(p) => {
+                                    let mut parts = Vec::new();
+                                    if let Some(v) = p.get("agent_id").and_then(|v| v.as_str()) {
+                                        parts.push(format!("agent={v}"));
+                                    }
+                                    if let Some(v) = p.get("pid").and_then(|v| v.as_u64()) {
+                                        parts.push(format!("pid={v}"));
+                                    }
+                                    if let Some(v) = p.get("from").and_then(|v| v.as_u64()) {
+                                        parts.push(format!("from={v}"));
+                                    }
+                                    if let Some(v) = p.get("target").and_then(|v| v.as_str()) {
+                                        parts.push(format!("to={v}"));
+                                    }
+                                    if let Some(v) = p.get("exit_code").and_then(|v| v.as_i64()) {
+                                        parts.push(format!("exit={v}"));
+                                    }
+                                    if let Some(v) = p.get("job_name").and_then(|v| v.as_str()) {
+                                        parts.push(format!("job={v}"));
+                                    }
+                                    if let Some(v) = p.get("payload_type").and_then(|v| v.as_str()) {
+                                        parts.push(format!("type={v}"));
+                                    }
+                                    if let Some(v) = p.get("state").and_then(|v| v.as_str()) {
+                                        parts.push(format!("state={v}"));
+                                    }
+                                    if parts.is_empty() {
+                                        // Fallback: show first 60 chars of payload
+                                        let s = p.to_string();
+                                        if s.len() > 60 { format!("{}...", &s[..60]) } else { s }
+                                    } else {
+                                        parts.join(" ")
+                                    }
+                                }
+                                None => String::new(),
+                            };
                             ChainEventInfo {
                                 sequence: e.sequence,
                                 chain_id: e.chain_id,
@@ -820,6 +882,7 @@ async fn dispatch(
                                 source: e.source.clone(),
                                 kind: e.kind.clone(),
                                 hash: hash_hex,
+                                detail,
                             }
                         })
                         .collect();
@@ -929,6 +992,7 @@ async fn dispatch(
                                         source: e.source.clone(),
                                         kind: e.kind.clone(),
                                         hash: hash_hex,
+                                        detail: String::new(),
                                     }
                                 })
                                 .collect();
@@ -960,6 +1024,7 @@ async fn dispatch(
                                 children: node.children.iter().map(|c| c.to_string()).collect(),
                                 metadata: serde_json::to_value(&node.metadata).unwrap_or_default(),
                                 merkle_hash: hash_hex,
+                                scoring: None, // tree listing omits scoring for brevity
                             }
                         })
                         .collect();
@@ -981,18 +1046,51 @@ async fn dispatch(
                 };
                 let k = kernel.read().await;
                 if let Some(tm) = k.tree_manager() {
-                    let tree = tm.tree().lock().unwrap();
                     let rid = exo_resource_tree::ResourceId::new(&inspect_params.path);
-                    if let Some(node) = tree.get(&rid) {
-                        let hash_hex: String =
-                            node.merkle_hash.iter().map(|b| format!("{b:02x}")).collect();
+                    // Extract node data under lock, then drop lock before get_scoring
+                    let node_data = {
+                        let tree = tm.tree().lock().unwrap();
+                        tree.get(&rid).map(|node| {
+                            let hash_hex: String =
+                                node.merkle_hash.iter().map(|b| format!("{b:02x}")).collect();
+                            (
+                                node.id.to_string(),
+                                format!("{:?}", node.kind),
+                                node.parent.as_ref().map(|p| p.to_string()),
+                                node.children.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+                                serde_json::to_value(&node.metadata).unwrap_or_default(),
+                                hash_hex,
+                            )
+                        })
+                    }; // tree lock dropped here
+                    if let Some((id, kind, parent, children, metadata, hash_hex)) = node_data {
+                        // Now safe to call get_scoring (it acquires its own lock)
+                        let scoring = tm.get_scoring(&rid).map(|s| {
+                            let composite = s.trust * 0.25
+                                + s.performance * 0.20
+                                + s.reliability * 0.20
+                                + s.velocity * 0.15
+                                + s.reward * 0.10
+                                + (1.0 - s.difficulty) * 0.10;
+                            ResourceScoreResult {
+                                path: inspect_params.path.clone(),
+                                trust: s.trust,
+                                performance: s.performance,
+                                difficulty: s.difficulty,
+                                reward: s.reward,
+                                reliability: s.reliability,
+                                velocity: s.velocity,
+                                composite,
+                            }
+                        });
                         let info = ResourceNodeInfo {
-                            id: node.id.to_string(),
-                            kind: format!("{:?}", node.kind),
-                            parent: node.parent.as_ref().map(|p| p.to_string()),
-                            children: node.children.iter().map(|c| c.to_string()).collect(),
-                            metadata: serde_json::to_value(&node.metadata).unwrap_or_default(),
+                            id,
+                            kind,
+                            parent,
+                            children,
+                            metadata,
                             merkle_hash: hash_hex,
+                            scoring,
                         };
                         Response::success(serde_json::to_value(info).unwrap())
                     } else {
@@ -1140,12 +1238,19 @@ async fn dispatch(
             let k = kernel.read().await;
             match k.supervisor().inspect(pid) {
                 Ok(entry) => {
+                    let topics = k
+                        .a2a_router()
+                        .topic_router()
+                        .topics_for_pid(pid);
                     let result = AgentInspectResult {
                         pid: entry.pid,
                         agent_id: entry.agent_id,
                         state: entry.state.to_string(),
                         memory_bytes: entry.resource_usage.memory_bytes,
                         cpu_time_ms: entry.resource_usage.cpu_time_ms,
+                        messages_sent: entry.resource_usage.messages_sent,
+                        tool_calls: entry.resource_usage.tool_calls,
+                        topics,
                         parent_pid: entry.parent_pid,
                         can_spawn: entry.capabilities.can_spawn,
                         can_ipc: entry.capabilities.can_ipc,
@@ -1343,6 +1448,15 @@ async fn dispatch(
                 Err(e) => return Response::error(format!("invalid params: {e}")),
             };
             let k = kernel.read().await;
+
+            // Validate that the PID exists and is running
+            if k.supervisor().inspect(sub_params.pid).is_err() {
+                return Response::error(format!(
+                    "PID {} not found — spawn an agent first",
+                    sub_params.pid,
+                ));
+            }
+
             let a2a = k.a2a_router();
             a2a.topic_router().subscribe(sub_params.pid, &sub_params.topic);
             k.event_log().info(
@@ -1372,6 +1486,12 @@ async fn dispatch(
             let k = kernel.read().await;
             let a2a = k.a2a_router().clone();
 
+            // Count all registered subscribers for reporting
+            let subscriber_count = a2a
+                .topic_router()
+                .subscribers(&pub_params.topic)
+                .len();
+
             // Build message payload
             let payload = match serde_json::from_str::<serde_json::Value>(&pub_params.message) {
                 Ok(v) => clawft_kernel::MessagePayload::Json(v),
@@ -1395,9 +1515,17 @@ async fn dispatch(
                 Ok(()) => {
                     k.event_log().info(
                         "ipc",
-                        format!("published to topic '{}'", pub_params.topic),
+                        format!(
+                            "published to topic '{}' ({} subscriber{})",
+                            pub_params.topic,
+                            subscriber_count,
+                            if subscriber_count == 1 { "" } else { "s" },
+                        ),
                     );
-                    Response::success(serde_json::json!("published"))
+                    Response::success(serde_json::json!({
+                        "topic": pub_params.topic,
+                        "subscribers": subscriber_count,
+                    }))
                 }
                 Err(e) => Response::error(format!("publish failed: {e}")),
             }

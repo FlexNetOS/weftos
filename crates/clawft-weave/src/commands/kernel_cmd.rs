@@ -48,8 +48,15 @@ pub enum KernelAction {
         foreground: bool,
     },
 
-    /// Stop a running kernel daemon.
-    Stop,
+    /// Stop a running kernel daemon (sends SIGTERM).
+    Stop {
+        /// Force-kill with SIGKILL if graceful shutdown times out.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Restart a running kernel daemon (sends SIGHUP for re-exec).
+    Restart,
 
     /// Show kernel state, uptime, process count, service count.
     Status,
@@ -98,20 +105,36 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
                 crate::daemon::daemonize(args.config.as_deref())?;
             }
         }
-        KernelAction::Stop => {
-            let mut client = DaemonClient::connect()
-                .await
-                .ok_or_else(|| anyhow::anyhow!("no daemon running"))?;
-            let resp = client.simple_call("kernel.shutdown").await?;
-            if resp.ok {
-                println!("Daemon shutdown initiated.");
-                // Clean up PID file
-                let pid_path = protocol::pid_path();
-                let _ = std::fs::remove_file(&pid_path);
+        KernelAction::Stop { force } => {
+            let pid = read_daemon_pid()?;
+            let nix_pid = nix::unistd::Pid::from_raw(pid);
+
+            // Send SIGTERM for graceful shutdown
+            nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM)
+                .map_err(|e| anyhow::anyhow!("failed to send SIGTERM to PID {pid}: {e}"))?;
+            println!("SIGTERM sent to PID {pid}, waiting for exit...");
+
+            if wait_for_exit(pid, std::time::Duration::from_secs(10)) {
+                println!("Daemon stopped.");
+            } else if force {
+                println!("Graceful shutdown timed out — sending SIGKILL.");
+                let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                println!("Daemon killed.");
             } else {
-                let msg = resp.error.unwrap_or_else(|| "unknown error".into());
-                anyhow::bail!("shutdown failed: {msg}");
+                eprintln!("Daemon still running after 10s. Use --force to SIGKILL.");
             }
+
+            // Clean up stale files
+            cleanup_runtime_files();
+        }
+        KernelAction::Restart => {
+            let pid = read_daemon_pid()?;
+            let nix_pid = nix::unistd::Pid::from_raw(pid);
+
+            nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGHUP)
+                .map_err(|e| anyhow::anyhow!("failed to send SIGHUP to PID {pid}: {e}"))?;
+            println!("SIGHUP sent to PID {pid} — daemon will restart.");
         }
         KernelAction::Status => {
             if let Some(mut client) = DaemonClient::connect().await {
@@ -562,6 +585,54 @@ fn print_event_log<P: clawft_platform::Platform>(
         println!("{ts} [{level_tag}] {}", event.message);
     }
     println!("({} entries)", events.len());
+}
+
+// ── Signal / PID helpers ──────────────────────────────────────────
+
+/// Read the daemon PID from `~/.clawft/kernel.pid` and validate the process exists.
+fn read_daemon_pid() -> anyhow::Result<i32> {
+    let pid_path = protocol::pid_path();
+    let pid_str = std::fs::read_to_string(&pid_path)
+        .map_err(|_| anyhow::anyhow!("no PID file found — is the daemon running?"))?;
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid PID in {}", pid_path.display()))?;
+
+    // Verify process is alive (kill -0)
+    let nix_pid = nix::unistd::Pid::from_raw(pid);
+    nix::sys::signal::kill(nix_pid, None)
+        .map_err(|_| anyhow::anyhow!("PID {pid} is not running (stale PID file)"))?;
+
+    Ok(pid)
+}
+
+/// Poll until the given PID exits, returning `true` if it exited within timeout.
+fn wait_for_exit(pid: i32, timeout: std::time::Duration) -> bool {
+    let nix_pid = nix::unistd::Pid::from_raw(pid);
+    let start = std::time::Instant::now();
+    let poll_interval = std::time::Duration::from_millis(200);
+
+    while start.elapsed() < timeout {
+        // kill -0: returns Err if process is gone
+        if nix::sys::signal::kill(nix_pid, None).is_err() {
+            return true;
+        }
+        std::thread::sleep(poll_interval);
+    }
+    false
+}
+
+/// Remove stale PID and socket files if the daemon is no longer running.
+fn cleanup_runtime_files() {
+    let pid_path = protocol::pid_path();
+    if pid_path.exists() {
+        let _ = std::fs::remove_file(&pid_path);
+    }
+    let sock_path = protocol::socket_path();
+    if sock_path.exists() {
+        let _ = std::fs::remove_file(&sock_path);
+    }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────
