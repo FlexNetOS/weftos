@@ -310,3 +310,253 @@ reward-weighted mean. TreeManager provides `update_scoring()`, `blend_scoring()`
 
 **Deferred to K2**: Supervisor exit-triggered scoring blend, gate decision trust nudges,
 `weaver resource score/rank` CLI commands and daemon RPC handlers.
+
+## K2 Decisions (continued)
+
+### Decision 21: IpcScope::Topic for Topic-Only Agents
+
+**Context**: Agents that only communicate via pub/sub topics (not direct PID messaging)
+needed a way to restrict IPC scope to specific topics.
+
+**Decision**: Add `IpcScope::Topic(Vec<String>)` variant. `can_message()` returns false
+for Topic scope. `can_topic(topic)` checks the allowed topics list. CapabilityChecker
+gets `check_ipc_topic()` for topic-scoped enforcement.
+
+**Rationale**: Completes the IpcScope matrix. Agents with Topic scope can subscribe
+and publish to named topics but cannot send direct PID-addressed messages, enforcing
+a communication pattern suitable for event-driven microservices.
+
+### Decision 22: Scoring Blend on Agent Exit
+
+**Context**: NodeScoring vectors needed a feedback mechanism tied to agent lifecycle.
+
+**Decision**: When an agent exits via `spawn_and_run()` cleanup, compute a NodeScoring
+observation based on exit_code (success → high trust/reliability, failure → low) and
+call `blend_scoring(rid, &observation, 0.3)`. The 30% blend weight ensures new
+observations nudge but don't dominate accumulated history. A `scoring.blend` chain
+event is logged.
+
+**Rationale**: Links resource tree trust scores to actual agent performance. Over time,
+reliable agents accumulate higher trust scores, enabling trust-weighted task routing.
+
+### Decision 23: IPC RPC Handlers + CLI
+
+**Context**: Topic pub/sub existed in kernel (TopicRouter) but had no CLI or daemon access.
+
+**Decision**: Add `ipc.topics`, `ipc.subscribe`, `ipc.publish` daemon RPC handlers.
+Create `weaver ipc topics/subscribe/publish` CLI commands. `ipc.publish` routes through
+`send_checked()` for capability enforcement and chain logging.
+
+**Rationale**: Makes IPC first-class in the operator CLI. Topic subscriptions and
+publications are chain-logged like all other IPC activity.
+
+### Decision 24: Ed25519 Chain Segment Signing (K2 Extension)
+
+**Context**: Chain events are hash-linked (SHAKE-256) but not cryptographically signed.
+An adversary who can modify the chain file could reconstruct valid hash links. rvf-crypto
+provides `sign_segment()`/`verify_segment()` with Ed25519.
+
+**Decision**: Generate an Ed25519 signing key at first boot, persist to
+`~/.clawft/chain.key`. Sign the checkpoint segment in `save_to_rvf()` using
+`sign_segment()` + `encode_signature_footer()`. Verify on `load_from_rvf()` with
+`verify_segment()` + `decode_signature_footer()`. This binds the entire chain to the
+kernel's identity — the checkpoint records `last_hash` which covers all preceding events.
+
+**Rationale**: Moves from tamper-evident (hash linking) to tamper-proof (Ed25519 signing).
+Uses rvf-crypto's existing segment signing API exactly as designed. The checkpoint-level
+signing strategy avoids per-event overhead while still covering the entire chain through
+the hash link invariant.
+
+### Decision 25: Witness Chain for Kernel Events
+
+**Context**: rvf-crypto provides `WitnessEntry` / `create_witness_chain()` /
+`verify_witness_chain()` — a SHAKE-256-linked audit trail parallel to the event chain.
+The event chain records *what happened*; the witness chain records *who observed it*.
+
+**Decision**: Each significant chain event (agent spawn, agent exit, cron fire, scoring
+blend, ipc.send) creates a `WitnessEntry` with `action_hash = event.hash`. The witness
+chain is serialized alongside the event chain as `~/.clawft/chain.witness`. Verification
+in `weaver chain verify` includes witness chain integrity check.
+
+**Rationale**: Two independent chains covering the same events: the event chain proves
+the sequence of events, the witness chain proves the sequence was observed in order.
+Both must agree for full integrity.
+
+### Decision 26: Governance Type Mapping (rvf-types → kernel)
+
+**Context**: rvf-types defines `GovernanceMode`, `TaskOutcome`, `PolicyCheck` for
+agent governance. Our kernel has analogous concepts in `IpcScope`, `ProcessState`,
+and `GateBackend`.
+
+**Decision**: Map governance types into agent capabilities:
+- `GovernanceMode::Restricted` → IpcScope::None + read-only tools
+- `GovernanceMode::Approved` → IpcScope::Restricted + gated tools
+- `GovernanceMode::Autonomous` → IpcScope::All + full tools
+- `TaskOutcome` classifies agent exit: exit_code 0 → Solved, non-zero → Failed
+- `PolicyCheck` used in gate decisions alongside existing GateBackend
+
+**Rationale**: Aligns WeftOS agent governance with the ruvector ecosystem's
+standardized governance model. Enables future cross-system interoperability
+where governance policies are portable between ruvector and WeftOS nodes.
+
+### Decision 27: WitnessBuilder for Agent Task Completion
+
+**Context**: rvf-runtime provides `WitnessBuilder` for constructing signed witness
+bundles that capture task execution evidence (spec, plan, tool trace, diff, test log).
+
+**Decision**: When an agent exits, create a `WitnessBuilder` with:
+- task_id derived from agent UUID
+- GovernancePolicy based on agent's IpcScope/capabilities
+- TaskOutcome from exit code classification
+Build the witness bundle and store as chain event (kind=`witness.bundle`).
+Use `ScorecardBuilder` to aggregate witness bundles into per-agent capability
+scorecards stored on tree nodes.
+
+**Rationale**: Provides deterministic replay evidence for every agent task execution.
+Integrates rvf-runtime's witness system with our chain and tree, enabling
+100% playback of agent activity.
+
+### Decision 28: Lineage Tracking for Resource Derivation
+
+**Context**: rvf-crypto provides `LineageRecord` / `FileIdentity` / `DerivationType`
+for tracking parent-child derivation chains.
+
+**Decision**: When an agent spawns, create a `LineageRecord`:
+- parent = kernel FileIdentity
+- child = agent FileIdentity
+- derivation_type = Projection (agent is a projection of kernel)
+Similarly for cron jobs. Lineage records are serialized via
+`lineage_record_to_bytes()` and linked to the witness chain via
+`lineage_witness_entry()`. `verify_lineage_chain()` validates during
+chain verification.
+
+**Rationale**: Tracks resource provenance — which kernel boot created which
+agent, which agent created which cron job. Combined with the event chain
+and witness chain, this provides a complete audit trail of *what* happened,
+*who* observed it, and *where it came from*.
+
+## K2b Gap Analysis and Decisions (Kernel Work-Loop Hardening)
+
+### Gap Analysis Summary
+
+Systematic review of all kernel background loops (agent_loop, cron tick, RPC accept,
+supervisor lifecycle, A2ARouter) identified 6 gaps where infrastructure existed but
+was either unused, undriven, or incomplete. These represent silent failures in the
+kernel substrate — the kind of bugs that don't cause test failures but erode
+production reliability.
+
+**Method**: Read every kernel module (agent_loop.rs, supervisor.rs, cron.rs, a2a.rs,
+health.rs, process.rs, gate.rs, boot.rs) and daemon.rs. For each background loop,
+asked: "What drives this? What detects failure? What records activity?"
+
+**Findings**:
+
+| # | Gap | Severity | Root Cause |
+|---|-----|----------|-----------|
+| 1 | Health monitor loop never fires | Critical | HealthSystem.aggregate() exists but no timer calls it |
+| 2 | Agent task panics undetected | Critical | JoinHandle tracked but is_finished() never polled |
+| 3 | Shutdown aborts cleanup handlers | Critical | abort_all() cancels futures before scoring/tree/chain code runs |
+| 4 | Resource counters always zero | Critical | ResourceUsage struct populated with defaults, never incremented |
+| 5 | ProcessState::Suspended unused | Important | State defined but no mechanism to enter/exit it |
+| 6 | Agent commands bypass capabilities | Important | GateBackend exists but agent_loop doesn't call it |
+
+### Decision 29: Health Monitor Background Loop
+
+**Context**: `HealthSystem` (health.rs) has `aggregate()` that queries all registered
+services and produces `OverallHealth`. The `health_check_interval_secs` config field is
+set at boot and stored on the HealthSystem struct. Daemon has a cron tick loop (1s) but
+no health tick loop.
+
+**Decision**: Add a health monitor background tokio task in daemon.rs alongside the
+cron tick loop. Uses `health_check_interval_secs` as the interval (default 30s). Logs
+a `health.check` chain event each cycle. Emits kernel event log warnings for
+degraded/unhealthy services. Exits cleanly on shutdown signal.
+
+**Rationale**: Health monitoring is the most fundamental kernel loop. Without it,
+service failures (cron stopped, cluster disconnected) go undetected. The infrastructure
+is already built — this is pure wiring.
+
+### Decision 30: Agent Watchdog Sweep
+
+**Context**: `AgentSupervisor` stores `JoinHandle<()>` per agent in a DashMap.
+The `spawn_and_run` task completion handler runs cleanup (scoring, tree, chain) and
+removes the DashMap entry. But if the task panics before cleanup, or the handle is
+joined after abort, the PID stays "Running" in the process table.
+
+**Decision**: Add `watchdog_sweep()` to `AgentSupervisor`. Iterates `running_agents`,
+calls `is_finished()` on each handle. For finished handles: `join()` to get the
+JoinError, classify as panic (-3) or cancelled (-4), transition PID to `Exited`,
+log `agent.watchdog_reap` chain event. Run from a 5-second daemon background task.
+
+**Rationale**: Prevents phantom processes. Every agent that exits — cleanly, by panic,
+or by cancellation — is detected within 5 seconds and properly recorded. Essential for
+K3+ phases where agents run user-supplied WASM code that may panic.
+
+### Decision 31: Graceful Shutdown Replaces Abort
+
+**Context**: `supervisor.abort_all()` calls `handle.abort()` which cancels tokio
+futures mid-execution. The cleanup handler in `spawn_and_run` (scoring blend, tree
+unregister, chain exit event) never runs for aborted tasks. On daemon Ctrl+C, all
+running agents lose their exit audit trail.
+
+**Decision**: Add `shutdown_all(timeout: Duration) -> Vec<(Pid, i32)>`. Cancels
+all agent cancellation tokens, then waits for all tasks to complete within `timeout`.
+Tasks that don't exit in time are aborted as fallback. Daemon shutdown calls
+`shutdown_all(5s)` instead of `abort_all()`. Keep `abort_all()` for emergency/force
+shutdown.
+
+**Rationale**: Cancellation tokens trigger the `cancel.cancelled()` branch in
+`kernel_agent_loop`, which returns exit code 0 — allowing the `spawn_and_run` cleanup
+handler to run normally (scoring, tree, chain). This preserves the audit trail for
+every agent shutdown.
+
+### Decision 32: Resource Usage Instrumentation
+
+**Context**: `ResourceUsage` (process.rs) has 4 counters: `memory_bytes`,
+`cpu_time_ms`, `tool_calls`, `messages_sent`. `ProcessTable::update_resources()` exists
+but is never called. All counters are permanently zero.
+
+**Decision**: Add resource tracking to `kernel_agent_loop`:
+- Track `messages_sent` (incremented on each reply)
+- Track `tool_calls` (incremented on `exec` command)
+- Track `cpu_time_ms` (wall-clock time since loop started)
+- Call `process_table.update_resources()` every 10 messages and on exit
+- Pass `Arc<ProcessTable>` into the agent loop as a new parameter
+
+**Rationale**: Resource counters are the foundation for limit enforcement (K3),
+anomaly detection (K5), and training data generation (K6). Without instrumentation,
+all downstream consumers get zeros. The per-10-message batching avoids per-message
+DashMap write contention.
+
+### Decision 33: Agent Suspend/Resume Protocol
+
+**Context**: `ProcessState::Suspended` exists with valid transitions
+`Running -> Suspended -> Running`. `ProcessSignal::Suspend` and `Resume` exist.
+But nothing triggers or handles suspension.
+
+**Decision**: Add `suspend` and `resume` as built-in agent commands. When the agent
+loop receives `{"cmd": "suspend"}`, it transitions the process to `Suspended` and
+enters a parking loop that only processes `resume` or cancellation. All other
+messages receive an `{"error": "agent suspended"}` response. On `resume`, transitions
+back to `Running` and returns to normal processing.
+
+**Rationale**: Suspend/resume enables: debugging (pause agent, inspect state, resume),
+resource conservation (park idle agents), migration (suspend on source, restore on
+target in K6). Making it a command means it's accessible from both IPC and CLI.
+
+### Decision 34: Gate Enforcement in Agent Loop
+
+**Context**: `GateBackend` trait has two implementations: `CapabilityGate` (binary
+Permit/Deny from CapabilityChecker) and `TileZeroGate` (three-way with crypto
+receipts). The agent loop executes all commands without consulting either.
+
+**Decision**: Pass `Arc<dyn GateBackend>` into `kernel_agent_loop`. Before executing
+`exec`, `cron.add`, or `cron.remove`, call `gate.check(agent_id, action, context)`.
+Map action strings: `exec` -> `"tool.exec"`, `cron.add` -> `"service.cron.add"`,
+`cron.remove` -> `"service.cron.remove"`. On `Deny`, return error response with
+reason. On `Defer`, return `{"deferred": true, "reason": ...}`.
+
+**Rationale**: Closes the enforcement gap between declared capabilities and actual
+execution. An agent with `can_exec_tools: false` will now actually be blocked from
+running `exec`. When TileZero is enabled, gate decisions are cryptographically
+logged to the chain, providing a full audit trail of permission checks.
