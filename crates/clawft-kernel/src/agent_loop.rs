@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 use crate::a2a::A2ARouter;
 use crate::cron::CronService;
 use crate::ipc::{KernelMessage, MessagePayload, MessageTarget};
-use crate::process::Pid;
+use crate::process::{Pid, ProcessState, ProcessTable, ResourceUsage};
 
 /// Run the built-in kernel agent work loop.
 ///
@@ -21,7 +21,10 @@ use crate::process::Pid;
 /// 1. Receives messages from its A2ARouter inbox
 /// 2. Processes built-in commands dispatched as JSON `{"cmd": "..."}` payloads
 /// 3. Sends responses back via A2ARouter
-/// 4. Exits when the cancellation token is triggered
+/// 4. Tracks resource usage (messages_sent, tool_calls, cpu_time_ms)
+/// 5. Supports suspend/resume via `{"cmd":"suspend"}` / `{"cmd":"resume"}`
+/// 6. Enforces gate checks before exec/cron commands (when gate is provided)
+/// 7. Exits when the cancellation token is triggered
 ///
 /// Returns an exit code (0 = normal shutdown).
 pub async fn kernel_agent_loop(
@@ -30,20 +33,132 @@ pub async fn kernel_agent_loop(
     mut inbox: mpsc::Receiver<KernelMessage>,
     a2a: Arc<A2ARouter>,
     cron: Arc<CronService>,
+    process_table: Arc<ProcessTable>,
     #[cfg(feature = "exochain")] chain: Option<Arc<crate::chain::ChainManager>>,
+    #[cfg(feature = "exochain")] gate: Option<Arc<dyn crate::gate::GateBackend>>,
 ) -> i32 {
     let started = Instant::now();
     debug!(pid, "agent loop started");
+
+    // Extract agent_id once before the loop (used by gate checks)
+    #[cfg(feature = "exochain")]
+    let agent_id = process_table
+        .get(pid)
+        .map(|e| e.agent_id.clone())
+        .unwrap_or_else(|| format!("pid-{pid}"));
+
+    let mut usage = ResourceUsage::default();
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
                 debug!(pid, "agent loop cancelled");
+                // Final resource update
+                usage.cpu_time_ms = started.elapsed().as_millis() as u64;
+                let _ = process_table.update_resources(pid, usage);
                 return 0;
             }
             msg = inbox.recv() => {
                 match msg {
                     Some(message) => {
+                        let cmd = extract_cmd(&message);
+
+                        // Handle suspend command
+                        if cmd.as_deref() == Some("suspend") {
+                            // Send acknowledgement BEFORE transitioning state,
+                            // because A2ARouter.send() checks sender is Running.
+                            let reply = KernelMessage::with_correlation(
+                                pid,
+                                MessageTarget::Process(message.from),
+                                MessagePayload::Json(serde_json::json!({
+                                    "status": "suspended",
+                                    "pid": pid,
+                                })),
+                                message.id.clone(),
+                            );
+                            send_reply(&a2a, reply, #[cfg(feature = "exochain")] chain.as_deref()).await;
+                            usage.messages_sent += 1;
+
+                            // Transition to Suspended
+                            let _ = process_table.update_state(pid, ProcessState::Suspended);
+                            debug!(pid, "agent suspended");
+
+                            // Enter parking loop
+                            let resumed = parking_loop(
+                                pid,
+                                &cancel,
+                                &mut inbox,
+                                &a2a,
+                                &process_table,
+                                #[cfg(feature = "exochain")] chain.as_deref(),
+                                &mut usage,
+                            ).await;
+
+                            if !resumed {
+                                // Cancelled during suspend
+                                usage.cpu_time_ms = started.elapsed().as_millis() as u64;
+                                let _ = process_table.update_resources(pid, usage);
+                                return 0;
+                            }
+                            // Resumed — continue main loop
+                            continue;
+                        }
+
+                        // Gate check for protected commands
+                        #[cfg(feature = "exochain")]
+                        if let Some(ref gate_backend) = gate {
+                            if let Some(ref cmd_str) = cmd {
+                                let action = match cmd_str.as_str() {
+                                    "exec" => Some("tool.exec"),
+                                    "cron.add" => Some("service.cron.add"),
+                                    "cron.remove" => Some("service.cron.remove"),
+                                    _ => None,
+                                };
+                                if let Some(action_str) = action {
+                                    let context = serde_json::json!({"pid": pid});
+                                    let decision = gate_backend.check(&agent_id, action_str, &context);
+                                    match decision {
+                                        crate::gate::GateDecision::Deny { reason, .. } => {
+                                            let reply = KernelMessage::with_correlation(
+                                                pid,
+                                                MessageTarget::Process(message.from),
+                                                MessagePayload::Json(serde_json::json!({
+                                                    "error": reason,
+                                                    "denied": true,
+                                                })),
+                                                message.id.clone(),
+                                            );
+                                            send_reply(&a2a, reply, chain.as_deref()).await;
+                                            usage.messages_sent += 1;
+                                            continue;
+                                        }
+                                        crate::gate::GateDecision::Defer { reason } => {
+                                            let reply = KernelMessage::with_correlation(
+                                                pid,
+                                                MessageTarget::Process(message.from),
+                                                MessagePayload::Json(serde_json::json!({
+                                                    "deferred": true,
+                                                    "reason": reason,
+                                                })),
+                                                message.id.clone(),
+                                            );
+                                            send_reply(&a2a, reply, chain.as_deref()).await;
+                                            usage.messages_sent += 1;
+                                            continue;
+                                        }
+                                        crate::gate::GateDecision::Permit { .. } => {
+                                            // Permitted — continue with normal handling
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Track tool_calls for exec command
+                        if cmd.as_deref() == Some("exec") {
+                            usage.tool_calls += 1;
+                        }
+
                         handle_message(
                             pid,
                             &message,
@@ -53,14 +168,124 @@ pub async fn kernel_agent_loop(
                             chain.as_deref(),
                             &started,
                         ).await;
+
+                        usage.messages_sent += 1;
+
+                        // Update resource counters every 10 messages and periodically
+                        if usage.messages_sent % 10 == 0 {
+                            usage.cpu_time_ms = started.elapsed().as_millis() as u64;
+                            let _ = process_table.update_resources(pid, usage.clone());
+                        }
                     }
                     None => {
                         // Inbox closed — shutdown
                         debug!(pid, "inbox closed, exiting");
+                        usage.cpu_time_ms = started.elapsed().as_millis() as u64;
+                        let _ = process_table.update_resources(pid, usage);
                         return 0;
                     }
                 }
             }
+        }
+    }
+}
+
+/// Extract the command string from a message payload.
+fn extract_cmd(msg: &KernelMessage) -> Option<String> {
+    match &msg.payload {
+        MessagePayload::Json(v) => v.get("cmd").and_then(|c| c.as_str()).map(String::from),
+        MessagePayload::Text(text) => {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+                v.get("cmd").and_then(|c| c.as_str()).map(String::from)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Parking loop for suspended agents.
+///
+/// Waits for either a resume command or cancellation. Returns `true`
+/// if resumed, `false` if cancelled.
+async fn parking_loop(
+    pid: Pid,
+    cancel: &CancellationToken,
+    inbox: &mut mpsc::Receiver<KernelMessage>,
+    a2a: &A2ARouter,
+    process_table: &ProcessTable,
+    #[cfg(feature = "exochain")] chain: Option<&crate::chain::ChainManager>,
+    usage: &mut ResourceUsage,
+) -> bool {
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                debug!(pid, "cancelled while suspended");
+                return false;
+            }
+            msg = inbox.recv() => {
+                match msg {
+                    Some(message) => {
+                        let cmd = extract_cmd(&message);
+                        if cmd.as_deref() == Some("resume") {
+                            // Transition back to Running
+                            let _ = process_table.update_state(pid, ProcessState::Running);
+                            debug!(pid, "agent resumed");
+
+                            let reply = KernelMessage::with_correlation(
+                                pid,
+                                MessageTarget::Process(message.from),
+                                MessagePayload::Json(serde_json::json!({
+                                    "status": "resumed",
+                                    "pid": pid,
+                                })),
+                                message.id.clone(),
+                            );
+                            send_reply(a2a, reply, #[cfg(feature = "exochain")] chain).await;
+                            usage.messages_sent += 1;
+                            return true;
+                        }
+
+                        // All other commands while suspended get an error
+                        let reply = KernelMessage::with_correlation(
+                            pid,
+                            MessageTarget::Process(message.from),
+                            MessagePayload::Json(serde_json::json!({
+                                "error": "agent suspended",
+                                "pid": pid,
+                            })),
+                            message.id.clone(),
+                        );
+                        send_reply(a2a, reply, #[cfg(feature = "exochain")] chain).await;
+                        usage.messages_sent += 1;
+                    }
+                    None => {
+                        // Inbox closed while suspended
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Send a reply message through the A2ARouter.
+async fn send_reply(
+    a2a: &A2ARouter,
+    reply: KernelMessage,
+    #[cfg(feature = "exochain")] chain: Option<&crate::chain::ChainManager>,
+) {
+    #[cfg(feature = "exochain")]
+    {
+        if let Err(e) = a2a.send_checked(reply, chain).await {
+            warn!(error = %e, "failed to send reply");
+        }
+    }
+    #[cfg(not(feature = "exochain"))]
+    {
+        if let Err(e) = a2a.send(reply).await {
+            warn!(error = %e, "failed to send reply");
         }
     }
 }
@@ -327,6 +552,32 @@ mod tests {
         (pid, rx)
     }
 
+    /// Helper to spawn the agent loop with the new parameters.
+    fn spawn_loop(
+        agent_pid: Pid,
+        cancel: CancellationToken,
+        inbox: mpsc::Receiver<KernelMessage>,
+        a2a: Arc<A2ARouter>,
+        cron: Arc<CronService>,
+        pt: Arc<ProcessTable>,
+    ) -> tokio::task::JoinHandle<i32> {
+        tokio::spawn(async move {
+            kernel_agent_loop(
+                agent_pid,
+                cancel,
+                inbox,
+                a2a,
+                cron,
+                pt,
+                #[cfg(feature = "exochain")]
+                None,
+                #[cfg(feature = "exochain")]
+                None,
+            )
+            .await
+        })
+    }
+
     #[tokio::test]
     async fn ping_command() {
         let (a2a, cron, pt) = setup();
@@ -334,24 +585,7 @@ mod tests {
         let mut kernel_inbox = a2a.create_inbox(0);
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt);
 
         // Send ping from kernel (PID 0)
         let msg = KernelMessage::new(
@@ -389,24 +623,7 @@ mod tests {
         let mut kernel_inbox = a2a.create_inbox(0);
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt);
 
         let msg = KernelMessage::new(
             0,
@@ -440,24 +657,7 @@ mod tests {
         let mut kernel_inbox = a2a.create_inbox(0);
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron.clone(), pt);
 
         let msg = KernelMessage::new(
             0,
@@ -499,24 +699,7 @@ mod tests {
         let (agent_pid, inbox) = spawn_agent(&pt, &a2a, "test-agent");
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a, cron, pt);
 
         cancel.cancel();
         let code = handle.await.unwrap();
@@ -530,24 +713,7 @@ mod tests {
         let mut kernel_inbox = a2a.create_inbox(0);
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt);
 
         // Send an RVF payload containing JSON bytes (e.g. `{"cmd":"ping"}`)
         let json_bytes = serde_json::to_vec(&serde_json::json!({"cmd": "ping"})).unwrap();
@@ -587,24 +753,7 @@ mod tests {
         let mut kernel_inbox = a2a.create_inbox(0);
 
         let cancel = CancellationToken::new();
-        let cancel2 = cancel.clone();
-
-        let handle = tokio::spawn({
-            let a2a = a2a.clone();
-            let cron = cron.clone();
-            async move {
-                kernel_agent_loop(
-                    agent_pid,
-                    cancel2,
-                    inbox,
-                    a2a,
-                    cron,
-                    #[cfg(feature = "exochain")]
-                    None,
-                )
-                .await
-            }
-        });
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt);
 
         // Send raw binary that isn't valid JSON or CBOR
         let msg = KernelMessage::new(
@@ -631,6 +780,290 @@ mod tests {
             assert_eq!(v["data_len"], 4);
         } else {
             panic!("expected JSON reply acknowledging RVF binary");
+        }
+
+        cancel.cancel();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resource_usage_increments() {
+        let (a2a, cron, pt) = setup();
+        let (agent_pid, inbox) = spawn_agent(&pt, &a2a, "test-agent");
+        let mut kernel_inbox = a2a.create_inbox(0);
+
+        let cancel = CancellationToken::new();
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt.clone());
+
+        // Send a ping
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "ping"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        // Wait for reply
+        let _reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        // Cancel and wait for the loop to exit (which triggers final resource update)
+        cancel.cancel();
+        let _code = handle.await.unwrap();
+
+        // Check resource usage was updated
+        let entry = pt.get(agent_pid).unwrap();
+        assert!(entry.resource_usage.messages_sent >= 1, "messages_sent should be at least 1");
+    }
+
+    #[tokio::test]
+    async fn suspend_resume_cycle() {
+        let (a2a, cron, pt) = setup();
+        let (agent_pid, inbox) = spawn_agent(&pt, &a2a, "test-agent");
+        let mut kernel_inbox = a2a.create_inbox(0);
+
+        let cancel = CancellationToken::new();
+        let handle = spawn_loop(agent_pid, cancel.clone(), inbox, a2a.clone(), cron, pt.clone());
+
+        // Send suspend
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "suspend"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        // Wait for suspended acknowledgement
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["status"], "suspended");
+        } else {
+            panic!("expected JSON reply");
+        }
+
+        // Verify process state is Suspended
+        let entry = pt.get(agent_pid).unwrap();
+        assert_eq!(entry.state, ProcessState::Suspended);
+
+        // Send a ping while suspended — should get error
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "ping"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["error"], "agent suspended");
+        } else {
+            panic!("expected JSON error reply");
+        }
+
+        // Send resume
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "resume"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["status"], "resumed");
+        } else {
+            panic!("expected JSON reply");
+        }
+
+        // Verify process state is Running again
+        let entry = pt.get(agent_pid).unwrap();
+        assert_eq!(entry.state, ProcessState::Running);
+
+        // Ping should work again after resume
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "ping"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["status"], "ok");
+        } else {
+            panic!("expected JSON reply");
+        }
+
+        cancel.cancel();
+        handle.await.unwrap();
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn gate_deny_blocks_exec() {
+        use crate::gate::{GateBackend, GateDecision};
+
+        // Gate that always denies
+        struct AlwaysDeny;
+        impl GateBackend for AlwaysDeny {
+            fn check(
+                &self,
+                _agent_id: &str,
+                _action: &str,
+                _context: &serde_json::Value,
+            ) -> GateDecision {
+                GateDecision::Deny {
+                    reason: "test deny".into(),
+                    receipt: None,
+                }
+            }
+        }
+
+        let (a2a, cron, pt) = setup();
+        let (agent_pid, inbox) = spawn_agent(&pt, &a2a, "test-agent");
+        let mut kernel_inbox = a2a.create_inbox(0);
+
+        let cancel = CancellationToken::new();
+        let cancel2 = cancel.clone();
+        let a2a2 = a2a.clone();
+        let pt2 = pt.clone();
+
+        let handle = tokio::spawn(async move {
+            kernel_agent_loop(
+                agent_pid,
+                cancel2,
+                inbox,
+                a2a2,
+                cron,
+                pt2,
+                None,
+                Some(Arc::new(AlwaysDeny) as Arc<dyn GateBackend>),
+            )
+            .await
+        });
+
+        // Send exec — should be denied by gate
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "exec", "text": "hello"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["denied"], true);
+            assert_eq!(v["error"], "test deny");
+        } else {
+            panic!("expected JSON deny reply");
+        }
+
+        cancel.cancel();
+        handle.await.unwrap();
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn gate_permit_allows_exec() {
+        use crate::gate::{GateBackend, GateDecision};
+
+        // Gate that always permits
+        struct AlwaysPermit;
+        impl GateBackend for AlwaysPermit {
+            fn check(
+                &self,
+                _agent_id: &str,
+                _action: &str,
+                _context: &serde_json::Value,
+            ) -> GateDecision {
+                GateDecision::Permit { token: None }
+            }
+        }
+
+        let (a2a, cron, pt) = setup();
+        let (agent_pid, inbox) = spawn_agent(&pt, &a2a, "test-agent");
+        let mut kernel_inbox = a2a.create_inbox(0);
+
+        let cancel = CancellationToken::new();
+        let cancel2 = cancel.clone();
+        let a2a2 = a2a.clone();
+        let pt2 = pt.clone();
+
+        let handle = tokio::spawn(async move {
+            kernel_agent_loop(
+                agent_pid,
+                cancel2,
+                inbox,
+                a2a2,
+                cron,
+                pt2,
+                None,
+                Some(Arc::new(AlwaysPermit) as Arc<dyn GateBackend>),
+            )
+            .await
+        });
+
+        // Send exec — should be permitted
+        let msg = KernelMessage::new(
+            0,
+            MessageTarget::Process(agent_pid),
+            MessagePayload::Json(serde_json::json!({"cmd": "exec", "text": "hello"})),
+        );
+        a2a.send(msg).await.unwrap();
+
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            kernel_inbox.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        if let MessagePayload::Json(v) = &reply.payload {
+            assert_eq!(v["status"], "ok");
+            assert_eq!(v["echo"], "hello");
+        } else {
+            panic!("expected JSON reply");
         }
 
         cancel.cancel();

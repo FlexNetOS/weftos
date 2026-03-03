@@ -256,6 +256,29 @@ impl<P: Platform> AgentSupervisor<P> {
             // Transition to Exited
             let _ = process_table.update_state(pid, ProcessState::Exited(exit_code));
 
+            // Blend scoring on agent exit — performance observation
+            #[cfg(feature = "exochain")]
+            if let Some(ref tm) = tree_manager {
+                let agent_path = format!("/kernel/agents/{agent_id}");
+                let rid = exo_resource_tree::ResourceId::new(&agent_path);
+
+                // Build observation: successful exit boosts trust/reliability,
+                // failure reduces them.
+                let success = exit_code == 0;
+                let observation = exo_resource_tree::NodeScoring {
+                    trust: if success { 0.8 } else { 0.2 },
+                    performance: if success { 0.7 } else { 0.3 },
+                    difficulty: 0.5,
+                    reward: if success { 0.6 } else { 0.1 },
+                    reliability: if success { 0.9 } else { 0.1 },
+                    velocity: 0.5,
+                };
+                // Blend with alpha=0.3 (30% observation, 70% prior)
+                if let Err(e) = tm.blend_scoring(&rid, &observation, 0.3) {
+                    debug!(error = %e, pid, "scoring blend skipped (node may be unregistered)");
+                }
+            }
+
             // Unregister from tree
             #[cfg(feature = "exochain")]
             if let Some(ref tm) = tree_manager
@@ -485,6 +508,165 @@ impl<P: Platform> AgentSupervisor<P> {
             entry.value().abort();
         }
         self.running_agents.clear();
+    }
+
+    /// Sweep finished agent handles that were not cleaned up normally.
+    ///
+    /// Iterates `running_agents`, checks `is_finished()` on each
+    /// `JoinHandle`, and for any that are finished:
+    /// 1. Removes the handle from the map
+    /// 2. If the process table still shows `Running`, transitions to
+    ///    `Exited(-2)` (watchdog reap) or `Exited(-3)` (panic reap)
+    /// 3. Logs a chain event (when exochain is enabled)
+    ///
+    /// Returns a list of (pid, exit_code) for all reaped processes.
+    pub async fn watchdog_sweep(&self) -> Vec<(Pid, i32)> {
+        let mut reaped = Vec::new();
+
+        // Collect finished PIDs first to avoid holding DashMap refs across await
+        let finished_pids: Vec<Pid> = self
+            .running_agents
+            .iter()
+            .filter(|entry| entry.value().is_finished())
+            .map(|entry| *entry.key())
+            .collect();
+
+        for pid in finished_pids {
+            if let Some((_, handle)) = self.running_agents.remove(&pid) {
+                // Check if the task panicked
+                let exit_code = match handle.await {
+                    Ok(()) => -2,  // Watchdog reap (task finished but cleanup didn't remove from map)
+                    Err(e) if e.is_panic() => -3,  // Panic reap
+                    Err(_) => -2,  // Cancelled or other
+                };
+
+                // Only transition if process table still shows Running
+                if let Some(entry) = self.process_table.get(pid)
+                    && entry.state == ProcessState::Running
+                {
+                    let _ = self
+                        .process_table
+                        .update_state(pid, ProcessState::Exited(exit_code));
+
+                    #[cfg(feature = "exochain")]
+                    if let Some(ref cm) = self.chain_manager {
+                        cm.append(
+                            "watchdog",
+                            "agent.watchdog_reap",
+                            Some(serde_json::json!({
+                                "pid": pid,
+                                "exit_code": exit_code,
+                                "agent_id": entry.agent_id,
+                            })),
+                        );
+                    }
+
+                    reaped.push((pid, exit_code));
+                    info!(pid, exit_code, agent_id = %entry.agent_id, "watchdog reaped stale agent");
+                }
+            }
+        }
+
+        reaped
+    }
+
+    /// Gracefully shut down all running agents with a timeout.
+    ///
+    /// 1. Cancels all agent cancellation tokens via the process table
+    /// 2. Drains all JoinHandles from `running_agents`
+    /// 3. Waits for all tasks to complete, with a timeout
+    /// 4. On timeout, aborts any remaining tasks
+    ///
+    /// Returns a list of (pid, exit_code) for all agents.
+    pub async fn shutdown_all(&self, timeout: std::time::Duration) -> Vec<(Pid, i32)> {
+        // 1. Cancel all agent tokens
+        for entry in self.process_table.list() {
+            if entry.pid == 0 {
+                continue; // Don't cancel the kernel process
+            }
+            entry.cancel_token.cancel();
+        }
+
+        // 2. Drain all handles from running_agents
+        let handles: Vec<(Pid, tokio::task::JoinHandle<()>)> = {
+            let pids: Vec<Pid> = self.running_agents.iter().map(|e| *e.key()).collect();
+            let mut collected = Vec::with_capacity(pids.len());
+            for pid in pids {
+                if let Some((pid, handle)) = self.running_agents.remove(&pid) {
+                    collected.push((pid, handle));
+                }
+            }
+            collected
+        };
+
+        if handles.is_empty() {
+            return Vec::new();
+        }
+
+        let process_table = &self.process_table;
+
+        // 3. Wait for all handles concurrently with timeout.
+        //    Use futures::future::join_all-style: wrap each handle in a
+        //    tokio::time::timeout so no single stuck handle blocks the rest.
+        let mut results = Vec::with_capacity(handles.len());
+
+        match tokio::time::timeout(
+            timeout,
+            futures::future::join_all(
+                handles
+                    .into_iter()
+                    .map(|(pid, handle)| async move { (pid, handle.await) }),
+            ),
+        )
+        .await
+        {
+            Ok(join_results) => {
+                // All handles completed within timeout
+                for (pid, join_result) in join_results {
+                    let exit_code = match join_result {
+                        Ok(()) => process_table
+                            .get(pid)
+                            .and_then(|e| match e.state {
+                                ProcessState::Exited(code) => Some(code),
+                                _ => None,
+                            })
+                            .unwrap_or(0),
+                        Err(e) if e.is_panic() => -3,
+                        Err(_) => -1,
+                    };
+                    results.push((pid, exit_code));
+                }
+            }
+            Err(_elapsed) => {
+                info!("shutdown timeout reached, aborting remaining agents");
+                // Timeout expired. Any handles still alive need to be aborted.
+                // Since we moved the handles into join_all, they're already being
+                // awaited. The timeout drop aborts them. Record all remaining
+                // agents from the running_agents map.
+                let remaining: Vec<Pid> =
+                    self.running_agents.iter().map(|e| *e.key()).collect();
+                for pid in remaining {
+                    if let Some((pid, handle)) = self.running_agents.remove(&pid) {
+                        handle.abort();
+                        let _ = process_table.update_state(pid, ProcessState::Exited(-1));
+                        results.push((pid, -1));
+                    }
+                }
+
+                // If no remaining handles were in the map (handles were consumed by
+                // join_all), check the process table for any non-exited agents.
+                if results.is_empty() {
+                    for entry in process_table.list() {
+                        if entry.pid != 0 && !matches!(entry.state, ProcessState::Exited(_)) {
+                            let _ = process_table.update_state(entry.pid, ProcessState::Exited(-1));
+                            results.push((entry.pid, -1));
+                        }
+                    }
+                }
+            }
+        }
+
+        results
     }
 
     /// Get the tree manager (when exochain feature is enabled).
@@ -898,6 +1080,90 @@ mod tests {
 
         sup.abort_all();
 
+        assert_eq!(sup.running_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn watchdog_sweep_reaps_finished_task() {
+        let sup = make_supervisor();
+
+        // Spawn a task that completes instantly
+        let result = sup
+            .spawn_and_run(simple_request("instant"), |_pid, _cancel| async { 0 })
+            .unwrap();
+
+        // Give the task time to complete and clean up normally
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The task should have cleaned itself up. If it did, sweep returns empty.
+        // If by race condition it didn't, sweep should reap it.
+        let reaped = sup.watchdog_sweep().await;
+
+        // Either the task cleaned up on its own (reaped is empty and state is Exited)
+        // or the watchdog reaped it.
+        let entry = sup.inspect(result.pid).unwrap();
+        assert!(
+            matches!(entry.state, ProcessState::Exited(_)),
+            "process should be Exited after sweep, got {:?}",
+            entry.state
+        );
+
+        // Running task count should be 0 either way
+        assert_eq!(sup.running_task_count(), 0);
+
+        // If reaped, verify exit code
+        for (pid, code) in &reaped {
+            assert_eq!(*pid, result.pid);
+            assert!(*code == -2 || *code == -3);
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_graceful() {
+        let sup = make_supervisor();
+
+        sup.spawn_and_run(simple_request("g1"), |_pid, cancel| async move {
+            cancel.cancelled().await;
+            0
+        })
+        .unwrap();
+        sup.spawn_and_run(simple_request("g2"), |_pid, cancel| async move {
+            cancel.cancelled().await;
+            42
+        })
+        .unwrap();
+
+        assert_eq!(sup.running_task_count(), 2);
+
+        let results = sup
+            .shutdown_all(std::time::Duration::from_secs(5))
+            .await;
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(sup.running_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_timeout_aborts() {
+        let sup = make_supervisor();
+
+        // Spawn a task that ignores cancellation (just sleeps forever)
+        sup.spawn_and_run(simple_request("stubborn"), |_pid, _cancel| async move {
+            // Ignore cancellation — sleep for a very long time
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            0
+        })
+        .unwrap();
+
+        assert_eq!(sup.running_task_count(), 1);
+
+        // shutdown_all with a very short timeout
+        let results = sup
+            .shutdown_all(std::time::Duration::from_millis(100))
+            .await;
+
+        // Should have at least 1 result (might be aborted)
+        assert!(!results.is_empty());
         assert_eq!(sup.running_task_count(), 0);
     }
 }

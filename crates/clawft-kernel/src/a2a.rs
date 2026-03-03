@@ -119,7 +119,7 @@ impl A2ARouter {
             .get(from)
             .ok_or(KernelError::ProcessNotFound { pid: from })?;
 
-        if !matches!(sender.state, ProcessState::Running) {
+        if !matches!(sender.state, ProcessState::Running | ProcessState::Suspended) {
             return Err(KernelError::Ipc(format!(
                 "sender PID {from} is not running (state: {})",
                 sender.state
@@ -636,5 +636,161 @@ mod tests {
             received.payload,
             MessagePayload::Rvf { segment_type: 0x40, .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn closed_inbox_auto_removed() {
+        let (router, pids, receivers) = setup_router(2);
+
+        // Drop receiver for pids[1] — closes the inbox channel
+        drop(receivers);
+
+        assert!(router.has_inbox(pids[1]));
+
+        // Sending should fail with "inbox closed" and auto-remove the entry
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "gone");
+        let result = router.send(msg).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("inbox closed"), "expected 'inbox closed', got: {err_msg}");
+
+        // Inbox should have been removed automatically
+        assert!(!router.has_inbox(pids[1]));
+    }
+
+    #[tokio::test]
+    async fn inbox_overflow_returns_error() {
+        // Create a router with 2 agents, but use a small inbox
+        // We can't change DEFAULT_INBOX_CAPACITY, so we fill a normal inbox.
+        // Instead, create a custom channel with capacity 2 for a targeted test.
+        let table = Arc::new(ProcessTable::new(64));
+
+        let sender_entry = ProcessEntry {
+            pid: 0,
+            agent_id: "sender".to_owned(),
+            state: ProcessState::Running,
+            capabilities: AgentCapabilities::default(),
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let sender_pid = table.insert(sender_entry).unwrap();
+
+        let target_entry = ProcessEntry {
+            pid: 0,
+            agent_id: "target".to_owned(),
+            state: ProcessState::Running,
+            capabilities: AgentCapabilities::default(),
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let target_pid = table.insert(target_entry).unwrap();
+
+        let checker = Arc::new(CapabilityChecker::new(table.clone()));
+        let topic_router = Arc::new(TopicRouter::new(table.clone()));
+        let router = A2ARouter::new(table, checker, topic_router);
+
+        // Create sender inbox normally
+        let _rx_sender = router.create_inbox(sender_pid);
+
+        // Manually insert a tiny-capacity channel for target (capacity=2)
+        let (tx, _rx_target) = mpsc::channel(2);
+        router.inboxes.insert(target_pid, tx);
+
+        // Fill it up
+        let m1 = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "msg1");
+        let m2 = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "msg2");
+        router.send(m1).await.unwrap();
+        router.send(m2).await.unwrap();
+
+        // Third message should fail — inbox full
+        let m3 = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "overflow");
+        let result = router.send(m3).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("inbox full"), "expected 'inbox full', got: {err_msg}");
+
+        // Inbox should still exist (not removed on full, only on closed)
+        assert!(router.has_inbox(target_pid));
+    }
+
+    #[tokio::test]
+    async fn concurrent_sends_to_same_pid() {
+        let (router, pids, mut receivers) = setup_router(4);
+        let router = Arc::new(router);
+        let target = pids[0];
+
+        // 3 senders each send a message to the same target concurrently
+        let mut handles = Vec::new();
+        for &sender_pid in &pids[1..] {
+            let r = Arc::clone(&router);
+            let msg = KernelMessage::text(
+                sender_pid,
+                MessageTarget::Process(target),
+                &format!("from-{sender_pid}"),
+            );
+            handles.push(tokio::spawn(async move { r.send(msg).await }));
+        }
+
+        // All sends should succeed
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+
+        // Target should have received all 3 messages
+        let mut received = Vec::new();
+        while let Ok(msg) = receivers[0].try_recv() {
+            if let MessagePayload::Text(t) = &msg.payload {
+                received.push(t.clone());
+            }
+        }
+        assert_eq!(received.len(), 3);
+        // All senders represented (order may vary)
+        for &sender_pid in &pids[1..] {
+            assert!(
+                received.iter().any(|t| t == &format!("from-{sender_pid}")),
+                "missing message from PID {sender_pid}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn send_from_non_running_process_fails() {
+        let table = Arc::new(ProcessTable::new(64));
+
+        // Create sender in Exited state
+        let sender_entry = ProcessEntry {
+            pid: 0,
+            agent_id: "exited-sender".to_owned(),
+            state: ProcessState::Exited(0),
+            capabilities: AgentCapabilities::default(),
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let sender_pid = table.insert(sender_entry).unwrap();
+
+        // Create target in Running state
+        let target_entry = ProcessEntry {
+            pid: 0,
+            agent_id: "target".to_owned(),
+            state: ProcessState::Running,
+            capabilities: AgentCapabilities::default(),
+            resource_usage: ResourceUsage::default(),
+            cancel_token: CancellationToken::new(),
+            parent_pid: None,
+        };
+        let target_pid = table.insert(target_entry).unwrap();
+
+        let checker = Arc::new(CapabilityChecker::new(table.clone()));
+        let topic_router = Arc::new(TopicRouter::new(table.clone()));
+        let router = A2ARouter::new(table, checker, topic_router);
+        let _rx1 = router.create_inbox(sender_pid);
+        let _rx2 = router.create_inbox(target_pid);
+
+        let msg = KernelMessage::text(sender_pid, MessageTarget::Process(target_pid), "from-dead");
+        let result = router.send(msg).await;
+        assert!(result.is_err(), "send from non-Running process should fail");
     }
 }

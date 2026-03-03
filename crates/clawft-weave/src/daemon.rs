@@ -19,13 +19,15 @@ use clawft_types::config::{Config, KernelConfig};
 use crate::protocol::{
     self, AgentInspectResult, AgentSendParams, AgentSpawnParams, AgentSpawnResult, AgentStopParams,
     AgentRestartParams, ClusterJoinParams, ClusterLeaveParams, ClusterNodeInfo,
-    ClusterStatusResult, CronAddParams, CronJobInfo, CronRemoveParams, KernelStatusResult,
-    LogEntry, LogsParams, ProcessInfo, Request, Response, ServiceInfo,
+    ClusterStatusResult, CronAddParams, CronJobInfo, CronRemoveParams, IpcPublishParams,
+    IpcSubscribeParams, IpcTopicInfo, KernelStatusResult, LogEntry, LogsParams, ProcessInfo,
+    Request, Response, ServiceInfo,
 };
 #[cfg(feature = "exochain")]
 use crate::protocol::{
     ChainEventInfo, ChainExportParams, ChainLocalParams, ChainStatusResult, ChainVerifyResult,
-    ResourceInspectParams, ResourceNodeInfo, ResourceStatsResult,
+    ResourceInspectParams, ResourceNodeInfo, ResourceRankEntry, ResourceRankParams,
+    ResourceScoreParams, ResourceScoreResult, ResourceStatsResult,
 };
 
 /// Fork the daemon into the background.
@@ -216,6 +218,117 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
         }
     });
 
+    // Health monitor loop — periodic aggregate() with chain logging
+    //
+    // We access the kernel inside the loop but drop the RwLock guard before
+    // any await on service health checks to avoid Send issues.
+    let health_kernel = Arc::clone(&kernel);
+    let mut health_shutdown_rx = shutdown_rx.clone();
+    tokio::spawn(async move {
+        let interval_secs = {
+            let k = health_kernel.read().await;
+            k.kernel_config().health_check_interval_secs
+        };
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    // Snapshot services as concrete Vec (releases DashMap refs)
+                    let (services_snapshot, event_log) = {
+                        let k = health_kernel.read().await;
+                        let snapshot = k.services().snapshot();
+                        let el = k.event_log().clone();
+                        (snapshot, el)
+                    };
+                    #[cfg(feature = "exochain")]
+                    let chain = {
+                        let k = health_kernel.read().await;
+                        k.chain_manager().cloned()
+                    };
+
+                    // Run health checks outside the lock (no DashMap borrow)
+                    let mut results = Vec::new();
+                    let mut unhealthy_names = Vec::new();
+                    let mut all_unhealthy = true;
+
+                    for (name, svc) in &services_snapshot {
+                        let status = svc.health_check().await;
+                        match &status {
+                            clawft_kernel::HealthStatus::Healthy => {
+                                all_unhealthy = false;
+                            }
+                            clawft_kernel::HealthStatus::Degraded(msg) => {
+                                event_log.warn("health", format!("{name}: degraded - {msg}"));
+                                unhealthy_names.push(name.clone());
+                                all_unhealthy = false;
+                            }
+                            clawft_kernel::HealthStatus::Unhealthy(msg) => {
+                                event_log.error("health", format!("{name}: unhealthy - {msg}"));
+                                unhealthy_names.push(name.clone());
+                            }
+                            clawft_kernel::HealthStatus::Unknown => {
+                                unhealthy_names.push(name.clone());
+                            }
+                        }
+                        results.push((name.clone(), status));
+                    }
+
+                    let overall = if services_snapshot.is_empty() {
+                        clawft_kernel::OverallHealth::Down
+                    } else if unhealthy_names.is_empty() {
+                        clawft_kernel::OverallHealth::Healthy
+                    } else if all_unhealthy {
+                        clawft_kernel::OverallHealth::Down
+                    } else {
+                        clawft_kernel::OverallHealth::Degraded {
+                            unhealthy_services: unhealthy_names,
+                        }
+                    };
+
+                    // Chain event (exochain)
+                    #[cfg(feature = "exochain")]
+                    if let Some(ref cm) = chain {
+                        cm.append("health", "health.check", Some(serde_json::json!({
+                            "overall": overall.to_string(),
+                            "services": results.len(),
+                        })));
+                    }
+                    let _ = overall; // suppress unused warning when exochain is off
+                }
+                _ = health_shutdown_rx.changed() => {
+                    if *health_shutdown_rx.borrow() {
+                        debug!("health monitor loop shutting down");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Watchdog loop — sweep finished JoinHandles every 5 seconds
+    let watchdog_kernel = Arc::clone(&kernel);
+    let mut watchdog_shutdown_rx = shutdown_rx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let k = watchdog_kernel.read().await;
+                    let reaped = k.supervisor().watchdog_sweep().await;
+                    for (pid, code) in &reaped {
+                        k.event_log().warn("watchdog", format!("reaped PID {pid} (exit code {code})"));
+                    }
+                }
+                _ = watchdog_shutdown_rx.changed() => {
+                    if *watchdog_shutdown_rx.borrow() {
+                        debug!("watchdog loop shutting down");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     // Accept loop — clone shutdown_tx so the outer scope can still use it for Ctrl+C
     let accept_kernel = Arc::clone(&kernel);
     let rpc_shutdown_tx = shutdown_tx.clone();
@@ -263,6 +376,15 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
     // If it finished on its own (RPC shutdown), the handle is already consumed.
     if ctrl_c_triggered {
         let _ = accept_handle.await;
+    }
+
+    // Gracefully shut down running agents before kernel shutdown
+    {
+        let k = kernel.read().await;
+        let results = k.supervisor().shutdown_all(std::time::Duration::from_secs(5)).await;
+        for (pid, code) in &results {
+            k.event_log().info("shutdown", format!("agent PID {pid} exited with code {code}"));
+        }
     }
 
     // Shut down kernel
@@ -729,10 +851,35 @@ async fn dispatch(
                 let k = kernel.read().await;
                 if let Some(cm) = k.chain_manager() {
                     let result = cm.verify_integrity();
+
+                    // Also verify RVF signature if chain has a signing key.
+                    let signature_verified = if let Some(pubkey) = cm.verifying_key() {
+                        let cfg = k.kernel_config().chain.clone().unwrap_or_default();
+                        if let Some(ref ckpt_path) = cfg.effective_checkpoint_path() {
+                            let rvf_path = std::path::PathBuf::from(ckpt_path)
+                                .with_extension("rvf");
+                            if rvf_path.exists() {
+                                match clawft_kernel::ChainManager::verify_rvf_signature(
+                                    &rvf_path, &pubkey,
+                                ) {
+                                    Ok(valid) => Some(valid),
+                                    Err(_) => Some(false),
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     let proto_result = ChainVerifyResult {
                         valid: result.valid,
                         event_count: result.event_count,
                         errors: result.errors,
+                        signature_verified,
                     };
                     Response::success(serde_json::to_value(proto_result).unwrap())
                 } else {
@@ -915,9 +1062,11 @@ async fn dispatch(
             let chain = k.chain_manager().cloned();
 
             // Use spawn_and_run to actually execute the agent work loop
+            let process_table = k.process_table().clone();
             match k.supervisor().spawn_and_run(request, {
                 let a2a_clone = a2a.clone();
                 let cron_clone = cron.clone();
+                let pt_clone = process_table;
                 #[cfg(feature = "exochain")]
                 let chain_clone = chain.clone();
                 move |pid, cancel| {
@@ -929,8 +1078,11 @@ async fn dispatch(
                             inbox,
                             a2a_clone,
                             cron_clone,
+                            pt_clone,
                             #[cfg(feature = "exochain")]
                             chain_clone,
+                            #[cfg(feature = "exochain")]
+                            None,
                         )
                         .await
                     }
@@ -1167,6 +1319,151 @@ async fn dispatch(
                 }
                 None => Response::error(format!("cron job not found: {}", remove_params.id)),
             }
+        }
+        "ipc.topics" => {
+            let k = kernel.read().await;
+            let a2a = k.a2a_router();
+            let topics = a2a.topic_router().list_topics();
+            let infos: Vec<IpcTopicInfo> = topics
+                .iter()
+                .map(|(topic, _count)| {
+                    let subs = a2a.topic_router().subscribers(topic);
+                    IpcTopicInfo {
+                        topic: topic.clone(),
+                        subscriber_count: subs.len(),
+                        subscribers: subs,
+                    }
+                })
+                .collect();
+            Response::success(serde_json::to_value(infos).unwrap())
+        }
+        "ipc.subscribe" => {
+            let sub_params: IpcSubscribeParams = match serde_json::from_value(params) {
+                Ok(p) => p,
+                Err(e) => return Response::error(format!("invalid params: {e}")),
+            };
+            let k = kernel.read().await;
+            let a2a = k.a2a_router();
+            a2a.topic_router().subscribe(sub_params.pid, &sub_params.topic);
+            k.event_log().info(
+                "ipc",
+                format!("PID {} subscribed to '{}'", sub_params.pid, sub_params.topic),
+            );
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append(
+                    "ipc",
+                    "ipc.subscribe",
+                    Some(serde_json::json!({
+                        "pid": sub_params.pid,
+                        "topic": sub_params.topic,
+                    })),
+                );
+            }
+
+            Response::success(serde_json::json!("subscribed"))
+        }
+        "ipc.publish" => {
+            let pub_params: IpcPublishParams = match serde_json::from_value(params) {
+                Ok(p) => p,
+                Err(e) => return Response::error(format!("invalid params: {e}")),
+            };
+            let k = kernel.read().await;
+            let a2a = k.a2a_router().clone();
+
+            // Build message payload
+            let payload = match serde_json::from_str::<serde_json::Value>(&pub_params.message) {
+                Ok(v) => clawft_kernel::MessagePayload::Json(v),
+                Err(_) => clawft_kernel::MessagePayload::Text(pub_params.message.clone()),
+            };
+            let msg = clawft_kernel::KernelMessage::new(
+                0, // from kernel (PID 0)
+                clawft_kernel::MessageTarget::Topic(pub_params.topic.clone()),
+                payload,
+            );
+
+            #[cfg(feature = "exochain")]
+            let send_result = {
+                let chain = k.chain_manager();
+                a2a.send_checked(msg, chain.map(|c| c.as_ref())).await
+            };
+            #[cfg(not(feature = "exochain"))]
+            let send_result = a2a.send(msg).await;
+
+            match send_result {
+                Ok(()) => {
+                    k.event_log().info(
+                        "ipc",
+                        format!("published to topic '{}'", pub_params.topic),
+                    );
+                    Response::success(serde_json::json!("published"))
+                }
+                Err(e) => Response::error(format!("publish failed: {e}")),
+            }
+        }
+        "resource.score" => {
+            #[cfg(feature = "exochain")]
+            {
+                let score_params: ResourceScoreParams = match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+                let k = kernel.read().await;
+                if let Some(tm) = k.tree_manager() {
+                    let rid = exo_resource_tree::ResourceId::new(&score_params.path);
+                    if let Some(scoring) = tm.get_scoring(&rid) {
+                        let composite = scoring.trust * 0.25
+                            + scoring.performance * 0.20
+                            + scoring.reliability * 0.20
+                            + scoring.velocity * 0.15
+                            + scoring.reward * 0.10
+                            + (1.0 - scoring.difficulty) * 0.10;
+                        let result = ResourceScoreResult {
+                            path: score_params.path,
+                            trust: scoring.trust,
+                            performance: scoring.performance,
+                            difficulty: scoring.difficulty,
+                            reward: scoring.reward,
+                            reliability: scoring.reliability,
+                            velocity: scoring.velocity,
+                            composite,
+                        };
+                        Response::success(serde_json::to_value(result).unwrap())
+                    } else {
+                        Response::error(format!("no scoring for: {}", score_params.path))
+                    }
+                } else {
+                    Response::error("resource tree not enabled")
+                }
+            }
+            #[cfg(not(feature = "exochain"))]
+            Response::error("exochain feature not enabled")
+        }
+        "resource.rank" => {
+            #[cfg(feature = "exochain")]
+            {
+                let rank_params: ResourceRankParams = serde_json::from_value(params)
+                    .unwrap_or(ResourceRankParams { count: 10 });
+                let k = kernel.read().await;
+                if let Some(tm) = k.tree_manager() {
+                    // Equal weight across all 6 dimensions
+                    let weights = [1.0, 1.0, 0.5, 0.5, 1.0, 0.5];
+                    let ranked = tm.rank_by_score(&weights, rank_params.count);
+                    let entries: Vec<ResourceRankEntry> = ranked
+                        .iter()
+                        .map(|(rid, score)| ResourceRankEntry {
+                            path: rid.to_string(),
+                            score: *score,
+                        })
+                        .collect();
+                    Response::success(serde_json::to_value(entries).unwrap())
+                } else {
+                    Response::error("resource tree not enabled")
+                }
+            }
+            #[cfg(not(feature = "exochain"))]
+            Response::error("exochain feature not enabled")
         }
         "ping" => Response::success(serde_json::json!("pong")),
         other => Response::error(format!("unknown method: {other}")),

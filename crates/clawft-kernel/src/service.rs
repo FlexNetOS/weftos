@@ -142,6 +142,18 @@ impl ServiceRegistry {
         Ok(())
     }
 
+    /// Return a snapshot of all services as a `Vec`.
+    ///
+    /// This copies all `(name, Arc<dyn SystemService>)` pairs out of
+    /// the `DashMap`, so the returned collection owns no DashMap refs
+    /// and is safe to hold across await points and send across threads.
+    pub fn snapshot(&self) -> Vec<(String, Arc<dyn SystemService>)> {
+        self.services
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+
     /// Run health checks on all registered services.
     pub async fn health_all(&self) -> Vec<(String, HealthStatus)> {
         let mut results = Vec::new();
