@@ -328,6 +328,24 @@ impl GovernanceGate {
         &self.engine
     }
 
+    /// Verify that the governance genesis event exists on the chain.
+    ///
+    /// Returns the genesis sequence number if found, or `None` if no
+    /// chain is attached or no genesis event exists.
+    pub fn verify_governance_genesis(&self) -> Option<u64> {
+        let cm = self.chain.as_ref()?;
+        let events = cm.tail(0); // all events
+        events
+            .iter()
+            .find(|e| e.kind == "governance.genesis")
+            .and_then(|e| {
+                e.payload
+                    .as_ref()
+                    .and_then(|p| p.get("genesis_seq"))
+                    .and_then(|v| v.as_u64())
+            })
+    }
+
     /// Extract an [`EffectVector`] from the gate context JSON.
     ///
     /// Looks for an `"effect"` object with `risk`, `fairness`, `privacy`,

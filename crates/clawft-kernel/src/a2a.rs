@@ -71,8 +71,12 @@ pub struct A2ARouter {
     pending_requests: DashMap<String, PendingRequest>,
 
     /// Optional routing-time gate backend (C4 dual-layer governance).
+    ///
+    /// Uses `OnceLock` to support post-construction wiring from boot
+    /// (the governance gate is created after the A2ARouter is wrapped
+    /// in `Arc`). `with_gate()` and `set_gate()` both target this field.
     #[cfg(feature = "exochain")]
-    gate: Option<Arc<dyn crate::gate::GateBackend>>,
+    gate: std::sync::OnceLock<Arc<dyn crate::gate::GateBackend>>,
 }
 
 impl A2ARouter {
@@ -90,7 +94,7 @@ impl A2ARouter {
             inboxes: DashMap::new(),
             pending_requests: DashMap::new(),
             #[cfg(feature = "exochain")]
-            gate: None,
+            gate: std::sync::OnceLock::new(),
         }
     }
 
@@ -106,9 +110,19 @@ impl A2ARouter {
     /// the gate *before* inbox delivery. A `Deny` decision blocks the
     /// message; `Defer` still delivers (the handler-time gate decides).
     #[cfg(feature = "exochain")]
-    pub fn with_gate(mut self, gate: Arc<dyn crate::gate::GateBackend>) -> Self {
-        self.gate = Some(gate);
+    pub fn with_gate(self, gate: Arc<dyn crate::gate::GateBackend>) -> Self {
+        let _ = self.gate.set(gate);
         self
+    }
+
+    /// Set the routing-time gate after construction (for boot wiring).
+    ///
+    /// This allows the governance gate to be attached after the router
+    /// is already wrapped in an `Arc`, since the `OnceLock` provides
+    /// interior mutability for the first (and only) write.
+    #[cfg(feature = "exochain")]
+    pub fn set_gate(&self, gate: Arc<dyn crate::gate::GateBackend>) {
+        let _ = self.gate.set(gate);
     }
 
     /// Get the service registry (if configured).
@@ -177,7 +191,7 @@ impl A2ARouter {
         // A Deny blocks the message before it reaches any inbox. Defer
         // still delivers — the handler-time gate makes the final call.
         #[cfg(feature = "exochain")]
-        if let Some(ref gate) = self.gate {
+        if let Some(gate) = self.gate.get() {
             let action = match &msg.payload {
                 crate::ipc::MessagePayload::ToolCall { name, .. } => format!("tool.{name}"),
                 crate::ipc::MessagePayload::Signal(_) => "ipc.signal".to_string(),

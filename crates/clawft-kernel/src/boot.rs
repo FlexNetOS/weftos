@@ -97,6 +97,8 @@ pub struct Kernel<P: Platform> {
     ecc_impulses: Option<Arc<crate::impulse::ImpulseQueue>>,
     #[cfg(feature = "ecc")]
     ecc_calibration: Option<crate::calibration::EccCalibration>,
+    #[cfg(feature = "exochain")]
+    governance_gate: Option<Arc<dyn crate::gate::GateBackend>>,
 }
 
 impl<P: Platform> Kernel<P> {
@@ -679,6 +681,157 @@ impl<P: Platform> Kernel<P> {
             }
         };
 
+        // 8f. Initialize governance engine with chain-anchored genesis rules
+        //
+        // The governance gate is the constitutional layer of the kernel.
+        // At boot, genesis rules are written to the chain as immutable
+        // entries. Once anchored, they cannot be modified — only superseded
+        // by a `governance.root.supersede` event that references the
+        // original genesis sequence.
+        #[cfg(feature = "exochain")]
+        let governance_gate: Option<Arc<dyn crate::gate::GateBackend>> = {
+            if let Some(ref cm) = chain_manager {
+                use crate::governance::{GovernanceBranch, GovernanceRule, RuleSeverity};
+                use crate::gate::GovernanceGate;
+
+                // Default risk threshold (0.7 for production safety)
+                let risk_threshold = 0.7;
+                let human_approval = false;
+
+                let mut gate = GovernanceGate::new(risk_threshold, human_approval)
+                    .with_chain(Arc::clone(cm));
+
+                // ── Genesis governance rules (immutable chain entries) ────
+                // These are the constitutional rules that govern all agent
+                // behavior. Once written to the chain, they cannot be
+                // modified — only superseded by a governance.root.supersede
+                // event.
+
+                let genesis_rules = vec![
+                    GovernanceRule {
+                        id: "GOV-001".into(),
+                        description: "High-risk operations require elevated review".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-002".into(),
+                        description: "Security-sensitive actions must not exceed security threshold".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-003".into(),
+                        description: "Privacy-impacting operations flagged for review".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-004".into(),
+                        description: "Novel/unprecedented actions require advisory logging".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-005".into(),
+                        description: "Filesystem write operations scored for risk".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-006".into(),
+                        description: "Agent spawn operations require governance clearance".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                    },
+                    GovernanceRule {
+                        id: "GOV-007".into(),
+                        description: "IPC messages between agents logged for audit trail".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                    },
+                ];
+
+                // Anchor genesis rules to chain
+                let genesis_seq = cm.sequence();
+                let rules_json: Vec<serde_json::Value> = genesis_rules.iter().map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "description": r.description,
+                        "branch": format!("{}", r.branch),
+                        "severity": format!("{}", r.severity),
+                    })
+                }).collect();
+
+                // The governance.genesis event is the ROOT — it establishes the
+                // constitutional rules. Its chain sequence is the governance root.
+                cm.append(
+                    "governance",
+                    "governance.genesis",
+                    Some(serde_json::json!({
+                        "version": "1.0.0",
+                        "risk_threshold": risk_threshold,
+                        "human_approval_required": human_approval,
+                        "rules": rules_json,
+                        "rule_count": genesis_rules.len(),
+                        "genesis_seq": genesis_seq,
+                    })),
+                );
+
+                // Anchor each rule individually for granular verification
+                for rule in &genesis_rules {
+                    cm.append(
+                        "governance",
+                        "governance.rule",
+                        Some(serde_json::json!({
+                            "rule_id": rule.id,
+                            "branch": format!("{}", rule.branch),
+                            "severity": format!("{}", rule.severity),
+                            "genesis_seq": genesis_seq,
+                        })),
+                    );
+                }
+
+                // Add rules to the gate
+                for rule in genesis_rules {
+                    gate = gate.add_rule(rule);
+                }
+
+                boot_log.push(BootEvent::info(
+                    BootPhase::Services,
+                    format!(
+                        "Governance genesis anchored (seq={}, {} rules, threshold={:.1})",
+                        genesis_seq,
+                        gate.engine().rule_count(),
+                        risk_threshold,
+                    ),
+                ));
+
+                Some(Arc::new(gate) as Arc<dyn crate::gate::GateBackend>)
+            } else {
+                boot_log.push(BootEvent::info(
+                    BootPhase::Services,
+                    "Governance: no chain available, using open governance",
+                ));
+                None
+            }
+        };
+
+        // Wire governance gate into A2A router for dual-layer enforcement.
+        // The A2ARouter is already behind Arc, so we use set_gate() which
+        // relies on OnceLock interior mutability.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = governance_gate {
+            a2a_router.set_gate(Arc::clone(gate));
+        }
+
         // 8d. Log cluster and boot.ready chain events
         #[cfg(feature = "exochain")]
         if let Some(ref cm) = chain_manager {
@@ -884,6 +1037,8 @@ impl<P: Platform> Kernel<P> {
             ecc_impulses,
             #[cfg(feature = "ecc")]
             ecc_calibration,
+            #[cfg(feature = "exochain")]
+            governance_gate,
         })
     }
 
@@ -1110,6 +1265,12 @@ impl<P: Platform> Kernel<P> {
     #[cfg(feature = "ecc")]
     pub fn ecc_impulses(&self) -> Option<&Arc<crate::impulse::ImpulseQueue>> {
         self.ecc_impulses.as_ref()
+    }
+
+    /// Get the governance gate backend (if configured).
+    #[cfg(feature = "exochain")]
+    pub fn governance_gate(&self) -> Option<&Arc<dyn crate::gate::GateBackend>> {
+        self.governance_gate.as_ref()
     }
 
     /// Take ownership of the AppContext for agent loop consumption.
@@ -1439,9 +1600,50 @@ mod tests {
         assert!(verify_result.valid, "chain should be valid: {:?}", verify_result.errors);
         assert!(verify_result.errors.is_empty(), "no integrity errors");
 
+        // ── Governance: genesis rules anchored to chain ────────────
+        let _governance = kernel.governance_gate().expect("governance gate should exist");
+        let all_events = chain.tail(0);
+        let genesis_events: Vec<_> = all_events.iter()
+            .filter(|e| e.kind == "governance.genesis")
+            .collect();
+        assert!(!genesis_events.is_empty(), "governance genesis should be on chain");
+
+        // Verify the genesis payload contains the correct rule count
+        let genesis_payload = genesis_events[0].payload.as_ref().unwrap();
+        assert_eq!(
+            genesis_payload["rule_count"].as_u64().unwrap(),
+            7,
+            "genesis should contain 7 rules"
+        );
+        assert_eq!(
+            genesis_payload["version"].as_str().unwrap(),
+            "1.0.0",
+            "genesis version should be 1.0.0"
+        );
+
+        // Each rule should be individually anchored (at least 7)
+        let rule_events: Vec<_> = all_events.iter()
+            .filter(|e| e.kind == "governance.rule")
+            .collect();
+        assert!(
+            rule_events.len() >= 7,
+            "at least 7 genesis rules should be individually anchored, got {}",
+            rule_events.len(),
+        );
+
+        // Verify all 7 rule IDs are present
+        let rule_ids: Vec<&str> = rule_events.iter()
+            .filter_map(|e| e.payload.as_ref()?.get("rule_id")?.as_str())
+            .collect();
+        for expected_id in &["GOV-001", "GOV-002", "GOV-003", "GOV-004", "GOV-005", "GOV-006", "GOV-007"] {
+            assert!(
+                rule_ids.contains(expected_id),
+                "{expected_id} should be anchored on chain"
+            );
+        }
+
         // ── ExoChain: ECC calibration event logged ─────────────────
-        let events = chain.tail(0); // 0 = all events
-        let ecc_events: Vec<_> = events.iter().filter(|e| e.kind.starts_with("ecc.")).collect();
+        let ecc_events: Vec<_> = all_events.iter().filter(|e| e.kind.starts_with("ecc.")).collect();
         assert!(
             !ecc_events.is_empty(),
             "ECC boot calibration should be logged to chain"
