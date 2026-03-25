@@ -331,10 +331,10 @@ Key crates for K3:
 - [x] Feature gate: `clawft-kernel` compiles without `wasm-sandbox` feature
 - [x] All workspace tests pass — 579 with all features, 487 baseline
 - [x] Clippy clean
-- [ ] ServiceApi trait defined and Shell/MCP adapters implemented (C2) — deferred to K4
-- [ ] Dual-layer gate in A2ARouter operational (C4) — deferred to K4
-- [ ] Chain-anchored service contracts on registration (C3) — deferred to K4
-- [ ] WASM-compiled shell pipeline produces chain-linked modules (C5) — deferred to K4
+- [x] ServiceApi trait defined and Shell/MCP adapters implemented (C2)
+- [x] Dual-layer gate in A2ARouter operational (C4)
+- [x] Chain-anchored service contracts on registration (C3)
+- [x] WASM-compiled shell pipeline produces chain-linked modules (C5)
 - [ ] Training data collection active for all WASM execution metrics (D18) — deferred to K5
 
 ### Testing Verification

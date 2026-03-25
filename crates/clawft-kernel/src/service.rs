@@ -303,6 +303,49 @@ impl ServiceRegistry {
         self.services.is_empty()
     }
 
+    /// Register a service and automatically create a chain-anchored contract (C3).
+    ///
+    /// This is the recommended registration path for K4+ services that want
+    /// immutable API contracts stored on the ExoChain. It combines service
+    /// registration, contract creation, and chain logging in one call.
+    #[cfg(feature = "exochain")]
+    pub fn register_with_contract(
+        &self,
+        service: Arc<dyn SystemService>,
+        methods: Vec<String>,
+        chain: &crate::chain::ChainManager,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let name = service.name().to_owned();
+        let stype = service.service_type().to_string();
+
+        // Register the service first
+        self.register(service)?;
+
+        // Build canonical contract content and hash it
+        let contract_content = serde_json::json!({
+            "service": &name,
+            "type": &stype,
+            "methods": &methods,
+        });
+        let content_hash = {
+            use sha2::{Digest, Sha256};
+            let bytes = serde_json::to_string(&contract_content)
+                .unwrap_or_default();
+            format!("{:x}", Sha256::digest(bytes.as_bytes()))
+        };
+
+        let contract = ServiceContract {
+            service_name: name,
+            version: "1.0.0".into(),
+            methods,
+            content_hash,
+        };
+
+        self.register_contract(&contract, chain)?;
+
+        Ok(())
+    }
+
     /// Register a service contract and log it to the chain (K2 C3, K4 G2).
     ///
     /// A service contract is a versioned interface declaration that is
@@ -356,6 +399,129 @@ pub struct ServiceContract {
 impl Default for ServiceRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── ServiceApi trait (K3 C2) ─────────────────────────────────────
+
+/// Internal API surface for protocol adapters (Shell, MCP, HTTP).
+///
+/// Protocol adapters bind to this trait to invoke kernel services
+/// through a uniform interface. The kernel provides a concrete
+/// implementation backed by the ServiceRegistry + A2ARouter.
+#[async_trait]
+pub trait ServiceApi: Send + Sync {
+    /// Call a method on a named service.
+    async fn call(
+        &self,
+        service: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// List available services.
+    async fn list_services(&self) -> Vec<ServiceInfo>;
+
+    /// Get service health.
+    async fn health(
+        &self,
+        service: &str,
+    ) -> Result<HealthStatus, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Service info returned by [`ServiceApi::list_services`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceInfo {
+    /// Service name.
+    pub name: String,
+    /// Service type label (e.g. "core", "plugin").
+    pub service_type: String,
+    /// Whether the service is currently healthy.
+    pub healthy: bool,
+}
+
+/// Shell protocol adapter -- dispatches shell commands through [`ServiceApi`].
+pub struct ShellAdapter {
+    api: Arc<dyn ServiceApi>,
+}
+
+impl ShellAdapter {
+    /// Create a new shell adapter bound to the given service API.
+    pub fn new(api: Arc<dyn ServiceApi>) -> Self {
+        Self { api }
+    }
+
+    /// Execute a shell-style command string through the service API.
+    ///
+    /// Parses `"service.method arg1 arg2"` format into a
+    /// [`ServiceApi::call`].
+    pub async fn execute(
+        &self,
+        command: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let parts: Vec<&str> = command.splitn(2, ' ').collect();
+        let (service_method, args_str) = match parts.as_slice() {
+            [sm] => (*sm, ""),
+            [sm, args] => (*sm, *args),
+            _ => return Err("empty command".into()),
+        };
+
+        let (service, method) = service_method
+            .split_once('.')
+            .ok_or_else(|| format!("expected 'service.method', got '{service_method}'"))?;
+
+        let params = if args_str.is_empty() {
+            serde_json::Value::Null
+        } else if args_str.starts_with('{') || args_str.starts_with('[') {
+            serde_json::from_str(args_str)?
+        } else {
+            serde_json::json!({"args": args_str})
+        };
+
+        self.api.call(service, method, params).await
+    }
+}
+
+/// MCP protocol adapter -- dispatches MCP tool calls through [`ServiceApi`].
+pub struct McpAdapter {
+    api: Arc<dyn ServiceApi>,
+}
+
+impl McpAdapter {
+    /// Create a new MCP adapter bound to the given service API.
+    pub fn new(api: Arc<dyn ServiceApi>) -> Self {
+        Self { api }
+    }
+
+    /// Handle an MCP `tool_call` by routing through the service API.
+    ///
+    /// MCP tool names map to `service.method` via either underscore or
+    /// dot separator (e.g. `"kernel_status"` -> `("kernel", "status")`).
+    pub async fn handle_tool_call(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        let (service, method) = tool_name
+            .split_once('_')
+            .or_else(|| tool_name.split_once('.'))
+            .ok_or_else(|| format!("invalid tool name format: {tool_name}"))?;
+
+        self.api.call(service, method, arguments).await
+    }
+
+    /// List available tools (mapped from services).
+    pub async fn list_tools(&self) -> Vec<serde_json::Value> {
+        let services = self.api.list_services().await;
+        services
+            .into_iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": format!("WeftOS {} service", s.service_type),
+                })
+            })
+            .collect()
     }
 }
 
@@ -654,6 +820,74 @@ mod tests {
         }
     }
 
+    // ── ServiceApi tests (K3 C2) ──────────────────────
+
+    struct MockServiceApi;
+
+    #[async_trait]
+    impl ServiceApi for MockServiceApi {
+        async fn call(
+            &self,
+            service: &str,
+            method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(serde_json::json!({"service": service, "method": method}))
+        }
+        async fn list_services(&self) -> Vec<ServiceInfo> {
+            vec![ServiceInfo {
+                name: "test".into(),
+                service_type: "core".into(),
+                healthy: true,
+            }]
+        }
+        async fn health(
+            &self,
+            _service: &str,
+        ) -> Result<HealthStatus, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    #[tokio::test]
+    async fn shell_adapter_parses_command() {
+        let api = Arc::new(MockServiceApi);
+        let shell = ShellAdapter::new(api);
+        let result = shell.execute("kernel.status").await.unwrap();
+        assert_eq!(result["service"], "kernel");
+        assert_eq!(result["method"], "status");
+    }
+
+    #[tokio::test]
+    async fn shell_adapter_with_args() {
+        let api = Arc::new(MockServiceApi);
+        let shell = ShellAdapter::new(api);
+        let result = shell
+            .execute("agent.spawn {\"name\":\"test\"}")
+            .await
+            .unwrap();
+        assert_eq!(result["service"], "agent");
+    }
+
+    #[tokio::test]
+    async fn mcp_adapter_routes_tool_call() {
+        let api = Arc::new(MockServiceApi);
+        let mcp = McpAdapter::new(api);
+        let result = mcp
+            .handle_tool_call("kernel_status", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result["service"], "kernel");
+    }
+
+    #[tokio::test]
+    async fn mcp_adapter_list_tools() {
+        let api = Arc::new(MockServiceApi);
+        let mcp = McpAdapter::new(api);
+        let tools = mcp.list_tools().await;
+        assert_eq!(tools.len(), 1);
+    }
+
     #[test]
     fn audit_level_default_is_full() {
         assert_eq!(ServiceAuditLevel::default(), ServiceAuditLevel::Full);
@@ -739,5 +973,69 @@ mod tests {
         registry.register_contract(&v2, &chain).unwrap();
         // Both versions recorded — chain is append-only so v1 cannot be mutated
         assert_eq!(chain.len(), 3); // genesis + v1 + v2
+    }
+
+    // --- C3: register_with_contract tests ---
+
+    #[test]
+    #[cfg(feature = "exochain")]
+    fn register_with_contract_anchors_to_chain() {
+        let chain = crate::chain::ChainManager::new(0, 1000);
+        let registry = ServiceRegistry::new();
+        let svc = Arc::new(MockService::new("api-v1", ServiceType::Api));
+
+        registry
+            .register_with_contract(
+                svc,
+                vec!["get".into(), "set".into(), "delete".into()],
+                &chain,
+            )
+            .unwrap();
+
+        // Service should be registered
+        assert!(registry.get("api-v1").is_some());
+
+        // Contract should be on chain
+        let events = chain.tail(1);
+        assert_eq!(events[0].kind, "service.contract.register");
+    }
+
+    #[test]
+    #[cfg(feature = "exochain")]
+    fn register_with_contract_duplicate_fails() {
+        let chain = crate::chain::ChainManager::new(0, 1000);
+        let registry = ServiceRegistry::new();
+        let svc1 = Arc::new(MockService::new("dup-c3", ServiceType::Core));
+        let svc2 = Arc::new(MockService::new("dup-c3", ServiceType::Core));
+
+        registry
+            .register_with_contract(svc1, vec!["ping".into()], &chain)
+            .unwrap();
+        // Second registration with same name should fail
+        let result = registry.register_with_contract(svc2, vec!["ping".into()], &chain);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "exochain")]
+    fn register_with_contract_hash_deterministic() {
+        let chain = crate::chain::ChainManager::new(0, 1000);
+        let registry = ServiceRegistry::new();
+        let svc = Arc::new(MockService::new("hash-svc", ServiceType::Plugin));
+
+        registry
+            .register_with_contract(
+                svc,
+                vec!["alpha".into(), "beta".into()],
+                &chain,
+            )
+            .unwrap();
+
+        let events = chain.tail(1);
+        let payload = events[0].payload.as_ref().unwrap();
+        let hash = payload["hash"].as_str().unwrap();
+        // Hash should be a 64-char hex string (SHA-256)
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

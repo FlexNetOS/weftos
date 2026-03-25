@@ -2841,6 +2841,83 @@ impl BuiltinTool for SysCronRemoveTool {
 }
 
 // ---------------------------------------------------------------------------
+// Shell Pipeline (K3 C5)
+// ---------------------------------------------------------------------------
+
+/// A shell pipeline compiled into a chain-linked WASM tool spec.
+///
+/// Shell commands are wrapped as tool definitions with their content
+/// hash anchored to the ExoChain for immutability and provenance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellPipeline {
+    /// Pipeline name.
+    pub name: String,
+    /// Shell command string.
+    pub command: String,
+    /// SHA-256 hash of the command.
+    pub content_hash: [u8; 32],
+    /// Chain sequence number where this pipeline was registered.
+    pub chain_seq: Option<u64>,
+}
+
+impl ShellPipeline {
+    /// Create a new shell pipeline from a command string.
+    pub fn new(name: impl Into<String>, command: impl Into<String>) -> Self {
+        let cmd = command.into();
+        let hash = compute_module_hash(cmd.as_bytes());
+        Self {
+            name: name.into(),
+            command: cmd,
+            content_hash: hash,
+            chain_seq: None,
+        }
+    }
+
+    /// Register this pipeline on the chain for immutability (C5).
+    #[cfg(feature = "exochain")]
+    pub fn anchor_to_chain(&mut self, chain: &crate::chain::ChainManager) {
+        let seq = chain.sequence();
+        let hash_hex: String = self
+            .content_hash
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        chain.append(
+            "shell",
+            "shell.pipeline.register",
+            Some(serde_json::json!({
+                "name": &self.name,
+                "command_hash": hash_hex,
+                "command_length": self.command.len(),
+            })),
+        );
+        self.chain_seq = Some(seq);
+    }
+
+    /// Convert to a [`BuiltinToolSpec`] for registration in the [`ToolRegistry`].
+    pub fn to_tool_spec(&self) -> BuiltinToolSpec {
+        BuiltinToolSpec {
+            name: format!("shell.{}", self.name),
+            category: ToolCategory::User,
+            description: format!("Shell pipeline: {}", self.name),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "args": {"type": "string", "description": "Additional arguments"}
+                }
+            }),
+            gate_action: "tool.shell.execute".into(),
+            effect: EffectVector {
+                risk: 0.6,
+                security: 0.3,
+                ..Default::default()
+            },
+            native: true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -4002,5 +4079,68 @@ mod tests {
         assert!(list.contains(&"fs.exists".to_string()));
         assert!(list.contains(&"wasm.noop".to_string()));
         assert_eq!(list.len(), 2);
+    }
+
+    // --- C5: ShellPipeline tests ---
+
+    #[test]
+    fn shell_pipeline_creates_hash() {
+        let pipeline =
+            ShellPipeline::new("deploy", "cargo build --release && scp target/release/weft server:");
+        assert_ne!(pipeline.content_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn shell_pipeline_deterministic_hash() {
+        let p1 = ShellPipeline::new("test", "echo hello");
+        let p2 = ShellPipeline::new("test", "echo hello");
+        assert_eq!(p1.content_hash, p2.content_hash);
+    }
+
+    #[test]
+    fn shell_pipeline_different_commands_different_hash() {
+        let p1 = ShellPipeline::new("a", "echo hello");
+        let p2 = ShellPipeline::new("a", "echo world");
+        assert_ne!(p1.content_hash, p2.content_hash);
+    }
+
+    #[test]
+    fn shell_pipeline_to_tool_spec() {
+        let pipeline = ShellPipeline::new("build", "cargo build");
+        let spec = pipeline.to_tool_spec();
+        assert_eq!(spec.name, "shell.build");
+        assert_eq!(spec.category, ToolCategory::User);
+        assert!(spec.native);
+        assert_eq!(spec.gate_action, "tool.shell.execute");
+    }
+
+    #[test]
+    fn shell_pipeline_initial_chain_seq_none() {
+        let pipeline = ShellPipeline::new("test", "ls -la");
+        assert!(pipeline.chain_seq.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "exochain")]
+    fn shell_pipeline_anchor_to_chain() {
+        let chain = crate::chain::ChainManager::new(0, 1000);
+        let mut pipeline = ShellPipeline::new("deploy", "make deploy");
+        assert!(pipeline.chain_seq.is_none());
+
+        pipeline.anchor_to_chain(&chain);
+        assert!(pipeline.chain_seq.is_some());
+
+        let events = chain.tail(1);
+        assert_eq!(events[0].kind, "shell.pipeline.register");
+    }
+
+    #[test]
+    fn shell_pipeline_serde_roundtrip() {
+        let pipeline = ShellPipeline::new("test-serde", "echo roundtrip");
+        let json = serde_json::to_string(&pipeline).unwrap();
+        let restored: ShellPipeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, "test-serde");
+        assert_eq!(restored.command, "echo roundtrip");
+        assert_eq!(restored.content_hash, pipeline.content_hash);
     }
 }

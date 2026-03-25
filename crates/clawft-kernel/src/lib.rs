@@ -146,8 +146,8 @@ pub use cluster::NodeEccCapability;
 pub use ipc::{KernelIpc, KernelMessage, KernelSignal, MessagePayload, MessageTarget};
 pub use process::{Pid, ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 pub use service::{
-    ServiceAuditLevel, ServiceContract, ServiceEndpoint, ServiceEntry, ServiceRegistry,
-    ServiceType, SystemService,
+    McpAdapter, ServiceApi, ServiceAuditLevel, ServiceContract, ServiceEndpoint, ServiceEntry,
+    ServiceInfo, ServiceRegistry, ServiceType, ShellAdapter, SystemService,
 };
 pub use supervisor::{AgentSupervisor, EnclaveConfig, SpawnBackend, SpawnRequest, SpawnResult};
 pub use topic::{Subscription, TopicRouter};
@@ -160,8 +160,8 @@ pub use wasm_runner::{
     SandboxConfig, SysCronAddTool, SysCronListTool, SysCronRemoveTool, SysEnvGetTool,
     SysServiceHealthTool, SysServiceListTool, ToolCategory, ToolError, ToolRegistry,
     ToolSigningAuthority, ToolVersion, WasmError, WasiFsScope, WasmSandboxConfig, WasmTool,
-    WasmToolResult, WasmToolRunner, WasmValidation, builtin_tool_catalog, compute_module_hash,
-    verify_tool_signature,
+    ShellPipeline, WasmToolResult, WasmToolRunner, WasmValidation, builtin_tool_catalog,
+    compute_module_hash, verify_tool_signature,
 };
 #[cfg(feature = "exochain")]
 pub use wasm_runner::{

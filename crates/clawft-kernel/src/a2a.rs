@@ -69,6 +69,10 @@ pub struct A2ARouter {
 
     /// Pending request-response tracking: request_id -> PendingRequest.
     pending_requests: DashMap<String, PendingRequest>,
+
+    /// Optional routing-time gate backend (C4 dual-layer governance).
+    #[cfg(feature = "exochain")]
+    gate: Option<Arc<dyn crate::gate::GateBackend>>,
 }
 
 impl A2ARouter {
@@ -85,12 +89,25 @@ impl A2ARouter {
             service_registry: None,
             inboxes: DashMap::new(),
             pending_requests: DashMap::new(),
+            #[cfg(feature = "exochain")]
+            gate: None,
         }
     }
 
     /// Attach a service registry for service-based routing (D1, D19).
     pub fn with_service_registry(mut self, registry: Arc<ServiceRegistry>) -> Self {
         self.service_registry = Some(registry);
+        self
+    }
+
+    /// Attach a routing-time gate for dual-layer governance (C4).
+    ///
+    /// When set, every message routed through `send()` is checked against
+    /// the gate *before* inbox delivery. A `Deny` decision blocks the
+    /// message; `Defer` still delivers (the handler-time gate decides).
+    #[cfg(feature = "exochain")]
+    pub fn with_gate(mut self, gate: Arc<dyn crate::gate::GateBackend>) -> Self {
+        self.gate = Some(gate);
         self
     }
 
@@ -154,6 +171,36 @@ impl A2ARouter {
                 "sender PID {from} is not running (state: {})",
                 sender.state
             )));
+        }
+
+        // C4: Routing-time gate check (first layer of dual-layer governance).
+        // A Deny blocks the message before it reaches any inbox. Defer
+        // still delivers — the handler-time gate makes the final call.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = self.gate {
+            let action = match &msg.payload {
+                crate::ipc::MessagePayload::ToolCall { name, .. } => format!("tool.{name}"),
+                crate::ipc::MessagePayload::Signal(_) => "ipc.signal".to_string(),
+                _ => "ipc.send".to_string(),
+            };
+            let context = serde_json::json!({
+                "from": from,
+                "target": format!("{:?}", msg.target),
+                "layer": "routing",
+            });
+            match gate.check(&from.to_string(), &action, &context) {
+                crate::gate::GateDecision::Deny { reason, .. } => {
+                    return Err(KernelError::CapabilityDenied {
+                        pid: from,
+                        action,
+                        reason: format!("routing gate denied: {reason}"),
+                    });
+                }
+                crate::gate::GateDecision::Defer { .. }
+                | crate::gate::GateDecision::Permit { .. } => {
+                    // Permitted or deferred — continue to delivery.
+                }
+            }
         }
 
         // Route based on target
@@ -1284,5 +1331,92 @@ mod tests {
         // Remove the other manually.
         router.pending_requests.remove("req-b");
         assert_eq!(router.pending_request_count(), 0);
+    }
+
+    // ── C4: Routing-time gate tests ────────────────────────────────
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn routing_gate_denies_message() {
+        struct DenyGate;
+        impl crate::gate::GateBackend for DenyGate {
+            fn check(
+                &self,
+                _agent: &str,
+                _action: &str,
+                _ctx: &serde_json::Value,
+            ) -> crate::gate::GateDecision {
+                crate::gate::GateDecision::Deny {
+                    reason: "blocked by policy".into(),
+                    receipt: None,
+                }
+            }
+        }
+
+        let (router, pids, _receivers) = setup_router(2);
+        let router = router.with_gate(Arc::new(DenyGate));
+
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "hello");
+        let result = router.send(msg).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("routing gate denied"),
+            "expected 'routing gate denied', got: {err_msg}"
+        );
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn routing_gate_permits_message() {
+        struct PermitGate;
+        impl crate::gate::GateBackend for PermitGate {
+            fn check(
+                &self,
+                _agent: &str,
+                _action: &str,
+                _ctx: &serde_json::Value,
+            ) -> crate::gate::GateDecision {
+                crate::gate::GateDecision::Permit { token: None }
+            }
+        }
+
+        let (router, pids, mut receivers) = setup_router(2);
+        let router = router.with_gate(Arc::new(PermitGate));
+
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "hello");
+        router.send(msg).await.unwrap();
+
+        let received = receivers[1].try_recv().unwrap();
+        assert_eq!(received.from, pids[0]);
+        assert!(matches!(
+            received.payload,
+            MessagePayload::Text(ref t) if t == "hello"
+        ));
+    }
+
+    #[cfg(feature = "exochain")]
+    #[tokio::test]
+    async fn routing_gate_defer_still_delivers() {
+        struct DeferGate;
+        impl crate::gate::GateBackend for DeferGate {
+            fn check(
+                &self,
+                _agent: &str,
+                _action: &str,
+                _ctx: &serde_json::Value,
+            ) -> crate::gate::GateDecision {
+                crate::gate::GateDecision::Defer {
+                    reason: "pending review".into(),
+                }
+            }
+        }
+
+        let (router, pids, mut receivers) = setup_router(2);
+        let router = router.with_gate(Arc::new(DeferGate));
+
+        let msg = KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "deferred");
+        router.send(msg).await.unwrap(); // should succeed (defer = deliver)
+        assert!(receivers[1].try_recv().is_ok());
     }
 }
