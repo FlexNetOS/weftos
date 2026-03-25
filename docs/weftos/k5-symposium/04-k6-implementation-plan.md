@@ -366,6 +366,47 @@ New `mesh_tree.rs` (~80 lines):
 | Remote mutation with invalid signature | Rejected |
 | Root hash comparison | Matching hashes skip sync |
 
+### 6.4 K6.4b: Hybrid Post-Quantum Key Exchange (~100 lines)
+
+**Goal**: Protect mesh transport against store-now-decrypt-later quantum attacks
+by adding ML-KEM-768 key encapsulation on top of the classical Noise XX channel.
+
+**Protocol**:
+1. Noise XX (X25519 DH) completes → classical shared secret established
+2. Initiator sends ML-KEM-768 ephemeral pubkey (1,184 bytes) over Noise channel
+3. Responder encapsulates → sends ciphertext (1,088 bytes) back
+4. Both derive: `final_key = HKDF(classical_ss || pq_ss || "weftos-hybrid-kem-v1")`
+5. Rekey the transport with `final_key`
+
+**Negotiation**: Advertised via `kem_supported: bool` in the Noise handshake
+payload (`WeftHandshake` struct). Nodes that don't support KEM stay on
+classical Noise -- graceful degradation, no connection failure.
+
+**Dependencies**: `ruvector-dag` with `production-crypto` feature provides
+`MlKem768::generate_keypair()`, `encapsulate()`, `decapsulate()` via
+`ruvector-dag/src/qudag/crypto/ml_kem.rs`.
+
+**Files**:
+
+| File | Purpose | Lines |
+|------|---------|:-----:|
+| `mesh/handshake.rs` | KEM upgrade step after Noise XX completes | ~60 |
+| Changes to `mesh_noise.rs` | Add `kem_supported` to handshake payload, rekey after KEM | ~30 |
+| Changes to `mesh_listener.rs` | Wire KEM upgrade into accept path | ~10 |
+
+**Cost**: ~2.4KB extra per connection handshake, ~1ms latency. Zero per-message
+overhead after rekey.
+
+**Test Strategy for K6.4b**:
+
+| Test | Verifies |
+|------|----------|
+| Hybrid handshake completes (both KEM-capable) | Full PQ upgrade path |
+| Graceful fallback (one side lacks KEM) | Classical-only still works |
+| Rekey produces different key than classical-only | KEM material contributes |
+| Wrong KEM key fails decapsulation | Ciphertext integrity |
+| `kem_supported: false` in payload | Negotiation flag respected |
+
 ---
 
 ## 7. K6.5: Distributed Process Table + Service Discovery (~240 lines)
@@ -496,7 +537,7 @@ mesh-full = ["mesh", "mesh-discovery"]
 | libp2p-kad without full libp2p | Medium | Medium | Fallback to static discovery |
 | CRDT convergence delays | Medium | Low | Bounded convergence with anti-entropy |
 | Browser WebSocket limitations | Low | Medium | Degrade gracefully, restrict capabilities |
-| Post-quantum transition | Low | Low | Dual signing already in place |
+| Post-quantum transition | Low | Low | Dual signing + hybrid KEM in K6.4b (D11) |
 
 ---
 

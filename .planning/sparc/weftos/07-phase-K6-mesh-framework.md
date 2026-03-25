@@ -136,6 +136,7 @@ pub enum MessageTarget {
 | `x25519-dalek` | 2.0 | `mesh` | X25519 Diffie-Hellman for Noise | D1 |
 | `libp2p-kad` | 0.46 | `mesh-discovery` | Kademlia DHT peer discovery | D1 |
 | `libp2p-mdns` | 0.46 | `mesh-discovery` | mDNS LAN peer discovery | D1 |
+| `ruvector-dag` | workspace | `mesh` | ML-KEM-768 via `production-crypto` feature (K6.4b) | D11 |
 
 ### Feature Gate Structure -- Symposium D5, C4
 
@@ -575,6 +576,8 @@ The symposium refined several decisions from doc 12:
 - [ ] `mesh` feature gate compiles to zero networking code when disabled
 - [ ] Maximum message size (16 MiB) enforced at deserialization
 - [ ] Message deduplication prevents double-delivery
+- [ ] Hybrid Noise + ML-KEM-768 handshake protects against store-now-decrypt-later
+- [ ] KEM negotiation degrades gracefully when unsupported
 
 ### Testing Verification Commands
 
@@ -673,6 +676,38 @@ Synchronize chain events and resource tree state across nodes.
 tree snapshot roundtrip, remote mutation with valid/invalid signature, root hash
 comparison short-circuit.
 
+#### K6.4b: Hybrid Post-Quantum Key Exchange (~100 lines)
+
+**Goal**: Protect mesh transport against store-now-decrypt-later quantum attacks.
+
+**Implementation**: After the Noise XX handshake establishes a classical channel,
+perform an ML-KEM-768 key encapsulation upgrade inside the encrypted channel.
+The final session key combines both secrets via HKDF.
+
+**Protocol**:
+1. Noise XX (X25519 DH) → classical shared secret
+2. Initiator sends ML-KEM-768 ephemeral pubkey (1,184 bytes) over Noise channel
+3. Responder encapsulates → sends ciphertext (1,088 bytes) back
+4. Both derive: `final_key = HKDF(classical_ss || pq_ss || "weftos-hybrid-kem-v1")`
+5. Rekey the transport with `final_key`
+
+**Negotiation**: Advertised via `kem_supported: bool` in the Noise handshake payload.
+Graceful degradation — nodes that don't support KEM stay on classical Noise.
+
+**Dependencies**: `ruvector-dag` with `production-crypto` feature (ML-KEM-768 already implemented)
+
+**Files**:
+- `crates/clawft-kernel/src/mesh/handshake.rs` — KEM upgrade step after Noise XX
+- Reuses `ruvector-dag/src/qudag/crypto/ml_kem.rs` (MlKem768::encapsulate/decapsulate)
+
+**Tests**:
+- Hybrid handshake completes with both sides KEM-capable
+- Graceful fallback when one side lacks KEM support
+- Rekey produces different key than classical-only
+- KEM ciphertext verified (wrong key fails decapsulation)
+
+**Cost**: ~2.4KB extra per connection handshake, ~1ms latency. Zero per-message overhead.
+
 #### K6.5: Distributed Process Table + Service Discovery (~240 lines)
 
 Cluster-wide process and service visibility.
@@ -695,6 +730,7 @@ detection, CRDT merge convergence, service resolution fallback (local-first).
 | K6.2 | ~300 | ~30 | libp2p-kad, libp2p-mdns (optional) |
 | K6.3 | ~300 | ~80 | None |
 | K6.4 | ~250 | ~50 | None |
+| K6.4b | ~100 | ~10 | ruvector-dag (production-crypto) |
 | K6.5 | ~200 | ~40 | None |
 | **Total** | **~1,500** | **~370** | **5 (2 optional)** |
 

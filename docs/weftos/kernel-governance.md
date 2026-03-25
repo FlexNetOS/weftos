@@ -813,6 +813,15 @@ whatever categories make sense for your organization.
 
 ## Chain Witnessing
 
+### Post-Quantum Transport Protection
+
+Mesh connections use hybrid Noise + ML-KEM-768 key exchange (K6.4b).
+This ensures that even if classical X25519 DH is broken by quantum
+computers, the ML-KEM-768 shared secret protects all mesh traffic.
+Governance decisions transmitted over the mesh are protected by this
+hybrid encryption. The KEM capability is negotiated during the Noise
+handshake -- nodes advertise `kem_supported` in their handshake payload.
+
 ### What Gets Logged
 
 All governance-related chain events use `"governance"` as the source:

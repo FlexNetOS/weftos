@@ -310,5 +310,22 @@ without modification.
 | Security Model | Noise + Ed25519 + GovernanceGate APPROVED | High |
 | Implementation Plan | 6-phase plan APPROVED, ~1,870 total lines | Medium-High |
 
+### D11: Hybrid Noise + ML-KEM-768 Post-Quantum Key Exchange
+
+**Decision**: Add a hybrid post-quantum key exchange to K6.4b. After the
+Noise XX handshake establishes a classical X25519 channel, perform an
+ML-KEM-768 key encapsulation upgrade inside the encrypted channel. The final
+session key combines both secrets via HKDF.
+
+**Rationale**: Protects mesh transport against store-now-decrypt-later quantum
+attacks. Leverages existing `ruvector-dag` ML-KEM-768 implementation (behind
+`production-crypto` feature). Negotiated via `kem_supported: bool` in the
+handshake payload -- graceful degradation when unsupported. Cost: ~2.4KB extra
+per handshake, ~1ms latency, zero per-message overhead.
+
+**Origin**: Security Panel (moved from K7+ to K6.4b)
+
+---
+
 **Overall Symposium Verdict**: K6 sprint is approved to proceed. Begin with
 K6.0 prep changes (P1-P7) immediately.

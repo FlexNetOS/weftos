@@ -514,6 +514,24 @@ A2ARouter (prevents unauthorized messages) and handler-time in agent_loop
 
 ---
 
+## K6 Planned: Mesh Networking
+
+### mesh_noise.rs (K6.1, planned)
+
+**Purpose**: Noise Protocol wrapper for encrypted mesh connections.
+
+**Planned Types**: `NoiseChannel`, `NoiseHandshakeConfig`
+
+**Post-Quantum Upgrade (K6.4b)**: After the Noise XX handshake completes,
+an ML-KEM-768 key encapsulation upgrade runs inside the encrypted channel.
+The final session key combines both X25519 and ML-KEM-768 shared secrets
+via HKDF, protecting against store-now-decrypt-later quantum attacks.
+Negotiated via `kem_supported: bool` in the `WeftHandshake` payload.
+Graceful degradation when unsupported. Reuses
+`ruvector-dag/src/qudag/crypto/ml_kem.rs` (`MlKem768::encapsulate/decapsulate`).
+
+---
+
 ## Test Coverage
 
 Total: 562 kernel tests (479 baseline + 83 ECC).

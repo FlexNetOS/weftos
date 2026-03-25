@@ -171,7 +171,7 @@ WeftOS already has post-quantum cryptography in the codebase:
 | Chain event signing | Ed25519 | ML-DSA-65 (dual) | Now (K5) |
 | Node identity | Ed25519 | ML-DSA-65 (dual) | K6.0 |
 | Noise handshake | X25519 | -- | K6.1 |
-| Key exchange | X25519 | ML-KEM-768 (hybrid) | K7+ |
+| Key exchange | X25519 | ML-KEM-768 (hybrid) | K6.4b (moved from K7+) |
 | Message signing | Ed25519 | ML-DSA-65 (optional) | K6.3 |
 
 ### Dual Signing for Chain Events
@@ -201,6 +201,33 @@ shared_secret = HKDF(X25519_shared || ML-KEM-768_shared)
 Both key exchanges must succeed. An attacker must break both X25519 AND
 ML-KEM-768 to recover the shared secret. This is the same pattern used by
 Chrome, Signal, and AWS post-quantum TLS.
+
+### Hybrid Noise + KEM Transport Encryption (K6.4b)
+
+The Noise XX handshake uses X25519 Diffie-Hellman, which is vulnerable to
+quantum computing (Shor's algorithm). To protect mesh traffic against
+store-now-decrypt-later attacks, K6.4b adds a hybrid key exchange:
+
+**Protocol**:
+```
+Noise XX (classical)     →  classical_ss (X25519)
+ML-KEM-768 (PQ, inside   →  pq_ss (Kyber768)
+  Noise channel)
+HKDF(classical || pq)   →  final session key
+```
+
+The KEM exchange runs inside the already-encrypted Noise channel, so it's
+protected during transit. Both X25519 AND ML-KEM must be broken to
+compromise the session.
+
+**Existing infrastructure**: `ruvector-dag/src/qudag/crypto/ml_kem.rs` provides
+`MlKem768::generate_keypair()`, `encapsulate()`, `decapsulate()`. Behind
+`production-crypto` feature for real pqcrypto-kyber; HKDF placeholder without.
+
+**Negotiation**: `HandshakePayload.kem_supported: bool` + optional `kem_public_key`.
+Nodes that don't support KEM stay on classical Noise (graceful degradation).
+
+**Cost**: ~2.4KB extra + ~1ms per connection. Zero per-message overhead.
 
 ---
 
@@ -308,7 +335,7 @@ transport-layer data are possible.
 | Eclipse | Medium | Kademlia + seed peers | Addressed in K6.2 |
 | Replay | Medium | Noise nonce + message ID | Addressed in K6.3 |
 | DoS | Medium | Rate limiting + QUIC flow control | Partial in K6.1 |
-| Quantum | Low (future) | Dual signing now, hybrid KEM later | Partial (K7+) |
+| Quantum | Low (future) | Dual signing now, hybrid KEM in K6.4b | Addressed (K6.4b) |
 
 ---
 
@@ -427,3 +454,4 @@ Key rotation is a governance-gated operation:
 | S8 | governance.genesis as cluster trust root | Already exists, natural authority anchor |
 | S9 | 16 MiB max message size | Prevents memory exhaustion |
 | S10 | Key rotation via dual-signed chain event | Auditable, verifiable, governance-gated |
+| S11 | Hybrid Noise + ML-KEM-768 key exchange in K6.4b for PQ transport protection | Store-now-decrypt-later defense, leverages existing ruvector-dag ML-KEM |
