@@ -708,12 +708,15 @@ impl<P: Platform> Kernel<P> {
                 // event.
 
                 let genesis_rules = vec![
+                    // ── Core constitutional rules (GOV-001 .. GOV-007) ──────
                     GovernanceRule {
                         id: "GOV-001".into(),
                         description: "High-risk operations require elevated review".into(),
                         branch: GovernanceBranch::Judicial,
                         severity: RuleSeverity::Blocking,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-002".into(),
@@ -721,6 +724,8 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Judicial,
                         severity: RuleSeverity::Blocking,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-003".into(),
@@ -728,6 +733,8 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Legislative,
                         severity: RuleSeverity::Warning,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-004".into(),
@@ -735,6 +742,8 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Executive,
                         severity: RuleSeverity::Advisory,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-005".into(),
@@ -742,6 +751,8 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Legislative,
                         severity: RuleSeverity::Warning,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-006".into(),
@@ -749,6 +760,8 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Executive,
                         severity: RuleSeverity::Blocking,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
                     },
                     GovernanceRule {
                         id: "GOV-007".into(),
@@ -756,6 +769,146 @@ impl<P: Platform> Kernel<P> {
                         branch: GovernanceBranch::Judicial,
                         severity: RuleSeverity::Advisory,
                         active: true,
+                        reference_url: None,
+                        sop_category: None,
+                    },
+                    // ── AI-SDLC SOP rules: Legislative (6) ──────────────────
+                    GovernanceRule {
+                        id: "SOP-L001".into(),
+                        description: "AI-IRB approval required before high-impact deployments".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1300-01-AI_IRB_Approval.md".into()),
+                        sop_category: Some("governance".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-L002".into(),
+                        description: "Version control and branching policies must be enforced".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1003-01-AI_Version_Control.md".into()),
+                        sop_category: Some("governance".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-L003".into(),
+                        description: "Requirements must include AI-IRB ethical review".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1040-01-AI_Requirements.md".into()),
+                        sop_category: Some("engineering".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-L004".into(),
+                        description: "Release planning must follow structured lifecycle gates".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1005-01-AI_Release_Planning.md".into()),
+                        sop_category: Some("lifecycle".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-L005".into(),
+                        description: "Data protection and PII handling must comply with policy".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1303-01-AI_Data_Protection.md".into()),
+                        sop_category: Some("ethics".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-L006".into(),
+                        description: "Risk register must be maintained and reviewed".into(),
+                        branch: GovernanceBranch::Legislative,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1062-01-AI_Risk_Register.md".into()),
+                        sop_category: Some("governance".into()),
+                    },
+                    // ── AI-SDLC SOP rules: Executive (5) ────────────────────
+                    GovernanceRule {
+                        id: "SOP-E001".into(),
+                        description: "Secure coding standards must be followed".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1200-01-AI_Secure_Coding.md".into()),
+                        sop_category: Some("engineering".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-E002".into(),
+                        description: "Deployment requires governance clearance checkpoint".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1220-01-AI_Deployment_Clearance.md".into()),
+                        sop_category: Some("lifecycle".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-E003".into(),
+                        description: "Incident response procedures must be documented and followed".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1008-01-AI_Incident_Response.md".into()),
+                        sop_category: Some("security".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-E004".into(),
+                        description: "Decommissioning must follow structured teardown procedure".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1011-01-AI_Decommissioning.md".into()),
+                        sop_category: Some("lifecycle".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-E005".into(),
+                        description: "Third-party AI procurement requires screening".into(),
+                        branch: GovernanceBranch::Executive,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1004-01-AI_Procurement_Screening.md".into()),
+                        sop_category: Some("governance".into()),
+                    },
+                    // ── AI-SDLC SOP rules: Judicial (4) ─────────────────────
+                    GovernanceRule {
+                        id: "SOP-J001".into(),
+                        description: "Bias and fairness assessments required for model outputs".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Blocking,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1301-01-AI_Bias_Fairness.md".into()),
+                        sop_category: Some("ethics".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-J002".into(),
+                        description: "Explainability documentation required for decision systems".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1302-01-AI_Explainability.md".into()),
+                        sop_category: Some("ethics".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-J003".into(),
+                        description: "Model drift detection and monitoring must be active".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Warning,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-1009-01-AI_Drift_Detection.md".into()),
+                        sop_category: Some("lifecycle".into()),
+                    },
+                    GovernanceRule {
+                        id: "SOP-J004".into(),
+                        description: "Quality records must be maintained for audit compliance".into(),
+                        branch: GovernanceBranch::Judicial,
+                        severity: RuleSeverity::Advisory,
+                        active: true,
+                        reference_url: Some("https://github.com/AISDLC/AI-SDLC-SOPs/blob/main/sops/SOP-2002-01-AI_Quality_Records.md".into()),
+                        sop_category: Some("quality".into()),
                     },
                 ];
 
@@ -767,6 +920,8 @@ impl<P: Platform> Kernel<P> {
                         "description": r.description,
                         "branch": format!("{}", r.branch),
                         "severity": format!("{}", r.severity),
+                        "reference_url": r.reference_url,
+                        "sop_category": r.sop_category,
                     })
                 }).collect();
 
@@ -776,7 +931,7 @@ impl<P: Platform> Kernel<P> {
                     "governance",
                     "governance.genesis",
                     Some(serde_json::json!({
-                        "version": "1.0.0",
+                        "version": "2.0.0",
                         "risk_threshold": risk_threshold,
                         "human_approval_required": human_approval,
                         "rules": rules_json,
@@ -1609,33 +1764,42 @@ mod tests {
         assert!(!genesis_events.is_empty(), "governance genesis should be on chain");
 
         // Verify the genesis payload contains the correct rule count
-        let genesis_payload = genesis_events[0].payload.as_ref().unwrap();
+        // Find the kernel's own genesis event (version 2.0.0)
+        let genesis_payload = genesis_events.iter()
+            .filter_map(|e| e.payload.as_ref())
+            .find(|p| p.get("version").and_then(|v| v.as_str()) == Some("2.0.0"))
+            .expect("should find v2.0.0 governance genesis on chain");
         assert_eq!(
             genesis_payload["rule_count"].as_u64().unwrap(),
-            7,
-            "genesis should contain 7 rules"
+            22,
+            "genesis should contain 22 rules"
         );
         assert_eq!(
             genesis_payload["version"].as_str().unwrap(),
-            "1.0.0",
-            "genesis version should be 1.0.0"
+            "2.0.0",
+            "genesis version should be 2.0.0"
         );
 
-        // Each rule should be individually anchored (at least 7)
+        // Each rule should be individually anchored (at least 22)
         let rule_events: Vec<_> = all_events.iter()
             .filter(|e| e.kind == "governance.rule")
             .collect();
         assert!(
-            rule_events.len() >= 7,
-            "at least 7 genesis rules should be individually anchored, got {}",
+            rule_events.len() >= 22,
+            "at least 22 genesis rules should be individually anchored, got {}",
             rule_events.len(),
         );
 
-        // Verify all 7 rule IDs are present
+        // Verify all rule IDs are present (GOV-001..007 + SOP-L/E/J)
         let rule_ids: Vec<&str> = rule_events.iter()
             .filter_map(|e| e.payload.as_ref()?.get("rule_id")?.as_str())
             .collect();
-        for expected_id in &["GOV-001", "GOV-002", "GOV-003", "GOV-004", "GOV-005", "GOV-006", "GOV-007"] {
+        for expected_id in &[
+            "GOV-001", "GOV-002", "GOV-003", "GOV-004", "GOV-005", "GOV-006", "GOV-007",
+            "SOP-L001", "SOP-L002", "SOP-L003", "SOP-L004", "SOP-L005", "SOP-L006",
+            "SOP-E001", "SOP-E002", "SOP-E003", "SOP-E004", "SOP-E005",
+            "SOP-J001", "SOP-J002", "SOP-J003", "SOP-J004",
+        ] {
             assert!(
                 rule_ids.contains(expected_id),
                 "{expected_id} should be anchored on chain"

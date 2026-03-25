@@ -36,6 +36,21 @@ pub struct GovernanceRule {
     /// Whether this rule is currently active.
     #[serde(default = "default_true")]
     pub active: bool,
+
+    /// SOP reference URL for agents to consult for full procedure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_url: Option<String>,
+
+    /// SOP category tag for filtering rules by domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sop_category: Option<String>,
+}
+
+impl GovernanceRule {
+    /// Get rules by SOP category from a slice of rules.
+    pub fn filter_by_category<'a>(rules: &'a [GovernanceRule], category: &str) -> Vec<&'a GovernanceRule> {
+        rules.iter().filter(|r| r.sop_category.as_deref() == Some(category)).collect()
+    }
 }
 
 fn default_true() -> bool {
@@ -421,6 +436,8 @@ mod tests {
             branch,
             severity,
             active: true,
+            reference_url: None,
+            sop_category: None,
         }
     }
 
@@ -635,6 +652,8 @@ mod tests {
             branch: GovernanceBranch::Judicial,
             severity: RuleSeverity::Blocking,
             active: false,
+            reference_url: None,
+            sop_category: None,
         });
         assert_eq!(engine.active_rules().len(), 0);
     }
@@ -678,6 +697,75 @@ mod tests {
         let json = serde_json::to_string(&v).unwrap();
         let restored: EffectVector = serde_json::from_str(&json).unwrap();
         assert!((restored.security - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn filter_rules_by_sop_category() {
+        let rules = vec![
+            GovernanceRule {
+                id: "SOP-L001".into(),
+                description: "test".into(),
+                branch: GovernanceBranch::Legislative,
+                severity: RuleSeverity::Blocking,
+                active: true,
+                reference_url: Some("https://example.com".into()),
+                sop_category: Some("governance".into()),
+            },
+            GovernanceRule {
+                id: "SOP-J001".into(),
+                description: "test".into(),
+                branch: GovernanceBranch::Judicial,
+                severity: RuleSeverity::Blocking,
+                active: true,
+                reference_url: Some("https://example.com".into()),
+                sop_category: Some("ethics".into()),
+            },
+            GovernanceRule {
+                id: "GOV-001".into(),
+                description: "test".into(),
+                branch: GovernanceBranch::Judicial,
+                severity: RuleSeverity::Blocking,
+                active: true,
+                reference_url: None,
+                sop_category: None,
+            },
+        ];
+        let ethics = GovernanceRule::filter_by_category(&rules, "ethics");
+        assert_eq!(ethics.len(), 1);
+        assert_eq!(ethics[0].id, "SOP-J001");
+
+        let governance = GovernanceRule::filter_by_category(&rules, "governance");
+        assert_eq!(governance.len(), 1);
+
+        let none = GovernanceRule::filter_by_category(&rules, "nonexistent");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn governance_rule_with_sop_serde() {
+        let rule = GovernanceRule {
+            id: "SOP-L001".into(),
+            description: "test".into(),
+            branch: GovernanceBranch::Legislative,
+            severity: RuleSeverity::Blocking,
+            active: true,
+            reference_url: Some("https://example.com/sop".into()),
+            sop_category: Some("governance".into()),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(json.contains("reference_url"));
+        assert!(json.contains("sop_category"));
+        let restored: GovernanceRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.reference_url, Some("https://example.com/sop".into()));
+    }
+
+    #[test]
+    fn governance_rule_without_sop_backward_compat() {
+        // Old-format JSON without new fields should deserialize fine
+        let json = r#"{"id":"GOV-001","description":"test","branch":"Judicial","severity":"Blocking","active":true}"#;
+        let rule: GovernanceRule = serde_json::from_str(json).unwrap();
+        assert!(rule.reference_url.is_none());
+        assert!(rule.sop_category.is_none());
     }
 
     #[cfg(feature = "exochain")]

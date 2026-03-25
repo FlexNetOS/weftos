@@ -545,6 +545,8 @@ mod tests {
             branch: GovernanceBranch::Judicial,
             severity: RuleSeverity::Blocking,
             active: true,
+            reference_url: None,
+            sop_category: None,
         });
 
         let ctx = serde_json::json!({
@@ -562,6 +564,8 @@ mod tests {
             branch: GovernanceBranch::Judicial,
             severity: RuleSeverity::Blocking,
             active: true,
+            reference_url: None,
+            sop_category: None,
         });
 
         let ctx = serde_json::json!({
@@ -579,6 +583,8 @@ mod tests {
             branch: GovernanceBranch::Judicial,
             severity: RuleSeverity::Blocking,
             active: true,
+            reference_url: None,
+            sop_category: None,
         });
 
         let ctx = serde_json::json!({
@@ -596,6 +602,8 @@ mod tests {
             branch: GovernanceBranch::Executive,
             severity: RuleSeverity::Warning,
             active: true,
+            reference_url: None,
+            sop_category: None,
         });
 
         let ctx = serde_json::json!({
@@ -619,6 +627,8 @@ mod tests {
                 branch: GovernanceBranch::Judicial,
                 severity: RuleSeverity::Blocking,
                 active: true,
+                reference_url: None,
+                sop_category: None,
             });
 
         // Low risk → governance.permit
@@ -660,6 +670,8 @@ mod tests {
             branch: GovernanceBranch::Judicial,
             severity: RuleSeverity::Blocking,
             active: true,
+            reference_url: None,
+            sop_category: None,
         });
 
         // Context with effect embedded
