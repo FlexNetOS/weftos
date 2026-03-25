@@ -1071,6 +1071,302 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("empty"));
     }
 
+    // ── K5 Integration Tests ────────────────────────────────────────
+
+    #[test]
+    fn integration_app_full_lifecycle() {
+        // Build a realistic app manifest
+        let manifest = AppManifest {
+            name: "data-pipeline".into(),
+            version: "2.1.0".into(),
+            description: "Real-time data ingestion and analysis pipeline".into(),
+            author: Some("WeftOS Team".into()),
+            license: Some("MIT".into()),
+            agents: vec![
+                AgentSpec {
+                    id: "ingester".into(),
+                    role: "data-ingestion".into(),
+                    capabilities: AgentCapabilities::default(),
+                    auto_start: true,
+                },
+                AgentSpec {
+                    id: "analyzer".into(),
+                    role: "data-analysis".into(),
+                    capabilities: AgentCapabilities::default(),
+                    auto_start: true,
+                },
+            ],
+            tools: vec![ToolSpec {
+                name: "transform".into(),
+                source: ToolSource::Wasm("tools/transform.wasm".into()),
+                schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string"},
+                        "format": {"type": "string"}
+                    }
+                })),
+            }],
+            services: vec![ServiceSpec {
+                name: "cache".into(),
+                image: Some("redis:7-alpine".into()),
+                command: None,
+                ports: vec![PortMapping {
+                    host_port: 6380,
+                    container_port: 6379,
+                    protocol: "tcp".into(),
+                }],
+                env: HashMap::from([("REDIS_MAX_MEMORY".into(), "256mb".into())]),
+                health_endpoint: Some("redis://localhost:6380".into()),
+            }],
+            capabilities: AppCapabilities {
+                network: true,
+                filesystem: vec!["/data".into(), "/workspace".into()],
+                shell: false,
+                ipc: IpcScope::All,
+            },
+            hooks: AppHooks {
+                on_install: Some("scripts/setup.sh".into()),
+                on_start: Some("scripts/migrate.sh".into()),
+                on_stop: Some("scripts/cleanup.sh".into()),
+                on_remove: None,
+            },
+        };
+
+        // 1. Validate
+        validate_manifest(&manifest).unwrap();
+
+        // 2. Verify namespacing
+        let agent_ids = AppManager::namespaced_agent_ids(&manifest);
+        assert_eq!(
+            agent_ids,
+            vec!["data-pipeline/ingester", "data-pipeline/analyzer"]
+        );
+        let tool_names = AppManager::namespaced_tool_names(&manifest);
+        assert_eq!(tool_names, vec!["data-pipeline/transform"]);
+
+        // 3. Install
+        let manager = AppManager::new();
+        let app_name = manager.install(manifest.clone()).unwrap();
+        assert_eq!(app_name, "data-pipeline");
+
+        // 4. List shows the app
+        let list = manager.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "data-pipeline");
+
+        // 5. Inspect preserves all details
+        let inspected = manager.inspect("data-pipeline").unwrap();
+        assert_eq!(inspected.manifest.agents.len(), 2);
+        assert_eq!(inspected.manifest.services.len(), 1);
+        assert_eq!(inspected.manifest.tools.len(), 1);
+        assert_eq!(inspected.manifest.services[0].name, "cache");
+        assert_eq!(
+            inspected.manifest.services[0].image,
+            Some("redis:7-alpine".into())
+        );
+        assert!(inspected.manifest.capabilities.network);
+        assert_eq!(
+            inspected.manifest.capabilities.filesystem,
+            vec!["/data", "/workspace"]
+        );
+        assert!(!inspected.manifest.capabilities.shell);
+        assert_eq!(inspected.manifest.capabilities.ipc, IpcScope::All);
+        assert_eq!(
+            inspected.manifest.hooks.on_install,
+            Some("scripts/setup.sh".into())
+        );
+        assert_eq!(
+            inspected.manifest.hooks.on_start,
+            Some("scripts/migrate.sh".into())
+        );
+        assert_eq!(
+            inspected.manifest.hooks.on_stop,
+            Some("scripts/cleanup.sh".into())
+        );
+        assert!(inspected.manifest.hooks.on_remove.is_none());
+        assert_eq!(inspected.manifest.author, Some("WeftOS Team".into()));
+        assert_eq!(inspected.manifest.license, Some("MIT".into()));
+
+        // 6. Lifecycle transitions: Installed -> Starting -> Running
+        manager
+            .transition_to("data-pipeline", AppState::Starting)
+            .unwrap();
+        manager
+            .transition_to("data-pipeline", AppState::Running)
+            .unwrap();
+
+        // 7. Simulate agent spawning (supervisor assigns PIDs)
+        manager.add_agent_pid("data-pipeline", 10).unwrap(); // ingester
+        manager.add_agent_pid("data-pipeline", 11).unwrap(); // analyzer
+
+        // 8. Simulate service registration
+        manager
+            .add_service_name("data-pipeline", "cache".into())
+            .unwrap();
+
+        // 9. Verify running state with agents and services
+        let running = manager.inspect("data-pipeline").unwrap();
+        assert!(matches!(running.state, AppState::Running));
+        assert_eq!(running.agent_pids.len(), 2);
+        assert!(running.agent_pids.contains(&10));
+        assert!(running.agent_pids.contains(&11));
+        assert_eq!(running.service_names.len(), 1);
+        assert!(running.service_names.contains(&"cache".to_string()));
+
+        // 10. Stop: Running -> Stopping -> Stopped
+        manager
+            .transition_to("data-pipeline", AppState::Stopping)
+            .unwrap();
+        manager
+            .transition_to("data-pipeline", AppState::Stopped)
+            .unwrap();
+
+        let stopped = manager.inspect("data-pipeline").unwrap();
+        assert!(matches!(stopped.state, AppState::Stopped));
+
+        // 11. Remove
+        let removed = manager.remove("data-pipeline").unwrap();
+        assert_eq!(removed.name, "data-pipeline");
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn integration_multi_app_isolation() {
+        let manager = AppManager::new();
+
+        // Install two apps with overlapping agent/tool names
+        let app1 = AppManifest {
+            name: "frontend".into(),
+            version: "1.0.0".into(),
+            description: "Web frontend".into(),
+            author: None,
+            license: None,
+            agents: vec![AgentSpec {
+                id: "worker".into(),
+                role: "serve".into(),
+                capabilities: AgentCapabilities::default(),
+                auto_start: true,
+            }],
+            tools: vec![ToolSpec {
+                name: "render".into(),
+                source: ToolSource::Native("fs.read_file".into()),
+                schema: None,
+            }],
+            services: vec![],
+            capabilities: AppCapabilities {
+                network: true,
+                filesystem: vec![],
+                shell: false,
+                ipc: IpcScope::None,
+            },
+            hooks: AppHooks::default(),
+        };
+
+        let app2 = AppManifest {
+            name: "backend".into(),
+            version: "2.0.0".into(),
+            description: "API backend".into(),
+            author: None,
+            license: None,
+            agents: vec![AgentSpec {
+                id: "worker".into(), // same agent ID as frontend
+                role: "api".into(),
+                capabilities: AgentCapabilities::default(),
+                auto_start: true,
+            }],
+            tools: vec![ToolSpec {
+                name: "render".into(), // same tool name as frontend
+                source: ToolSource::Wasm("tools/render.wasm".into()),
+                schema: None,
+            }],
+            services: vec![ServiceSpec {
+                name: "db".into(),
+                image: Some("postgres:16-alpine".into()),
+                command: None,
+                ports: vec![PortMapping {
+                    host_port: 5432,
+                    container_port: 5432,
+                    protocol: "tcp".into(),
+                }],
+                env: HashMap::from([("POSTGRES_PASSWORD".into(), "dev".into())]),
+                health_endpoint: None,
+            }],
+            capabilities: AppCapabilities {
+                network: true,
+                filesystem: vec!["/data".into()],
+                shell: false,
+                ipc: IpcScope::All,
+            },
+            hooks: AppHooks::default(),
+        };
+
+        manager.install(app1).unwrap();
+        manager.install(app2).unwrap();
+
+        // Both apps installed
+        assert_eq!(manager.list().len(), 2);
+
+        // Namespaces prevent conflicts despite identical agent/tool names
+        let fe_agents =
+            AppManager::namespaced_agent_ids(&manager.inspect("frontend").unwrap().manifest);
+        let be_agents =
+            AppManager::namespaced_agent_ids(&manager.inspect("backend").unwrap().manifest);
+        assert_eq!(fe_agents, vec!["frontend/worker"]);
+        assert_eq!(be_agents, vec!["backend/worker"]);
+
+        let fe_tools =
+            AppManager::namespaced_tool_names(&manager.inspect("frontend").unwrap().manifest);
+        let be_tools =
+            AppManager::namespaced_tool_names(&manager.inspect("backend").unwrap().manifest);
+        assert_eq!(fe_tools, vec!["frontend/render"]);
+        assert_eq!(be_tools, vec!["backend/render"]);
+
+        // Each app transitions independently
+        manager
+            .transition_to("frontend", AppState::Starting)
+            .unwrap();
+        manager
+            .transition_to("frontend", AppState::Running)
+            .unwrap();
+        // backend stays Installed
+
+        let fe = manager.inspect("frontend").unwrap();
+        let be = manager.inspect("backend").unwrap();
+        assert!(matches!(fe.state, AppState::Running));
+        assert!(matches!(be.state, AppState::Installed));
+
+        // Backend can also transition without affecting frontend
+        manager
+            .transition_to("backend", AppState::Starting)
+            .unwrap();
+        manager
+            .transition_to("backend", AppState::Running)
+            .unwrap();
+
+        // Add PIDs to each app independently
+        manager.add_agent_pid("frontend", 100).unwrap();
+        manager.add_agent_pid("backend", 200).unwrap();
+
+        let fe = manager.inspect("frontend").unwrap();
+        let be = manager.inspect("backend").unwrap();
+        assert_eq!(fe.agent_pids, vec![100]);
+        assert_eq!(be.agent_pids, vec![200]);
+
+        // Stop frontend, backend stays running
+        manager
+            .transition_to("frontend", AppState::Stopping)
+            .unwrap();
+        manager
+            .transition_to("frontend", AppState::Stopped)
+            .unwrap();
+
+        let fe = manager.inspect("frontend").unwrap();
+        let be = manager.inspect("backend").unwrap();
+        assert!(matches!(fe.state, AppState::Stopped));
+        assert!(matches!(be.state, AppState::Running));
+    }
+
     #[test]
     fn app_hooks_lifecycle() {
         let manifest = AppManifest {
