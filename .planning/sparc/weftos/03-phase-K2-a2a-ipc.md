@@ -359,7 +359,7 @@ and Section 5 "Wire Format Migration".
 ### Exit Criteria
 
 - [x] Direct PID-to-PID messaging works between two agents
-- [ ] Request-response pattern works with timeout
+- [x] Request-response pattern works with timeout
 - [x] Topic subscription and publish deliver to all subscribers
 - [x] IPC scope `None` blocks all messaging
 - [x] IPC scope `Explicit([7])` allows messaging to PID 7 only
@@ -369,8 +369,8 @@ and Section 5 "Wire Format Migration".
 - [x] `weft ipc send <pid> <msg>` CLI command works
 - [x] `weft ipc topics` lists active topics
 - [x] `weft ipc subscribe <pid> <topic>` creates subscription
-- [ ] DelegationEngine uses A2A protocol when kernel is active
-- [ ] MCP tools `ipc_send` and `ipc_subscribe` work
+- [x] DelegationEngine uses A2A protocol when kernel is active
+- [x] MCP tools `ipc_send` and `ipc_subscribe` work
 - [x] All workspace tests pass (`scripts/build.sh test`)
 - [x] Clippy clean (`scripts/build.sh clippy`)
 

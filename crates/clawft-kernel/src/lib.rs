@@ -154,6 +154,7 @@ pub use topic::{Subscription, TopicRouter};
 pub use wasm_runner::{
     AgentInspectTool, AgentListTool, AgentResumeTool, AgentSendTool, AgentSpawnTool,
     AgentStopTool, AgentSuspendTool, BackendSelection, BuiltinTool, BuiltinToolSpec, Certificate,
+    IpcSendTool, IpcSubscribeTool,
     CompiledModuleCache, DeployedTool, FsCopyTool, FsCreateDirTool, FsExistsTool, FsGlobTool,
     FsMoveTool, FsReadDirTool, FsReadFileTool, FsRemoveTool, FsStatTool, FsWriteFileTool,
     SandboxConfig, SysCronAddTool, SysCronListTool, SysCronRemoveTool, SysEnvGetTool,

@@ -97,6 +97,15 @@ pub enum KernelError {
         reason: String,
     },
 
+    /// Operation timed out.
+    #[error("timeout: {operation} after {duration_ms}ms")]
+    Timeout {
+        /// Description of the operation that timed out.
+        operation: String,
+        /// How long we waited before timing out.
+        duration_ms: u64,
+    },
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),

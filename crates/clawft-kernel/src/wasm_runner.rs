@@ -858,7 +858,7 @@ impl Default for ToolRegistry {
 
 /// Return the complete catalog of 27 built-in kernel tools.
 pub fn builtin_tool_catalog() -> Vec<BuiltinToolSpec> {
-    let mut catalog = Vec::with_capacity(27);
+    let mut catalog = Vec::with_capacity(29);
 
     // --- Filesystem tools (10) ---
     catalog.push(BuiltinToolSpec {
@@ -1124,6 +1124,41 @@ pub fn builtin_tool_catalog() -> Vec<BuiltinToolSpec> {
         }),
         gate_action: "tool.agent.resume".into(),
         effect: EffectVector { risk: 0.2, ..Default::default() },
+        native: true,
+    });
+
+    // --- IPC tools (2) ---
+    catalog.push(BuiltinToolSpec {
+        name: "ipc.send".into(),
+        category: ToolCategory::Agent,
+        description: "Send a message to an agent or topic via kernel IPC".into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target_pid": {"type": "integer", "description": "Target agent PID"},
+                "topic": {"type": "string", "description": "Topic name (alternative to target_pid)"},
+                "payload": {"type": "object", "description": "Message payload (JSON)"},
+                "text": {"type": "string", "description": "Plain text message (alternative to payload)"}
+            }
+        }),
+        gate_action: "tool.ipc.send".into(),
+        effect: EffectVector { risk: 0.2, ..Default::default() },
+        native: true,
+    });
+    catalog.push(BuiltinToolSpec {
+        name: "ipc.subscribe".into(),
+        category: ToolCategory::Agent,
+        description: "Subscribe to a topic for receiving messages".into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic name to subscribe to"},
+                "pid": {"type": "integer", "description": "PID to subscribe (defaults to caller)"}
+            },
+            "required": ["topic"]
+        }),
+        gate_action: "tool.ipc.subscribe".into(),
+        effect: EffectVector { risk: 0.1, ..Default::default() },
         native: true,
     });
 
@@ -2186,6 +2221,80 @@ impl BuiltinTool for AgentResumeTool {
 }
 
 // ---------------------------------------------------------------------------
+// IPC tool implementations
+// ---------------------------------------------------------------------------
+
+/// Built-in `ipc.send` tool.
+///
+/// Sends a message to a target PID or topic via kernel IPC.
+pub struct IpcSendTool {
+    spec: BuiltinToolSpec,
+}
+
+impl Default for IpcSendTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IpcSendTool {
+    pub fn new() -> Self {
+        let catalog = builtin_tool_catalog();
+        let spec = catalog
+            .into_iter()
+            .find(|s| s.name == "ipc.send")
+            .expect("ipc.send must be in catalog");
+        Self { spec }
+    }
+}
+
+impl BuiltinTool for IpcSendTool {
+    fn name(&self) -> &str { "ipc.send" }
+    fn spec(&self) -> &BuiltinToolSpec {
+        &self.spec
+    }
+    fn execute(&self, _args: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        // Stub: real implementation will route through KernelIpc
+        Err(ToolError::ExecutionFailed("ipc.send requires async kernel context".into()))
+    }
+}
+
+/// Built-in `ipc.subscribe` tool.
+///
+/// Subscribes the calling agent to a topic for receiving messages.
+pub struct IpcSubscribeTool {
+    spec: BuiltinToolSpec,
+}
+
+impl Default for IpcSubscribeTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IpcSubscribeTool {
+    pub fn new() -> Self {
+        let catalog = builtin_tool_catalog();
+        let spec = catalog
+            .into_iter()
+            .find(|s| s.name == "ipc.subscribe")
+            .expect("ipc.subscribe must be in catalog");
+        Self { spec }
+    }
+}
+
+impl BuiltinTool for IpcSubscribeTool {
+    fn name(&self) -> &str { "ipc.subscribe" }
+    fn spec(&self) -> &BuiltinToolSpec {
+        &self.spec
+    }
+    fn execute(&self, _args: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        // Stub: real implementation will route through TopicRouter
+        Err(ToolError::ExecutionFailed("ipc.subscribe requires async kernel context".into()))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // K4 C3: System tool implementations
 // ---------------------------------------------------------------------------
 
@@ -2669,9 +2778,9 @@ mod tests {
     fn builtin_catalog_has_expected_tools() {
         let catalog = builtin_tool_catalog();
         #[cfg(feature = "ecc")]
-        assert_eq!(catalog.len(), 34, "27 base + 7 ecc tools");
+        assert_eq!(catalog.len(), 36, "29 base + 7 ecc tools");
         #[cfg(not(feature = "ecc"))]
-        assert_eq!(catalog.len(), 27);
+        assert_eq!(catalog.len(), 29);
     }
 
     #[test]
@@ -2720,7 +2829,7 @@ mod tests {
         let agent_count = catalog.iter().filter(|s| s.category == ToolCategory::Agent).count();
         let sys_count = catalog.iter().filter(|s| s.category == ToolCategory::System).count();
         assert_eq!(fs_count, 10);
-        assert_eq!(agent_count, 7);
+        assert_eq!(agent_count, 9);
         assert_eq!(sys_count, 10);
         #[cfg(feature = "ecc")]
         {

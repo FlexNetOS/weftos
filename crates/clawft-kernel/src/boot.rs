@@ -614,6 +614,7 @@ impl<P: Platform> Kernel<P> {
                             ("/kernel/tools/fs", "/kernel/tools"),
                             ("/kernel/tools/agent", "/kernel/tools"),
                             ("/kernel/tools/sys", "/kernel/tools"),
+                            ("/kernel/tools/ipc", "/kernel/tools"),
                             #[cfg(feature = "ecc")]
                             ("/kernel/tools/ecc", "/kernel/tools"),
                         ];

@@ -18,9 +18,10 @@
 //! ```
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::capability::CapabilityChecker;
@@ -35,6 +36,15 @@ use crate::chain::ChainManager;
 
 /// Default inbox channel capacity per agent.
 const DEFAULT_INBOX_CAPACITY: usize = 1024;
+
+/// A pending request awaiting a correlated response.
+struct PendingRequest {
+    /// Sender to deliver the response on.
+    response_tx: oneshot::Sender<KernelMessage>,
+    /// When the request was sent (for timeout tracking / diagnostics).
+    #[allow(dead_code)]
+    sent_at: Instant,
+}
 
 /// Agent-to-agent message router.
 ///
@@ -56,6 +66,9 @@ pub struct A2ARouter {
 
     /// Per-agent inboxes: PID -> sender half of inbox channel.
     inboxes: DashMap<Pid, mpsc::Sender<KernelMessage>>,
+
+    /// Pending request-response tracking: request_id -> PendingRequest.
+    pending_requests: DashMap<String, PendingRequest>,
 }
 
 impl A2ARouter {
@@ -71,6 +84,7 @@ impl A2ARouter {
             topic_router,
             service_registry: None,
             inboxes: DashMap::new(),
+            pending_requests: DashMap::new(),
         }
     }
 
@@ -301,6 +315,78 @@ impl A2ARouter {
     /// Check whether a PID has an inbox.
     pub fn has_inbox(&self, pid: Pid) -> bool {
         self.inboxes.contains_key(&pid)
+    }
+
+    /// Send a request and wait for a correlated response with timeout.
+    ///
+    /// The request message is sent normally, but its `id` is registered
+    /// as a pending request. When a response arrives with a matching
+    /// `correlation_id`, it is delivered to the returned future instead
+    /// of the sender's inbox.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::Timeout` if no response arrives within the
+    /// specified duration, or `KernelError::Ipc` if the response channel
+    /// is closed before a response arrives.
+    pub async fn request(
+        &self,
+        msg: KernelMessage,
+        timeout: Duration,
+    ) -> KernelResult<KernelMessage> {
+        let request_id = msg.id.clone();
+        let (tx, rx) = oneshot::channel();
+
+        // Register pending request before sending so there is no race.
+        self.pending_requests.insert(
+            request_id.clone(),
+            PendingRequest {
+                response_tx: tx,
+                sent_at: Instant::now(),
+            },
+        );
+
+        // Send the message; clean up on failure.
+        if let Err(e) = self.send(msg).await {
+            self.pending_requests.remove(&request_id);
+            return Err(e);
+        }
+
+        // Wait for response with timeout.
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => {
+                self.pending_requests.remove(&request_id);
+                Err(KernelError::Ipc("response channel closed".into()))
+            }
+            Err(_) => {
+                self.pending_requests.remove(&request_id);
+                Err(KernelError::Timeout {
+                    operation: format!("request {request_id}"),
+                    duration_ms: timeout.as_millis() as u64,
+                })
+            }
+        }
+    }
+
+    /// Try to complete a pending request with a correlated response.
+    ///
+    /// If the message has a `correlation_id` that matches a pending
+    /// request, the response is delivered to the waiting future and
+    /// `true` is returned. Otherwise returns `false`.
+    pub fn try_complete_request(&self, msg: KernelMessage) -> bool {
+        if let Some(ref corr_id) = msg.correlation_id {
+            if let Some((_, pending)) = self.pending_requests.remove(corr_id) {
+                let _ = pending.response_tx.send(msg);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the number of pending requests.
+    pub fn pending_request_count(&self) -> usize {
+        self.pending_requests.len()
     }
 }
 
@@ -1055,5 +1141,148 @@ mod tests {
         );
         let result = router.send(msg).await;
         assert!(result.is_err(), "external service with no PID should fail routing");
+    }
+
+    // ── Request-response tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn request_response_completes() {
+        let (router, pids, mut receivers) = setup_router(2);
+        let router = Arc::new(router);
+        let router2 = Arc::clone(&router);
+
+        // Spawn a responder that reads from pids[1]'s inbox and replies.
+        let from_pid = pids[0];
+        let to_pid = pids[1];
+        tokio::spawn(async move {
+            let msg = receivers[1].recv().await.unwrap();
+            // Build a correlated response back to the sender.
+            let reply = KernelMessage::with_correlation(
+                to_pid,
+                MessageTarget::Process(from_pid),
+                MessagePayload::Text("pong".into()),
+                msg.id.clone(),
+            );
+            router2.try_complete_request(reply);
+        });
+
+        let request = KernelMessage::text(from_pid, MessageTarget::Process(to_pid), "ping");
+        let response = router
+            .request(request, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.payload,
+            MessagePayload::Text(ref t) if t == "pong"
+        ));
+        assert_eq!(router.pending_request_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn request_response_timeout() {
+        let (router, pids, _receivers) = setup_router(2);
+
+        let request =
+            KernelMessage::text(pids[0], MessageTarget::Process(pids[1]), "no-reply");
+        let result = router.request(request, Duration::from_millis(50)).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("timeout"),
+            "expected timeout error, got: {err_msg}"
+        );
+        assert_eq!(router.pending_request_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn try_complete_request_matching() {
+        let (router, pids, _receivers) = setup_router(2);
+
+        // Manually register a pending request.
+        let (tx, rx) = oneshot::channel();
+        let request_id = "req-42".to_string();
+        router.pending_requests.insert(
+            request_id.clone(),
+            PendingRequest {
+                response_tx: tx,
+                sent_at: Instant::now(),
+            },
+        );
+
+        // Build a response with matching correlation_id.
+        let reply = KernelMessage::with_correlation(
+            pids[1],
+            MessageTarget::Process(pids[0]),
+            MessagePayload::Text("reply".into()),
+            request_id,
+        );
+        let completed = router.try_complete_request(reply);
+        assert!(completed, "try_complete_request should return true for matching id");
+
+        let response = rx.await.unwrap();
+        assert!(matches!(
+            response.payload,
+            MessagePayload::Text(ref t) if t == "reply"
+        ));
+    }
+
+    #[tokio::test]
+    async fn try_complete_request_no_match() {
+        let (router, pids, _receivers) = setup_router(2);
+
+        // No pending requests registered.
+        let reply = KernelMessage::with_correlation(
+            pids[1],
+            MessageTarget::Process(pids[0]),
+            MessagePayload::Text("orphan".into()),
+            "nonexistent-id".into(),
+        );
+        let completed = router.try_complete_request(reply);
+        assert!(!completed, "try_complete_request should return false for non-matching id");
+
+        // Also test message with no correlation_id.
+        let plain = KernelMessage::text(pids[1], MessageTarget::Process(pids[0]), "plain");
+        assert!(!router.try_complete_request(plain));
+    }
+
+    #[tokio::test]
+    async fn pending_request_count_tracks_correctly() {
+        let (router, _pids, _receivers) = setup_router(2);
+        assert_eq!(router.pending_request_count(), 0);
+
+        // Insert two pending requests.
+        let (tx1, _rx1) = oneshot::channel();
+        let (tx2, _rx2) = oneshot::channel();
+        router.pending_requests.insert(
+            "req-a".into(),
+            PendingRequest {
+                response_tx: tx1,
+                sent_at: Instant::now(),
+            },
+        );
+        assert_eq!(router.pending_request_count(), 1);
+
+        router.pending_requests.insert(
+            "req-b".into(),
+            PendingRequest {
+                response_tx: tx2,
+                sent_at: Instant::now(),
+            },
+        );
+        assert_eq!(router.pending_request_count(), 2);
+
+        // Complete one via try_complete_request.
+        let reply = KernelMessage::with_correlation(
+            1,
+            MessageTarget::Process(2),
+            MessagePayload::Text("done".into()),
+            "req-a".into(),
+        );
+        router.try_complete_request(reply);
+        assert_eq!(router.pending_request_count(), 1);
+
+        // Remove the other manually.
+        router.pending_requests.remove("req-b");
+        assert_eq!(router.pending_request_count(), 0);
     }
 }
