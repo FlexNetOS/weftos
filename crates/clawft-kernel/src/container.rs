@@ -24,7 +24,10 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use async_trait::async_trait;
+
 use crate::health::HealthStatus;
+use crate::service::{ServiceType, SystemService};
 
 /// Configuration for the container manager.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,6 +391,75 @@ impl ContainerManager {
     }
 }
 
+// ---------------------------------------------------------------------------
+// K4 E: ContainerService — SystemService adapter for ContainerManager
+// ---------------------------------------------------------------------------
+
+/// Wraps [`ContainerManager`] as a [`SystemService`] so it participates in
+/// the kernel's service registry lifecycle and health aggregation.
+pub struct ContainerService {
+    manager: std::sync::Arc<ContainerManager>,
+}
+
+impl ContainerService {
+    /// Create a new container service wrapping the given manager.
+    pub fn new(manager: std::sync::Arc<ContainerManager>) -> Self {
+        Self { manager }
+    }
+
+    /// Access the underlying container manager.
+    pub fn manager(&self) -> &std::sync::Arc<ContainerManager> {
+        &self.manager
+    }
+}
+
+#[async_trait]
+impl SystemService for ContainerService {
+    fn name(&self) -> &str {
+        "containers"
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Custom("containers".into())
+    }
+
+    async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        debug!("container service starting ({} managed)", self.manager.len());
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        debug!("container service stopping — stopping all containers");
+        self.manager.stop_all();
+        Ok(())
+    }
+
+    async fn health_check(&self) -> HealthStatus {
+        let containers = self.manager.list_containers();
+        if containers.is_empty() {
+            return HealthStatus::Healthy;
+        }
+        let mut unhealthy = Vec::new();
+        for (name, state) in &containers {
+            if !matches!(state, ContainerState::Running) {
+                unhealthy.push(format!("{name}: {state}"));
+            }
+        }
+        if unhealthy.is_empty() {
+            HealthStatus::Healthy
+        } else if unhealthy.len() == containers.len() {
+            HealthStatus::Unhealthy(format!("all containers down: {}", unhealthy.join(", ")))
+        } else {
+            HealthStatus::Degraded(format!(
+                "{}/{} unhealthy: {}",
+                unhealthy.len(),
+                containers.len(),
+                unhealthy.join(", ")
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,5 +709,76 @@ mod tests {
             let restored: RestartPolicy = serde_json::from_str(&json).unwrap();
             assert_eq!(restored, policy);
         }
+    }
+
+    // --- K4 E: ContainerService tests ---
+
+    #[test]
+    fn container_service_implements_system_service() {
+        let mgr = std::sync::Arc::new(ContainerManager::new(ContainerConfig::default()));
+        let svc = ContainerService::new(mgr);
+        assert_eq!(svc.name(), "containers");
+        assert_eq!(svc.service_type(), ServiceType::Custom("containers".into()));
+    }
+
+    #[tokio::test]
+    async fn container_service_health_empty_is_healthy() {
+        let mgr = std::sync::Arc::new(ContainerManager::new(ContainerConfig::default()));
+        let svc = ContainerService::new(mgr);
+        let health = svc.health_check().await;
+        assert!(matches!(health, HealthStatus::Healthy));
+    }
+
+    #[tokio::test]
+    async fn container_service_health_propagates() {
+        let mgr = std::sync::Arc::new(ContainerManager::new(ContainerConfig::default()));
+        mgr.register(ManagedContainer {
+            name: "redis".into(),
+            image: "redis:7-alpine".into(),
+            container_id: None,
+            state: ContainerState::Running,
+            ports: Vec::new(),
+            env: HashMap::new(),
+            volumes: Vec::new(),
+            health_endpoint: None,
+            restart_policy: None,
+        });
+        mgr.register(ManagedContainer {
+            name: "pg".into(),
+            image: "postgres:16".into(),
+            container_id: None,
+            state: ContainerState::Stopped,
+            ports: Vec::new(),
+            env: HashMap::new(),
+            volumes: Vec::new(),
+            health_endpoint: None,
+            restart_policy: None,
+        });
+        let svc = ContainerService::new(mgr);
+        let health = svc.health_check().await;
+        // One running, one stopped → degraded
+        assert!(matches!(health, HealthStatus::Degraded(_)));
+    }
+
+    #[tokio::test]
+    async fn container_service_stop_halts_all() {
+        let mgr = std::sync::Arc::new(ContainerManager::new(ContainerConfig::default()));
+        mgr.register(ManagedContainer {
+            name: "redis".into(),
+            image: "redis:7-alpine".into(),
+            container_id: None,
+            state: ContainerState::Running,
+            ports: Vec::new(),
+            env: HashMap::new(),
+            volumes: Vec::new(),
+            health_endpoint: None,
+            restart_policy: None,
+        });
+        let svc = ContainerService::new(mgr.clone());
+        svc.stop().await.unwrap();
+        assert_eq!(
+            mgr.container_state("redis"),
+            Some(ContainerState::Stopped)
+        );
     }
 }

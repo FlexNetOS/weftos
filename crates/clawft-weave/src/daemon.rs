@@ -1160,12 +1160,23 @@ async fn dispatch(
             #[cfg(feature = "exochain")]
             let chain = k.chain_manager().cloned();
 
+            // K3: Build ToolRegistry with reference implementations
+            let tool_registry: std::sync::Arc<clawft_kernel::ToolRegistry> = {
+                let mut registry = clawft_kernel::ToolRegistry::new();
+                registry.register(std::sync::Arc::new(clawft_kernel::FsReadFileTool::new()));
+                registry.register(std::sync::Arc::new(clawft_kernel::AgentSpawnTool::new(
+                    k.process_table().clone(),
+                )));
+                std::sync::Arc::new(registry)
+            };
+
             // Use spawn_and_run to actually execute the agent work loop
             let process_table = k.process_table().clone();
             match k.supervisor().spawn_and_run(request, {
                 let a2a_clone = a2a.clone();
                 let cron_clone = cron.clone();
                 let pt_clone = process_table;
+                let tool_reg_clone = tool_registry.clone();
                 #[cfg(feature = "exochain")]
                 let chain_clone = chain.clone();
                 #[cfg(feature = "exochain")]
@@ -1204,6 +1215,7 @@ async fn dispatch(
                             a2a_clone,
                             cron_clone,
                             pt_clone,
+                            Some(tool_reg_clone),
                             #[cfg(feature = "exochain")]
                             chain_clone,
                             #[cfg(feature = "exochain")]

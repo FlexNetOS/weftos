@@ -77,6 +77,7 @@ pub enum ResourceKind {
     Topic,
     Container,
     App,
+    Tool,
     Environment,
     Custom(String),
 }
@@ -215,6 +216,14 @@ mod tests {
     #[test]
     fn resource_kind_serde_roundtrip() {
         let kind = ResourceKind::Custom("gpu".to_string());
+        let json = serde_json::to_string(&kind).unwrap();
+        let back: ResourceKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kind);
+    }
+
+    #[test]
+    fn resource_kind_tool_serde_roundtrip() {
+        let kind = ResourceKind::Tool;
         let json = serde_json::to_string(&kind).unwrap();
         let back: ResourceKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, kind);
