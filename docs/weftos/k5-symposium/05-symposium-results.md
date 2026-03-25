@@ -1,7 +1,7 @@
 # K5 Symposium Results
 
 **Date**: 2026-03-25
-**Status**: COMPLETE -- 10 decisions rendered, 5 commitments made
+**Status**: COMPLETE -- 12 decisions rendered, 5 commitments made
 **Branch**: feature/weftos-kernel-sprint
 **Predecessor**: [ECC Symposium Results](../ecc-symposium/05-symposium-results-report.md)
 
@@ -324,6 +324,29 @@ handshake payload -- graceful degradation when unsupported. Cost: ~2.4KB extra
 per handshake, ~1ms latency, zero per-message overhead.
 
 **Origin**: Security Panel (moved from K7+ to K6.4b)
+
+---
+
+### D12: Layered Service Resolution with Genesis-Hash DHT Keys
+
+**Decision**: Service resolution uses a 9-step layered flow with genesis-hash-namespaced
+DHT keys, resolution cache (30s TTL), negative cache, connection pool, and
+circuit breaker. Replicated services use round-robin in K6.3, graduating to
+lowest-latency and load-aware selection. DHT keys prefixed with governance
+genesis hash (first 16 hex chars) for cross-cluster isolation (defense-in-depth).
+
+**Rationale**: The join protocol already gates on governance genesis, but DHT key
+namespacing prevents a node that accidentally connects to a different cluster's DHT
+from resolving or polluting service records. Layered caching (resolution + negative +
+connection pool) prevents DHT storms and redundant network calls. Circuit breaker
+prevents cascade failures from slow or erroring remote nodes. Selection strategy
+evolves from simple round-robin (K6.3) through affinity routing (K6.5) to load-aware
+selection using `NodeEccCapability.headroom_ratio` from ECC gossip (K7).
+
+**Origin**: Mesh Architecture Panel (M9), K6 SPARC refinement
+
+**Cross-references**: M9 in `01-mesh-architecture.md`, K6 phase breakdown in
+`07-phase-K6-mesh-framework.md`
 
 ---
 

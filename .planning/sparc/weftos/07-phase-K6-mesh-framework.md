@@ -5,7 +5,7 @@
 **Duration**: Weeks 11-16 (6 sub-phases)
 **Goal**: Extend WeftOS from a single-node kernel into a multi-node cluster with encrypted peer-to-peer networking, distributed IPC, chain replication, tree synchronization, and cluster-wide service discovery
 **Gate from**: K2 C10, K5 Symposium (2026-03-25)
-**Symposium Decisions**: D1-D10, Commitments C1-C5
+**Symposium Decisions**: D1-D12, Commitments C1-C5
 
 ---
 
@@ -113,6 +113,109 @@ pub struct MeshConfig {
     pub seed_peers: Vec<String>,
     pub identity_key_path: Option<PathBuf>,
     pub max_message_size: usize,  // default 16 MiB (D8)
+}
+```
+
+### Cross-Mesh Service Resolution
+
+#### DHT Key Namespacing
+
+All DHT keys are prefixed with the governance genesis hash for cluster isolation:
+
+```
+svc:<genesis_hash_hex[0..16]>:<service_name>   → service advertisement
+node:<genesis_hash_hex[0..16]>:<node_id_hex>   → node presence/transports
+agent:<genesis_hash_hex[0..16]>:<app>/<id>     → agent directory
+```
+
+Even though the join protocol already gates on governance genesis, key namespacing
+provides defense-in-depth: a node that accidentally connects to a different cluster's
+DHT cannot resolve or pollute service records.
+
+#### Resolution Flow (9 steps)
+
+```
+Agent calls Service("cache")
+  │
+  ├─ 1. LOCAL: ServiceRegistry.resolve_target("cache")
+  │     → Found? Deliver to local inbox. DONE.
+  │
+  ├─ 2. NEGATIVE CACHE: Check if service is known-missing (30s TTL)
+  │     → Found? Return ServiceNotFound immediately. DONE.
+  │
+  ├─ 3. RESOLUTION CACHE: Check cached RemoteNode resolution
+  │     ├─ Hit + not expired + circuit CLOSED → Use cached. Go to step 6.
+  │     └─ Miss/expired/circuit OPEN → Continue to step 4.
+  │
+  ├─ 4. DHT LOOKUP: dht.get("svc:<genesis>:<cache>")
+  │     ├─ Not found → Add to negative cache. Return error.
+  │     └─ Found: [(node_B, v=5), (node_C, v=3)]
+  │         → Filter by governance genesis hash
+  │         → Filter by circuit breaker state
+  │         → K6.3: Round-robin or lowest-latency selection
+  │         → K6.5+: Affinity → connection pool → latency → load
+  │
+  ├─ 5. SECONDARY RESOLVE: RPC to selected node for full endpoint metadata
+  │     → { pid, methods, contract_hash }
+  │     → Cache result (30s TTL). Set affinity.
+  │
+  ├─ 6. CONNECTION: pool.get_or_dial(node_id)
+  │     → Reuse existing NoiseChannel or establish new one
+  │
+  ├─ 7. GOVERNANCE GATE: gate.check("ipc.remote.send", context)
+  │     → Remote calls carry elevated EffectVector.risk
+  │
+  ├─ 8. DELIVER: Serialize KernelMessage via RVF, send over mesh
+  │
+  └─ 9. WITNESS: chain.append("ipc.remote.send", {...})
+```
+
+#### Replicated Services
+
+When multiple nodes advertise the same service name, the DHT returns a list.
+Selection strategy progresses with K6 phases:
+
+| Phase | Strategy | Implementation |
+|-------|----------|---------------|
+| K6.3  | Round-robin | Simple `AtomicU64` counter mod replica count |
+| K6.3  | Lowest-latency | Prefer nodes with lowest recent ping RTT |
+| K6.5  | Connection affinity | Prefer nodes with existing pool connection |
+| K6.5  | Circuit-breaker aware | Skip nodes in OPEN state |
+| K7    | Load-aware | Use `NodeEccCapability.headroom_ratio` from gossip |
+
+#### Service Resolution Types
+
+```rust
+/// Cached resolution of a remote service.
+pub struct ResolvedService {
+    pub node_id: [u8; 32],
+    pub pid: Pid,
+    pub endpoint: ServiceEndpoint,
+    pub methods: Vec<String>,
+    pub resolved_at: Instant,
+    pub ttl: Duration,
+}
+
+/// Connection pool entry for a mesh peer.
+pub struct MeshConnection {
+    pub node_id: [u8; 32],
+    pub channel: NoiseChannel,
+    pub established_at: Instant,
+    pub last_used: Instant,
+    pub active_streams: AtomicU32,
+}
+
+/// Circuit breaker for a remote node or service.
+pub enum CircuitState {
+    Closed { error_count: u32, window_start: Instant },
+    Open { opened_at: Instant, cooldown: Duration },
+    HalfOpen { test_in_progress: bool },
+}
+
+/// Negative cache for missing services and unreachable nodes.
+pub struct NegativeCache {
+    missing_services: DashMap<String, (Instant, Duration)>,
+    unreachable_nodes: DashMap<[u8; 32], (Instant, Duration)>,
 }
 ```
 
@@ -578,6 +681,12 @@ The symposium refined several decisions from doc 12:
 - [ ] Message deduplication prevents double-delivery
 - [ ] Hybrid Noise + ML-KEM-768 handshake protects against store-now-decrypt-later
 - [ ] KEM negotiation degrades gracefully when unsupported
+- [ ] DHT keys namespaced with governance genesis hash prefix
+- [ ] Service resolution cache with TTL-based expiry
+- [ ] Negative cache prevents DHT storms for missing services
+- [ ] Replicated services resolve with round-robin selection
+- [ ] Connection pool reuses Noise+QUIC channels across calls
+- [ ] Circuit breaker prevents cascade failures from slow nodes
 
 ### Testing Verification Commands
 
@@ -629,8 +738,12 @@ Build the core mesh transport with encrypted connections.
 | `mesh_framing.rs` | Length-prefix framing + message type dispatch | ~60 |
 | `mesh_listener.rs` | Accept loop, handshake, peer registration | ~80 |
 
+Includes `MeshConnectionPool` with idle timeout (60s) and exponential backoff
+for failed dial attempts. Pool entries track `last_used` and `active_streams`
+for connection lifecycle management.
+
 **Test**: Noise handshake roundtrip, QUIC connect+send+recv, framing encode/decode,
-max message size enforcement, invalid handshake rejection.
+max message size enforcement, invalid handshake rejection, pool idle eviction.
 
 #### K6.2: Discovery (~330 lines, 2 optional deps)
 
@@ -658,8 +771,14 @@ Route KernelMessage across nodes transparently.
 | Changes to `ipc.rs` | Transport fork for RemoteNode | ~40 |
 | Changes to `a2a.rs` | Cluster-aware service resolution + remote inbox bridge | ~110 |
 
+Service resolution cache (30s TTL) and negative cache (30s TTL) prevent
+redundant DHT lookups. Genesis-hash-prefixed DHT keys (`svc:<genesis[0..16]>:<name>`)
+provide cross-cluster isolation. Replicated services use round-robin selection
+via `AtomicU64` counter, with lowest-latency as an alternative strategy.
+
 **Test**: Remote message roundtrip, cross-node service resolution, governance gate
-on remote messages, dedup rejection, GlobalPid in responses.
+on remote messages, dedup rejection, GlobalPid in responses, resolution cache hit/miss,
+negative cache prevents DHT storm, round-robin across replicated services.
 
 #### K6.4: Chain Replication + Tree Sync (~300 lines)
 
@@ -718,8 +837,18 @@ Cluster-wide process and service visibility.
 | `mesh_service_adv.rs` | ServiceAdvertisement + resolution | ~80 |
 | `mesh_heartbeat.rs` | SWIM-style heartbeat + failure detection | ~60 |
 
+Circuit breaker (`CircuitState`) tracks error rate per remote node. Transitions:
+CLOSED -> OPEN (>50% errors over 10 calls), OPEN -> HALF-OPEN (30s cooldown),
+HALF-OPEN -> CLOSED (test succeeds) or OPEN (test fails). Affinity routing
+prefers nodes with existing pool connections. Connection-aware selection
+combines pool state, circuit state, and latency metrics.
+
+**Note**: K7 graduates to load-aware resolution using `NodeEccCapability.headroom_ratio`
+from ECC gossip (see M9).
+
 **Test**: Process advertisement gossip, cross-node service discovery, failure
-detection, CRDT merge convergence, service resolution fallback (local-first).
+detection, CRDT merge convergence, service resolution fallback (local-first),
+circuit breaker state transitions, affinity routing preference.
 
 ### Line Count Summary
 
@@ -764,6 +893,6 @@ detection, CRDT merge convergence, service resolution fallback (local-first).
 | `14-exochain-substrate.md` | Chain manager extended with replication + bridge events |
 | `docs/weftos/k5-symposium/01-mesh-architecture.md` | Authoritative 5-layer architecture |
 | `docs/weftos/k5-symposium/04-k6-implementation-plan.md` | Authoritative phase plan |
-| `docs/weftos/k5-symposium/05-symposium-results.md` | Decisions D1-D10, Commitments C1-C5 |
+| `docs/weftos/k5-symposium/05-symposium-results.md` | Decisions D1-D12, Commitments C1-C5 |
 | `docs/weftos/sparc/k6-cluster-networking.md` | Earlier K6 sketch (superseded by this plan) |
 | `.planning/development_notes/k6-readiness-audit.md` | Readiness matrix (41 GREEN, 22 YELLOW, 21 RED) |

@@ -321,7 +321,63 @@ networking dependencies.
 
 ---
 
-## 9. Ruvector Reuse Strategy
+## 9. Service Resolution Across the Mesh
+
+The A2ARouter's `route_to_service()` method extends from local-only to mesh-wide
+resolution through a 9-step flow with multiple caching layers.
+
+### DHT Key Namespacing
+
+All DHT keys include the governance genesis hash as a prefix for cluster isolation:
+
+```
+svc:<genesis_hex[0..16]>:cache     → service advertisement
+node:<genesis_hex[0..16]>:abc123   → node presence with transport addresses
+```
+
+This prevents cross-cluster pollution even if nodes from different governance
+roots share the same DHT overlay. Defense-in-depth alongside the join protocol's
+governance verification.
+
+### Resolution Caching
+
+Three cache layers prevent redundant network calls:
+
+| Cache | Purpose | TTL | Invalidation |
+|-------|---------|-----|--------------|
+| Resolution cache | Avoids re-resolving known services | 30s | TTL, gossip event, connection failure |
+| Negative cache | Avoids DHT lookup for missing services | 30s | TTL only |
+| Connection pool | Reuses Noise+QUIC channels | Idle 60s | Idle timeout, node departure gossip |
+
+### Replicated Service Selection
+
+When multiple nodes host the same service, the DHT returns all advertisers.
+Selection evolves with implementation maturity:
+
+- **K6.3**: Round-robin (fair distribution) or lowest-latency (prefer closest node)
+- **K6.5**: Affinity (sticky to one node for connection reuse) + circuit breaker
+- **K7**: Load-aware using `NodeEccCapability.headroom_ratio` from ECC gossip
+
+### Circuit Breaker
+
+Prevents cascade failures when a remote node is slow or erroring:
+
+```
+CLOSED ──[>50% errors over 10 calls]──→ OPEN
+OPEN ────[30s cooldown]────────────────→ HALF-OPEN
+HALF-OPEN ─[test succeeds]────────────→ CLOSED
+HALF-OPEN ─[test fails]───────────────→ OPEN
+```
+
+### Architecture Decision
+
+**M9**: Service resolution uses layered caching (resolution + negative + pool)
+with genesis-hash-namespaced DHT keys. Replicated services start with round-robin
+in K6.3, graduating to load-aware selection in K7.
+
+---
+
+## 10. Ruvector Reuse Strategy
 
 The ruvector crates provide algorithms without I/O. The mesh layer provides
 I/O without algorithms. They compose cleanly:
@@ -342,7 +398,7 @@ crates are needed.
 
 ---
 
-## 10. Decisions
+## 11. Decisions
 
 | ID | Decision | Rationale |
 |----|----------|-----------|
@@ -354,3 +410,4 @@ crates are needed.
 | M6 | `mesh` feature gate for all networking | Preserves single-node zero-dep builds |
 | M7 | rvf-wire as wire format | Already in workspace, zero-copy |
 | M8 | 16 MiB max message size | Prevents memory exhaustion attacks |
+| M9 | Layered service resolution with genesis-hash DHT keys | Defense-in-depth cluster isolation, prevents DHT storms, enables replicated service selection |
