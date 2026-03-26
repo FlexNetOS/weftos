@@ -375,6 +375,22 @@ HALF-OPEN ─[test fails]───────────────→ OPEN
 with genesis-hash-namespaced DHT keys. Replicated services start with round-robin
 in K6.3, graduating to load-aware selection in K7.
 
+### Mesh as ServiceApi Adapter (D13)
+
+The mesh transport is architecturally equivalent to Shell, MCP, and daemon RPC --
+it is a protocol adapter that dispatches through `ServiceApi`. This means:
+
+1. No dedicated mesh RPC protocol needed
+2. Every kernel service is remotely callable without modification
+3. Governance gates apply uniformly to local and remote calls
+4. Chain witnessing covers remote calls via the existing `ipc.send` event kind
+5. `weaver console --attach` could work across the mesh
+
+The only new K6.3 components are:
+- `RegistryQueryService`: wraps ServiceRegistry as a boot-time SystemService
+- `MeshAdapter`: incoming mesh -> local A2ARouter dispatch
+- `mesh.request()`: correlated KernelMessage send with timeout
+
 ---
 
 ## 10. Ruvector Reuse Strategy
@@ -411,3 +427,4 @@ crates are needed.
 | M7 | rvf-wire as wire format | Already in workspace, zero-copy |
 | M8 | 16 MiB max message size | Prevents memory exhaustion attacks |
 | M9 | Layered service resolution with genesis-hash DHT keys | Defense-in-depth cluster isolation, prevents DHT storms, enables replicated service selection |
+| M10 | Mesh RPCs reuse ServiceApi adapter pattern (D13) | No dedicated mesh protocol; all services remotely callable via existing dispatch |

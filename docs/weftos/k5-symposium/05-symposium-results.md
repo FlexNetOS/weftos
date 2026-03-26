@@ -1,7 +1,7 @@
 # K5 Symposium Results
 
 **Date**: 2026-03-25
-**Status**: COMPLETE -- 12 decisions rendered, 5 commitments made
+**Status**: COMPLETE -- 13 decisions rendered, 5 commitments made
 **Branch**: feature/weftos-kernel-sprint
 **Predecessor**: [ECC Symposium Results](../ecc-symposium/05-symposium-results-report.md)
 
@@ -347,6 +347,23 @@ selection using `NodeEccCapability.headroom_ratio` from ECC gossip (K7).
 
 **Cross-references**: M9 in `01-mesh-architecture.md`, K6 phase breakdown in
 `07-phase-K6-mesh-framework.md`
+
+### D13: Mesh RPCs Reuse ServiceApi Adapter Pattern
+
+**Decision**: Mesh RPCs reuse the existing `ServiceApi` adapter pattern. No dedicated
+mesh protocol types. The `MeshAdapter` feeds incoming mesh messages into the
+local `A2ARouter`, which dispatches through `ServiceApi` -- making every kernel
+service (registry, chain, ecc, kernel) automatically remotely callable. Only
+~160 lines of new code: `RegistryQueryService` (50), `MeshAdapter` (80),
+`mesh.request()` (30). Reuses K2's correlation-based request-response.
+
+**Rationale**: ServiceApi is already the universal dispatch interface used by
+Shell, MCP, and daemon RPC adapters. Adding a mesh adapter to this pattern
+eliminates the need for a dedicated mesh RPC protocol and ensures governance
+gates, chain witnessing, and all existing middleware apply uniformly to remote
+calls.
+
+**Origin**: Mesh Architecture Panel (K6.3 refinement)
 
 ---
 

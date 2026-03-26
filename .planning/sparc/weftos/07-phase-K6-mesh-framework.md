@@ -5,7 +5,7 @@
 **Duration**: Weeks 11-16 (6 sub-phases)
 **Goal**: Extend WeftOS from a single-node kernel into a multi-node cluster with encrypted peer-to-peer networking, distributed IPC, chain replication, tree synchronization, and cluster-wide service discovery
 **Gate from**: K2 C10, K5 Symposium (2026-03-25)
-**Symposium Decisions**: D1-D12, Commitments C1-C5
+**Symposium Decisions**: D1-D13, Commitments C1-C5
 
 ---
 
@@ -115,6 +115,76 @@ pub struct MeshConfig {
     pub max_message_size: usize,  // default 16 MiB (D8)
 }
 ```
+
+### Mesh RPC via ServiceApi Reuse
+
+Cross-node RPCs (including service resolution) reuse the existing `ServiceApi`
+pattern rather than introducing a dedicated mesh protocol. The mesh transport
+is simply another protocol adapter alongside Shell and MCP.
+
+#### Architecture
+
+```
+Protocol Adapters (all dispatch through ServiceApi):
+  ├── ShellAdapter      → "service.method args"
+  ├── McpAdapter        → MCP tool_call mapping
+  ├── DaemonRpcAdapter  → Unix socket JSON-RPC
+  └── MeshAdapter       → incoming mesh KernelMessage dispatch   (K6.3)
+```
+
+On the receiving node, incoming mesh messages route through the same
+`A2ARouter` as local messages. No separate handler needed.
+
+#### New Components (K6.3)
+
+**`RegistryQueryService`** (~50 lines):
+Wraps `ServiceRegistry` as a queryable `SystemService` registered at boot.
+Exposes `resolve(name)`, `list()`, `health(name)` methods via the standard
+`ServiceApi::call("registry", method, params)` path.
+
+**`MeshAdapter`** (~80 lines):
+Receives `KernelMessage` from the mesh transport and feeds it into the local
+`A2ARouter::send()`. Responses flow back via `correlation_id` matching
+(reusing K2's `A2ARouter::request()` pattern).
+
+**`mesh.request()`** (~30 lines):
+Extension on the mesh transport that sends a `KernelMessage` to a remote node
+and awaits a correlated response with timeout. Wraps the Noise channel send/receive.
+
+#### Service Resolution via ServiceApi
+
+```rust
+// Node A resolves "cache" on Node B:
+let msg = KernelMessage::new(
+    0,
+    MessageTarget::ServiceMethod { service: "registry", method: "resolve" },
+    MessagePayload::Json(json!({"name": "cache"})),
+);
+let response = mesh.request(node_b, msg, Duration::from_secs(5)).await?;
+// → { pid: 12, methods: ["get", "set"], contract_hash: "abc..." }
+```
+
+#### Implication: All Services Remotely Callable
+
+Because ServiceApi is the universal dispatch interface, every kernel service
+becomes automatically remotely callable once the mesh is operational:
+
+| Service | Remote Call | Use Case |
+|---------|-----------|----------|
+| registry | resolve, list, health | Service discovery |
+| chain | status, local, verify | Cross-node chain queries |
+| ecc | status, search, causal | Distributed cognitive queries |
+| kernel | status, ps, services | Remote kernel introspection |
+
+No service-specific remote protocol needed. `weaver console --attach` could
+work across the mesh by dialing a remote node's daemon service.
+
+#### Symposium Decision
+
+**D13**: Mesh RPCs reuse ServiceApi pattern. No dedicated mesh protocol type.
+`RegistryQueryService` + `MeshAdapter` + `mesh.request()` are the only new
+components (~160 lines). All existing services automatically become remotely
+callable.
 
 ### Cross-Mesh Service Resolution
 
@@ -687,6 +757,10 @@ The symposium refined several decisions from doc 12:
 - [ ] Replicated services resolve with round-robin selection
 - [ ] Connection pool reuses Noise+QUIC channels across calls
 - [ ] Circuit breaker prevents cascade failures from slow nodes
+- [ ] RegistryQueryService exposes service resolution via ServiceApi
+- [ ] MeshAdapter dispatches incoming mesh messages through local A2ARouter
+- [ ] mesh.request() supports correlated request-response with timeout
+- [ ] Remote service calls use same governance gate as local calls
 
 ### Testing Verification Commands
 
@@ -766,8 +840,9 @@ Route KernelMessage across nodes transparently.
 | File | Purpose | Lines |
 |------|---------|:-----:|
 | `mesh_ipc.rs` | KernelMessage serialize/deserialize over mesh | ~80 |
-| `mesh_service.rs` | Cross-node service registry query | ~70 |
+| `mesh_service.rs` | Cross-node service registry query + `RegistryQueryService` (~50 lines) | ~120 |
 | `mesh_dedup.rs` | Message deduplication (bloom filter) | ~80 |
+| `mesh_adapter.rs` | `MeshAdapter` — incoming mesh dispatch through local A2ARouter (~80 lines) | ~80 |
 | Changes to `ipc.rs` | Transport fork for RemoteNode | ~40 |
 | Changes to `a2a.rs` | Cluster-aware service resolution + remote inbox bridge | ~110 |
 
@@ -776,9 +851,16 @@ redundant DHT lookups. Genesis-hash-prefixed DHT keys (`svc:<genesis[0..16]>:<na
 provide cross-cluster isolation. Replicated services use round-robin selection
 via `AtomicU64` counter, with lowest-latency as an alternative strategy.
 
+`RegistryQueryService` is registered at boot (~50 lines), exposing service
+resolution via the standard `ServiceApi::call()` path (D13). `MeshAdapter`
+dispatches incoming mesh messages through the local `A2ARouter` (~80 lines).
+`mesh.request()` provides correlated request-response with timeout (~30 lines).
+
 **Test**: Remote message roundtrip, cross-node service resolution, governance gate
 on remote messages, dedup rejection, GlobalPid in responses, resolution cache hit/miss,
-negative cache prevents DHT storm, round-robin across replicated services.
+negative cache prevents DHT storm, round-robin across replicated services,
+RegistryQueryService resolves via ServiceApi, MeshAdapter dispatches through A2ARouter,
+mesh.request() supports correlated RPC with timeout.
 
 #### K6.4: Chain Replication + Tree Sync (~300 lines)
 
