@@ -135,6 +135,8 @@ pub enum DataSource {
     IssueTracker { url: String },
     /// Documentation corpus.
     Documentation { root: PathBuf },
+    /// SPARC planning artifacts.
+    SparcPlan { root: PathBuf },
     /// User-defined stream.
     CustomStream { name: String },
 }
@@ -148,6 +150,7 @@ impl DataSource {
             Self::CiPipeline { .. } => "ci_pipeline",
             Self::IssueTracker { .. } => "issue_tracker",
             Self::Documentation { .. } => "documentation",
+            Self::SparcPlan { .. } => "sparc_plan",
             Self::CustomStream { .. } => "custom_stream",
         }
     }
