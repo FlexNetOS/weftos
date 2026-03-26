@@ -15,8 +15,12 @@
 //! feature gates. Without them, `GovernanceEngine::evaluate()` returns
 //! `GovernanceDecision::Permit` (open governance).
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+
+use crate::environment::{Environment, EnvironmentClass};
 
 /// A governance rule that restricts agent behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +208,35 @@ pub struct GovernanceRequest {
     /// Additional context for the evaluator.
     #[serde(default)]
     pub context: std::collections::HashMap<String, String>,
+
+    /// Node ID of the requesting node (for distributed governance in K6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+impl GovernanceRequest {
+    /// Create a new governance request.
+    pub fn new(agent_id: impl Into<String>, action: impl Into<String>) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            action: action.into(),
+            effect: EffectVector::default(),
+            context: std::collections::HashMap::new(),
+            node_id: None,
+        }
+    }
+
+    /// Set the node ID for distributed governance evaluation.
+    pub fn with_node_id(mut self, node_id: impl Into<String>) -> Self {
+        self.node_id = Some(node_id.into());
+        self
+    }
+
+    /// Set the effect vector.
+    pub fn with_effect(mut self, effect: EffectVector) -> Self {
+        self.effect = effect;
+        self
+    }
 }
 
 /// Governance evaluation result.
@@ -342,6 +375,155 @@ impl GovernanceEngine {
     /// Get total rule count.
     pub fn rule_count(&self) -> usize {
         self.rules.len()
+    }
+
+    /// Evaluate a governance request in the context of a specific environment.
+    ///
+    /// Different environment classes apply different risk thresholds:
+    /// - **Development**: uses the environment's own `risk_threshold` (lenient, typically 0.9).
+    /// - **Staging**: uses the environment's own `risk_threshold` (moderate, typically 0.6).
+    /// - **Production**: uses half the environment's `risk_threshold` (strict, typically 0.15).
+    /// - **Custom**: uses the custom class's `risk_threshold` directly.
+    ///
+    /// After normal rule evaluation, an additional effect-magnitude check is
+    /// performed against the environment-adjusted threshold. If the magnitude
+    /// exceeds it, the decision is overridden to `Deny`.
+    pub fn evaluate_in_environment(
+        &self,
+        request: &GovernanceRequest,
+        env: &Environment,
+    ) -> GovernanceResult {
+        let adjusted_threshold = match &env.class {
+            EnvironmentClass::Development => {
+                // Dev: use the environment's risk threshold directly (lenient).
+                env.governance.risk_threshold
+            }
+            EnvironmentClass::Staging => {
+                // Staging: use the environment's risk threshold as-is.
+                env.governance.risk_threshold
+            }
+            EnvironmentClass::Production => {
+                // Production: halve the threshold for stricter gating.
+                env.governance.risk_threshold * 0.5
+            }
+            EnvironmentClass::Custom { risk_threshold, .. } => {
+                // Custom: use the class-level threshold.
+                *risk_threshold
+            }
+        };
+
+        // Run normal rule-based evaluation first.
+        let mut result = self.evaluate(request);
+
+        // Apply environment-scoped magnitude check on top.
+        let magnitude = request.effect.magnitude();
+        if magnitude > adjusted_threshold {
+            result.threshold_exceeded = true;
+            result.decision = GovernanceDecision::Deny(format!(
+                "effect magnitude {magnitude:.2} exceeds {} environment threshold {adjusted_threshold:.2}",
+                env.class,
+            ));
+        }
+
+        result
+    }
+}
+
+// ── Trajectory recording ─────────────────────────────────────
+//
+// Records agent decision points for learning, replay, and
+// pattern extraction. Lives alongside governance because every
+// trajectory point is a governed decision.
+
+/// Outcome of an agent decision for trajectory scoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TrajectoryOutcome {
+    /// Decision succeeded with a reward signal.
+    Success {
+        /// Reward value (higher is better).
+        reward: f64,
+    },
+    /// Decision failed.
+    Failure {
+        /// Reason for failure.
+        reason: String,
+    },
+    /// Outcome not yet known.
+    Pending,
+}
+
+/// A record of an agent's decision for learning and replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrajectoryRecord {
+    /// Agent that made the decision.
+    pub agent_id: String,
+    /// What was decided (action name / tool call).
+    pub action: String,
+    /// Context at decision time (state snapshot).
+    pub context: serde_json::Value,
+    /// Outcome (success / failure / pending).
+    pub outcome: TrajectoryOutcome,
+    /// Timestamp of the decision.
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Records agent trajectories for learning and pattern extraction.
+///
+/// Maintains a bounded FIFO buffer of [`TrajectoryRecord`]s. When the
+/// buffer is full the oldest record is evicted. Callers can query by
+/// agent and extract frequency patterns from successful actions.
+pub struct TrajectoryRecorder {
+    records: Vec<TrajectoryRecord>,
+    max_records: usize,
+}
+
+impl TrajectoryRecorder {
+    /// Create a recorder with the given capacity.
+    pub fn new(max_records: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            max_records,
+        }
+    }
+
+    /// Record a trajectory point. Evicts the oldest record on overflow.
+    pub fn record(&mut self, record: TrajectoryRecord) {
+        if self.records.len() >= self.max_records {
+            self.records.remove(0); // FIFO eviction
+        }
+        self.records.push(record);
+    }
+
+    /// Get all records for a specific agent.
+    pub fn agent_trajectory(&self, agent_id: &str) -> Vec<&TrajectoryRecord> {
+        self.records
+            .iter()
+            .filter(|r| r.agent_id == agent_id)
+            .collect()
+    }
+
+    /// Extract patterns: returns `(action, count)` pairs for successful
+    /// actions, sorted by frequency descending.
+    pub fn extract_patterns(&self) -> Vec<(String, usize)> {
+        let mut action_counts: HashMap<String, usize> = HashMap::new();
+        for record in &self.records {
+            if matches!(record.outcome, TrajectoryOutcome::Success { .. }) {
+                *action_counts.entry(record.action.clone()).or_default() += 1;
+            }
+        }
+        let mut patterns: Vec<_> = action_counts.into_iter().collect();
+        patterns.sort_by(|a, b| b.1.cmp(&a.1));
+        patterns
+    }
+
+    /// Number of recorded trajectories.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Whether the recorder is empty.
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
     }
 }
 
@@ -517,6 +699,7 @@ mod tests {
                 ..Default::default()
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(result.decision, GovernanceDecision::Permit);
@@ -539,6 +722,7 @@ mod tests {
                 ..Default::default()
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(matches!(result.decision, GovernanceDecision::Deny(_)));
@@ -562,6 +746,7 @@ mod tests {
                 ..Default::default()
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(matches!(
@@ -587,6 +772,7 @@ mod tests {
                 ..Default::default()
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(matches!(
@@ -612,6 +798,7 @@ mod tests {
                 ..Default::default()
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(result.decision, GovernanceDecision::Permit);
@@ -678,11 +865,46 @@ mod tests {
                 ..Default::default()
             },
             context: std::collections::HashMap::from([("env".into(), "prod".into())]),
+            node_id: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         let restored: GovernanceRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.agent_id, "agent-1");
         assert!((restored.effect.risk - 0.5).abs() < f64::EPSILON);
+        assert!(restored.node_id.is_none());
+    }
+
+    #[test]
+    fn governance_request_with_node_id() {
+        let request = GovernanceRequest::new("agent-1", "deploy")
+            .with_node_id("node-42")
+            .with_effect(EffectVector { risk: 0.1, ..Default::default() });
+
+        assert_eq!(request.node_id.as_deref(), Some("node-42"));
+        assert_eq!(request.agent_id, "agent-1");
+
+        // Serde roundtrip preserves node_id.
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("node-42"));
+        let restored: GovernanceRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.node_id.as_deref(), Some("node-42"));
+    }
+
+    #[test]
+    fn governance_request_without_node_id_deserializes() {
+        // JSON without node_id should deserialize with node_id = None (backward compat).
+        let json = r#"{"agent_id":"a","action":"b","effect":{},"context":{}}"#;
+        let request: GovernanceRequest = serde_json::from_str(json).unwrap();
+        assert!(request.node_id.is_none());
+    }
+
+    #[test]
+    fn governance_request_builder() {
+        let request = GovernanceRequest::new("agent-1", "deploy");
+        assert_eq!(request.agent_id, "agent-1");
+        assert_eq!(request.action, "deploy");
+        assert!(request.node_id.is_none());
+        assert!((request.effect.magnitude() - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -846,6 +1068,7 @@ mod tests {
             action: "deploy-to-prod".into(),
             effect: EffectVector { risk: 0.9, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(
@@ -863,6 +1086,7 @@ mod tests {
             action: "read-file".into(),
             effect: EffectVector { risk: 0.1, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(result.decision, GovernanceDecision::Permit);
@@ -877,6 +1101,7 @@ mod tests {
             action: "access-user-data".into(),
             effect: EffectVector { privacy: 0.8, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude = 0.8 > 0.7 threshold; blocking rules exist -> Deny
@@ -896,6 +1121,7 @@ mod tests {
             action: "modify-firewall".into(),
             effect: EffectVector { security: 0.9, risk: 0.5, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude = sqrt(0.81 + 0.25) ~ 1.03 > 0.7
@@ -911,6 +1137,7 @@ mod tests {
             action: "evaluate-candidate".into(),
             effect: EffectVector { fairness: 0.9, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(
@@ -928,6 +1155,7 @@ mod tests {
             action: "agent.spawn".into(),
             effect: EffectVector { risk: 0.8, novelty: 0.5, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude = sqrt(0.64 + 0.25) ~ 0.94 > 0.7
@@ -943,6 +1171,7 @@ mod tests {
             action: "agent.spawn".into(),
             effect: EffectVector { risk: 0.1, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(result.decision, GovernanceDecision::Permit);
@@ -957,6 +1186,7 @@ mod tests {
             action: "export-pii".into(),
             effect: EffectVector { privacy: 0.9, risk: 0.3, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude = sqrt(0.81 + 0.09) ~ 0.95 > 0.7
@@ -974,6 +1204,7 @@ mod tests {
             action: "high-risk-op".into(),
             effect: EffectVector { risk: 0.9, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert!(
@@ -1040,6 +1271,7 @@ mod tests {
             action: "write-code".into(),
             effect: EffectVector { risk: 0.5, novelty: 0.5, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude ~ 0.71 > 0.7, only warnings -> PermitWithWarning
@@ -1061,6 +1293,7 @@ mod tests {
             action: "novel-action".into(),
             effect: EffectVector { novelty: 0.9, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(result.decision, GovernanceDecision::Permit,
@@ -1076,6 +1309,7 @@ mod tests {
             action: "any-action".into(),
             effect: EffectVector { risk: 0.9, ..Default::default() },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         assert_eq!(
@@ -1120,6 +1354,7 @@ mod tests {
                 fairness: 0.0,
             },
             context: Default::default(),
+            node_id: None,
         };
         let result = engine.evaluate(&request);
         // magnitude = sqrt(4 * 0.16) = sqrt(0.64) = 0.8 > 0.7
@@ -1129,6 +1364,223 @@ mod tests {
             result.decision,
         );
         assert!(result.threshold_exceeded);
+    }
+
+    // ── Environment-scoped governance tests ─────────────────────
+
+    fn make_env(class: crate::environment::EnvironmentClass, risk_threshold: f64) -> crate::environment::Environment {
+        crate::environment::Environment {
+            id: format!("{class}"),
+            name: format!("{class}"),
+            class,
+            governance: crate::environment::GovernanceScope {
+                risk_threshold,
+                ..Default::default()
+            },
+            labels: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn dev_environment_allows_higher_risk() {
+        use crate::environment::EnvironmentClass;
+
+        // Use an open engine (threshold 1.0) so the environment scope
+        // is the controlling factor, not the engine's own threshold.
+        let engine = GovernanceEngine::open();
+
+        // Dev environment with risk_threshold 0.9 -- lenient.
+        let dev_env = make_env(EnvironmentClass::Development, 0.9);
+
+        // High-risk request: magnitude 0.8
+        let request = GovernanceRequest::new("agent-1", "deploy")
+            .with_effect(EffectVector { risk: 0.8, ..Default::default() });
+
+        let result = engine.evaluate_in_environment(&request, &dev_env);
+        // 0.8 < 0.9 (dev threshold) => should be permitted.
+        assert_eq!(
+            result.decision,
+            GovernanceDecision::Permit,
+            "dev should allow risk 0.8 with threshold 0.9, got {:?}",
+            result.decision,
+        );
+    }
+
+    #[test]
+    fn prod_environment_blocks_high_risk() {
+        use crate::environment::EnvironmentClass;
+
+        let mut engine = GovernanceEngine::new(1.0, false);
+        engine.add_rule(make_rule(
+            "sec-check",
+            RuleSeverity::Blocking,
+            GovernanceBranch::Judicial,
+        ));
+
+        // Prod environment with risk_threshold 0.6 -- halved to 0.3.
+        let prod_env = make_env(EnvironmentClass::Production, 0.6);
+
+        // Moderate request: magnitude 0.4
+        let request = GovernanceRequest::new("agent-1", "deploy")
+            .with_effect(EffectVector { risk: 0.4, ..Default::default() });
+
+        let result = engine.evaluate_in_environment(&request, &prod_env);
+        // 0.4 > 0.3 (prod adjusted = 0.6 * 0.5) => denied.
+        assert!(
+            matches!(result.decision, GovernanceDecision::Deny(_)),
+            "prod should deny risk 0.4 with adjusted threshold 0.3, got {:?}",
+            result.decision,
+        );
+    }
+
+    #[test]
+    fn staging_uses_normal_thresholds() {
+        use crate::environment::EnvironmentClass;
+
+        let mut engine = GovernanceEngine::new(1.0, false);
+        engine.add_rule(make_rule(
+            "sec-check",
+            RuleSeverity::Blocking,
+            GovernanceBranch::Judicial,
+        ));
+
+        // Staging environment with risk_threshold 0.6.
+        let staging_env = make_env(EnvironmentClass::Staging, 0.6);
+
+        // Moderate request: magnitude 0.5
+        let request = GovernanceRequest::new("agent-1", "test-deploy")
+            .with_effect(EffectVector { risk: 0.5, ..Default::default() });
+
+        let result = engine.evaluate_in_environment(&request, &staging_env);
+        // 0.5 < 0.6 => permitted.
+        assert_eq!(
+            result.decision,
+            GovernanceDecision::Permit,
+            "staging should allow risk 0.5 with threshold 0.6, got {:?}",
+            result.decision,
+        );
+
+        // Higher request: magnitude 0.7
+        let request2 = GovernanceRequest::new("agent-1", "test-deploy")
+            .with_effect(EffectVector { risk: 0.7, ..Default::default() });
+        let result2 = engine.evaluate_in_environment(&request2, &staging_env);
+        // 0.7 > 0.6 => denied.
+        assert!(
+            matches!(result2.decision, GovernanceDecision::Deny(_)),
+            "staging should deny risk 0.7 with threshold 0.6, got {:?}",
+            result2.decision,
+        );
+    }
+
+    #[test]
+    fn environment_governance_same_request_different_envs() {
+        use crate::environment::EnvironmentClass;
+
+        let engine = GovernanceEngine::open();
+
+        let dev = make_env(EnvironmentClass::Development, 0.9);
+        let prod = make_env(EnvironmentClass::Production, 0.6);
+
+        // magnitude = 0.5
+        let request = GovernanceRequest::new("agent-1", "write-file")
+            .with_effect(EffectVector { risk: 0.5, ..Default::default() });
+
+        let dev_result = engine.evaluate_in_environment(&request, &dev);
+        let prod_result = engine.evaluate_in_environment(&request, &prod);
+
+        // Dev: 0.5 < 0.9 => permit
+        assert_eq!(dev_result.decision, GovernanceDecision::Permit);
+        // Prod: 0.5 > 0.3 (0.6 * 0.5) => deny
+        assert!(matches!(prod_result.decision, GovernanceDecision::Deny(_)));
+    }
+
+    // ── Trajectory recorder tests ───────────────────────────────
+
+    #[test]
+    fn trajectory_records_and_retrieves() {
+        use chrono::Utc;
+        let mut recorder = TrajectoryRecorder::new(100);
+        recorder.record(TrajectoryRecord {
+            agent_id: "agent-1".into(),
+            action: "tool.execute".into(),
+            context: serde_json::json!({"tool": "read_file"}),
+            outcome: TrajectoryOutcome::Success { reward: 1.0 },
+            timestamp: Utc::now(),
+        });
+        assert_eq!(recorder.len(), 1);
+        assert!(!recorder.is_empty());
+        assert_eq!(recorder.agent_trajectory("agent-1").len(), 1);
+        assert_eq!(recorder.agent_trajectory("agent-2").len(), 0);
+    }
+
+    #[test]
+    fn trajectory_extracts_patterns() {
+        use chrono::Utc;
+        let mut recorder = TrajectoryRecorder::new(100);
+
+        for _ in 0..5 {
+            recorder.record(TrajectoryRecord {
+                agent_id: "a".into(),
+                action: "tool.execute".into(),
+                context: serde_json::json!({}),
+                outcome: TrajectoryOutcome::Success { reward: 1.0 },
+                timestamp: Utc::now(),
+            });
+        }
+        for _ in 0..3 {
+            recorder.record(TrajectoryRecord {
+                agent_id: "a".into(),
+                action: "tool.read".into(),
+                context: serde_json::json!({}),
+                outcome: TrajectoryOutcome::Success { reward: 0.5 },
+                timestamp: Utc::now(),
+            });
+        }
+        recorder.record(TrajectoryRecord {
+            agent_id: "a".into(),
+            action: "tool.fail".into(),
+            context: serde_json::json!({}),
+            outcome: TrajectoryOutcome::Failure {
+                reason: "err".into(),
+            },
+            timestamp: Utc::now(),
+        });
+
+        let patterns = recorder.extract_patterns();
+        assert_eq!(patterns[0].0, "tool.execute");
+        assert_eq!(patterns[0].1, 5);
+        assert_eq!(patterns[1].0, "tool.read");
+        assert_eq!(patterns[1].1, 3);
+        // Failures are not in patterns.
+        assert!(patterns.iter().all(|(a, _)| a != "tool.fail"));
+    }
+
+    #[test]
+    fn trajectory_max_records_eviction() {
+        use chrono::Utc;
+        let mut recorder = TrajectoryRecorder::new(3);
+        for i in 0..5 {
+            recorder.record(TrajectoryRecord {
+                agent_id: format!("agent-{i}"),
+                action: "act".into(),
+                context: serde_json::json!({}),
+                outcome: TrajectoryOutcome::Pending,
+                timestamp: Utc::now(),
+            });
+        }
+        assert_eq!(recorder.len(), 3);
+        // Oldest two (agent-0, agent-1) should be evicted.
+        assert!(recorder.agent_trajectory("agent-0").is_empty());
+        assert!(recorder.agent_trajectory("agent-1").is_empty());
+        assert_eq!(recorder.agent_trajectory("agent-2").len(), 1);
+        assert_eq!(recorder.agent_trajectory("agent-4").len(), 1);
+    }
+
+    #[test]
+    fn trajectory_empty_patterns() {
+        let recorder = TrajectoryRecorder::new(10);
+        assert!(recorder.is_empty());
+        assert!(recorder.extract_patterns().is_empty());
     }
 
     #[cfg(feature = "exochain")]

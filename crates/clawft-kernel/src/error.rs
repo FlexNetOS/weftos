@@ -110,6 +110,10 @@ pub enum KernelError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// Mesh networking error.
+    #[error("mesh error: {0}")]
+    Mesh(String),
+
     /// Wraps a generic error from downstream crates.
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),

@@ -37,6 +37,16 @@ use crate::chain::ChainManager;
 /// Default inbox channel capacity per agent.
 const DEFAULT_INBOX_CAPACITY: usize = 1024;
 
+/// Maximum serialized message size (16 MiB) -- prevents DoS via oversized payloads.
+///
+/// This mirrors [`crate::mesh::MAX_MESSAGE_SIZE`]. Enforcement happens at the
+/// mesh boundary in `mesh_framing.rs` where raw bytes are received from remote
+/// nodes. Within a single kernel, messages travel as typed `KernelMessage`
+/// structs over `mpsc` channels, so the size limit is not checked on the
+/// in-process hot path.
+#[allow(dead_code)]
+const MAX_A2A_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+
 /// A pending request awaiting a correlated response.
 struct PendingRequest {
     /// Sender to deliver the response on.
@@ -269,6 +279,12 @@ impl A2ARouter {
             MessageTarget::Kernel => {
                 debug!(from, "kernel message routing not yet implemented");
                 Ok(())
+            }
+            MessageTarget::RemoteNode { node_id, .. } => {
+                debug!(from, node_id, "remote node routing not yet implemented (K6)");
+                Err(KernelError::Mesh(format!(
+                    "remote routing to node '{node_id}' not yet implemented"
+                )))
             }
         }
     }

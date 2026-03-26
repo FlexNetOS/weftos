@@ -11,11 +11,12 @@
 //! `cluster` feature flag and a distributed networking layer.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Unique node identifier (UUID or DID string).
 pub type NodeId = String;
@@ -140,6 +141,18 @@ pub struct ClusterConfig {
     /// Maximum cluster size (0 = unlimited).
     #[serde(default)]
     pub max_nodes: u32,
+
+    /// Address to bind the mesh listener (e.g., "0.0.0.0:9470").
+    #[serde(default)]
+    pub bind_address: Option<String>,
+
+    /// Seed peers for bootstrap discovery.
+    #[serde(default)]
+    pub seed_peers: Vec<String>,
+
+    /// Path to Ed25519 identity key file.
+    #[serde(default)]
+    pub identity_key_path: Option<std::path::PathBuf>,
 }
 
 fn default_node_name() -> String {
@@ -172,6 +185,9 @@ impl Default for ClusterConfig {
             suspect_threshold: default_suspect_threshold(),
             unreachable_threshold: default_unreachable_threshold(),
             max_nodes: 0,
+            bind_address: None,
+            seed_peers: Vec::new(),
+            identity_key_path: None,
         }
     }
 }
@@ -201,6 +217,59 @@ pub struct NodeEccCapability {
     pub calibrated_at: u64,
 }
 
+// ── Node identity (K6 mesh networking) ─────────────────────────────
+
+/// Node identity derived from Ed25519 keypair.
+///
+/// The `node_id` is derived as `hex(SHA-256(pubkey)[0..16])`,
+/// providing a stable, compact identifier tied to the cryptographic key.
+#[cfg(any(feature = "mesh", feature = "exochain"))]
+pub struct NodeIdentity {
+    /// Ed25519 signing key (private).
+    keypair: ed25519_dalek::SigningKey,
+    /// Derived node identifier.
+    node_id: String,
+}
+
+#[cfg(any(feature = "mesh", feature = "exochain"))]
+impl NodeIdentity {
+    /// Generate a new random identity.
+    pub fn generate() -> Self {
+        use sha2::Digest;
+
+        let mut csprng = rand::thread_rng();
+        let keypair = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let pubkey_bytes = keypair.verifying_key().to_bytes();
+
+        let hash = sha2::Sha256::digest(pubkey_bytes);
+        let node_id = hash[..16]
+            .iter()
+            .fold(String::with_capacity(32), |mut s, b| {
+                use std::fmt::Write;
+                let _ = write!(s, "{b:02x}");
+                s
+            });
+
+        Self { keypair, node_id }
+    }
+
+    /// Get this node's identifier.
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    /// Get the public verification key.
+    pub fn public_key(&self) -> ed25519_dalek::VerifyingKey {
+        self.keypair.verifying_key()
+    }
+
+    /// Sign arbitrary data with this node's private key.
+    pub fn sign(&self, data: &[u8]) -> ed25519_dalek::Signature {
+        use ed25519_dalek::Signer;
+        self.keypair.sign(data)
+    }
+}
+
 /// Cluster membership errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ClusterError {
@@ -225,6 +294,14 @@ pub enum ClusterError {
         max: u32,
     },
 
+    /// Mesh networking error.
+    #[error("mesh error: {0}")]
+    Mesh(String),
+
+    /// Authentication failed during cluster join.
+    #[error("authentication failed: {0}")]
+    AuthFailed(String),
+
     /// Invalid state transition.
     #[error("invalid node state transition: {from} -> {to}")]
     InvalidTransition {
@@ -233,6 +310,10 @@ pub enum ClusterError {
         /// Requested state.
         to: String,
     },
+
+    /// Peer additions are too frequent (rate limited).
+    #[error("rate limited: peer additions too frequent")]
+    RateLimited,
 }
 
 /// Cluster membership tracker.
@@ -240,9 +321,29 @@ pub enum ClusterError {
 /// Tracks which nodes are part of the cluster, their health state,
 /// and capabilities. Actual peer discovery and heartbeat monitoring
 /// require a networking layer not included here.
+/// Known valid capabilities for cluster nodes.
+const KNOWN_CAPABILITIES: &[&str] = &[
+    "ipc", "chain", "tree", "governance", "ecc", "wasm", "containers", "apps",
+    "mesh", "discovery", "heartbeat", "compute",
+];
+
+/// Validate peer capabilities against the known set.
+/// Returns unknown capabilities (if any).
+fn validate_capabilities(capabilities: &[String]) -> Vec<String> {
+    capabilities
+        .iter()
+        .filter(|c| !KNOWN_CAPABILITIES.contains(&c.as_str()))
+        .cloned()
+        .collect()
+}
+
 pub struct ClusterMembership {
     config: ClusterConfig,
     peers: DashMap<NodeId, PeerNode>,
+    /// Timestamp of last peer addition (rate limiting).
+    last_peer_add: std::sync::Mutex<Option<Instant>>,
+    /// Minimum interval between peer additions.
+    min_peer_add_interval: std::time::Duration,
 }
 
 impl ClusterMembership {
@@ -251,7 +352,15 @@ impl ClusterMembership {
         Self {
             config,
             peers: DashMap::new(),
+            last_peer_add: std::sync::Mutex::new(None),
+            min_peer_add_interval: std::time::Duration::from_millis(100),
         }
+    }
+
+    /// Set the minimum interval between peer additions (builder style).
+    pub fn with_min_peer_interval(mut self, interval: std::time::Duration) -> Self {
+        self.min_peer_add_interval = interval;
+        self
     }
 
     /// Get the cluster configuration.
@@ -265,7 +374,21 @@ impl ClusterMembership {
     }
 
     /// Register a peer node.
+    ///
+    /// Rate-limited to at most one addition per `min_peer_add_interval`
+    /// (default 100 ms) to prevent join-flood attacks.
     pub fn add_peer(&self, peer: PeerNode) -> Result<(), ClusterError> {
+        // Rate-limit peer additions.
+        {
+            let mut last = self.last_peer_add.lock().unwrap();
+            if let Some(ts) = *last {
+                if ts.elapsed() < self.min_peer_add_interval {
+                    return Err(ClusterError::RateLimited);
+                }
+            }
+            *last = Some(Instant::now());
+        }
+
         if self.peers.contains_key(&peer.id) {
             return Err(ClusterError::NodeAlreadyExists { node_id: peer.id });
         }
@@ -274,6 +397,16 @@ impl ClusterMembership {
             return Err(ClusterError::ClusterFull {
                 max: self.config.max_nodes,
             });
+        }
+
+        // Validate capabilities -- warn on unknown but still allow (forward compat).
+        let unknown = validate_capabilities(&peer.capabilities);
+        if !unknown.is_empty() {
+            warn!(
+                node_id = %peer.id,
+                unknown_capabilities = ?unknown,
+                "peer advertises unknown capabilities"
+            );
         }
 
         debug!(node_id = %peer.id, name = %peer.name, "adding peer to cluster");
@@ -614,6 +747,7 @@ mod tests {
             suspect_threshold: 5,
             unreachable_threshold: 15,
             max_nodes: 100,
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: ClusterConfig = serde_json::from_str(&json).unwrap();
@@ -638,9 +772,15 @@ mod tests {
         assert_eq!(NodeState::Unreachable.to_string(), "unreachable");
     }
 
+    /// Helper: create a ClusterMembership with rate limiting disabled for tests.
+    fn make_cluster(config: ClusterConfig) -> ClusterMembership {
+        ClusterMembership::new(config)
+            .with_min_peer_interval(std::time::Duration::ZERO)
+    }
+
     #[test]
     fn add_and_list_peers() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.add_peer(make_peer("node-2", "beta")).unwrap();
 
@@ -650,7 +790,7 @@ mod tests {
 
     #[test]
     fn add_duplicate_fails() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         assert!(matches!(
             cluster.add_peer(make_peer("node-1", "alpha-dup")),
@@ -664,7 +804,7 @@ mod tests {
             max_nodes: 1,
             ..Default::default()
         };
-        let cluster = ClusterMembership::new(config);
+        let cluster = make_cluster(config);
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         assert!(matches!(
             cluster.add_peer(make_peer("node-2", "beta")),
@@ -674,7 +814,7 @@ mod tests {
 
     #[test]
     fn remove_peer() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         let removed = cluster.remove_peer("node-1").unwrap();
         assert_eq!(removed.name, "alpha");
@@ -683,7 +823,7 @@ mod tests {
 
     #[test]
     fn remove_nonexistent_fails() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         assert!(matches!(
             cluster.remove_peer("nope"),
             Err(ClusterError::NodeNotFound { .. })
@@ -692,7 +832,7 @@ mod tests {
 
     #[test]
     fn update_state() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.update_state("node-1", NodeState::Suspect).unwrap();
         let peer = cluster.get_peer("node-1").unwrap();
@@ -701,7 +841,7 @@ mod tests {
 
     #[test]
     fn heartbeat_clears_suspect() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.update_state("node-1", NodeState::Suspect).unwrap();
         cluster.heartbeat("node-1").unwrap();
@@ -711,7 +851,7 @@ mod tests {
 
     #[test]
     fn count_by_state() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.add_peer(make_peer("node-2", "beta")).unwrap();
         cluster.update_state("node-2", NodeState::Suspect).unwrap();
@@ -721,7 +861,7 @@ mod tests {
 
     #[test]
     fn active_peers() {
-        let cluster = ClusterMembership::new(ClusterConfig::default());
+        let cluster = make_cluster(ClusterConfig::default());
         cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
         cluster.add_peer(make_peer("node-2", "beta")).unwrap();
         cluster.update_state("node-2", NodeState::Leaving).unwrap();
@@ -748,5 +888,100 @@ mod tests {
 
         let err = ClusterError::ClusterFull { max: 10 };
         assert!(err.to_string().contains("10"));
+    }
+
+    #[test]
+    fn mesh_and_auth_error_display() {
+        let err = ClusterError::Mesh("connection refused".into());
+        assert!(err.to_string().contains("connection refused"));
+
+        let err = ClusterError::AuthFailed("bad signature".into());
+        assert!(err.to_string().contains("bad signature"));
+    }
+
+    #[test]
+    fn default_config_new_fields() {
+        let config = ClusterConfig::default();
+        assert!(config.bind_address.is_none());
+        assert!(config.seed_peers.is_empty());
+        assert!(config.identity_key_path.is_none());
+    }
+
+    #[test]
+    fn rate_limited_peer_additions() {
+        // Use the default 100ms rate limit (do NOT use make_cluster here).
+        let cluster = ClusterMembership::new(ClusterConfig::default());
+        cluster.add_peer(make_peer("node-1", "alpha")).unwrap();
+
+        // Second add immediately should be rate limited.
+        let result = cluster.add_peer(make_peer("node-2", "beta"));
+        assert!(
+            matches!(result, Err(ClusterError::RateLimited)),
+            "expected RateLimited, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn rate_limited_error_display() {
+        let err = ClusterError::RateLimited;
+        assert!(err.to_string().contains("rate limited"));
+    }
+
+    #[test]
+    fn validate_known_capabilities() {
+        let known = vec!["ipc".into(), "mesh".into(), "chain".into()];
+        let unknown = validate_capabilities(&known);
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn validate_unknown_capabilities() {
+        let caps = vec!["ipc".into(), "teleport".into(), "quantum".into()];
+        let unknown = validate_capabilities(&caps);
+        assert_eq!(unknown, vec!["teleport", "quantum"]);
+    }
+
+    #[test]
+    fn add_peer_with_unknown_capabilities_succeeds() {
+        let cluster = make_cluster(ClusterConfig::default());
+        let mut peer = make_peer("node-1", "alpha");
+        peer.capabilities = vec!["ipc".into(), "teleport".into()];
+        // Should succeed (warning logged, but not rejected).
+        cluster.add_peer(peer).unwrap();
+        assert_eq!(cluster.len(), 1);
+    }
+}
+
+#[cfg(test)]
+#[cfg(any(feature = "mesh", feature = "exochain"))]
+mod mesh_tests {
+    use super::*;
+
+    #[test]
+    fn node_identity_unique_ids() {
+        let id1 = NodeIdentity::generate();
+        let id2 = NodeIdentity::generate();
+        assert_ne!(id1.node_id(), id2.node_id());
+    }
+
+    #[test]
+    fn node_identity_sign_verify() {
+        use ed25519_dalek::Verifier;
+
+        let identity = NodeIdentity::generate();
+        let data = b"hello mesh";
+        let sig = identity.sign(data);
+        assert!(identity.public_key().verify(data, &sig).is_ok());
+    }
+
+    #[test]
+    fn node_identity_id_is_32_hex_chars() {
+        let identity = NodeIdentity::generate();
+        let nid = identity.node_id();
+        assert_eq!(nid.len(), 32, "node_id should be 32 hex chars (16 bytes)");
+        assert!(
+            nid.chars().all(|c| c.is_ascii_hexdigit()),
+            "node_id must be hex: {nid}"
+        );
     }
 }

@@ -125,6 +125,27 @@ impl Default for AgentCapabilities {
 }
 
 impl AgentCapabilities {
+    /// Create capabilities for a browser-platform agent.
+    ///
+    /// Browser agents default to restricted IPC scope (empty allow-list),
+    /// no spawning, no network access, and no shell — maximising the
+    /// sandbox surface for untrusted in-browser code.
+    pub fn browser_default() -> Self {
+        Self {
+            can_spawn: false,
+            can_ipc: true,
+            can_exec_tools: true,
+            can_network: false,
+            ipc_scope: IpcScope::Restricted(vec![]),
+            resource_limits: ResourceLimits {
+                max_memory_bytes: 64 * 1024 * 1024, // 64 MiB
+                max_cpu_time_ms: 60_000,             // 1 minute
+                max_tool_calls: 200,
+                max_messages: 500,
+            },
+        }
+    }
+
     /// Check whether the agent is allowed to send a message to the given PID.
     pub fn can_message(&self, target_pid: u64) -> bool {
         if !self.can_ipc {
@@ -470,6 +491,66 @@ impl CapabilityChecker {
     /// Get a reference to the underlying process table.
     pub fn process_table(&self) -> &Arc<ProcessTable> {
         &self.process_table
+    }
+}
+
+// ── Browser capability elevation via governance gate ────────────────
+
+/// Request to elevate a browser agent's capabilities.
+///
+/// Browser agents start with a restricted sandbox. Elevation requires
+/// governance gate approval before additional permissions are granted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityElevationRequest {
+    /// PID of the agent requesting elevation.
+    pub pid: u64,
+    /// Current capabilities.
+    pub current: AgentCapabilities,
+    /// Requested elevated capabilities.
+    pub requested: AgentCapabilities,
+    /// Justification for elevation.
+    pub reason: String,
+}
+
+/// Result of a capability elevation request.
+#[derive(Debug, Clone)]
+pub enum ElevationResult {
+    /// Elevation granted.
+    Granted {
+        new_capabilities: AgentCapabilities,
+    },
+    /// Elevation denied by governance gate.
+    Denied {
+        reason: String,
+    },
+}
+
+impl AgentCapabilities {
+    /// Build an elevation request from current to requested capabilities.
+    /// The `pid` field is set to 0 and must be filled by the caller.
+    pub fn request_elevation(
+        current: &AgentCapabilities,
+        requested: &AgentCapabilities,
+        platform: &str,
+    ) -> CapabilityElevationRequest {
+        CapabilityElevationRequest {
+            pid: 0, // filled by caller
+            current: current.clone(),
+            requested: requested.clone(),
+            reason: format!("capability elevation for {platform} agent"),
+        }
+    }
+
+    /// Check if elevation is needed (browser agents start restricted).
+    ///
+    /// Returns `true` if the platform is `"browser"` and the requested
+    /// capabilities exceed the browser sandbox defaults (spawn, network,
+    /// or non-restricted IPC scope).
+    pub fn needs_elevation(platform: &str, requested: &AgentCapabilities) -> bool {
+        platform == "browser"
+            && (requested.can_spawn
+                || requested.can_network
+                || !matches!(requested.ipc_scope, IpcScope::Restricted(_)))
     }
 }
 
@@ -963,6 +1044,30 @@ mod tests {
     }
 
     #[test]
+    fn browser_default_uses_restricted_ipc() {
+        let caps = AgentCapabilities::browser_default();
+        assert!(
+            matches!(caps.ipc_scope, IpcScope::Restricted(ref pids) if pids.is_empty()),
+            "browser agents must default to IpcScope::Restricted([])"
+        );
+        assert!(!caps.can_spawn, "browser agents must not spawn");
+        assert!(!caps.can_network, "browser agents must not access network");
+        assert!(caps.can_ipc, "browser agents need IPC for kernel comms");
+        assert!(caps.can_exec_tools, "browser agents need tool execution");
+        // Tighter resource limits than default
+        assert!(caps.resource_limits.max_memory_bytes < ResourceLimits::default().max_memory_bytes);
+        assert!(caps.resource_limits.max_cpu_time_ms < ResourceLimits::default().max_cpu_time_ms);
+    }
+
+    #[test]
+    fn browser_default_blocks_direct_messages() {
+        let caps = AgentCapabilities::browser_default();
+        // Empty restricted list means no PIDs are reachable
+        assert!(!caps.can_message(1));
+        assert!(!caps.can_message(999));
+    }
+
+    #[test]
     fn is_shell_tool_recognizes_variants() {
         assert!(is_shell_tool("shell_exec"));
         assert!(is_shell_tool("exec_shell"));
@@ -971,5 +1076,68 @@ mod tests {
         assert!(is_shell_tool("run_command"));
         assert!(!is_shell_tool("read_file"));
         assert!(!is_shell_tool("web_search"));
+    }
+
+    // ── Browser elevation tests ────────────────────────────────────
+
+    #[test]
+    fn browser_elevation_needed_for_spawn() {
+        let requested = AgentCapabilities {
+            can_spawn: true,
+            ..AgentCapabilities::browser_default()
+        };
+        assert!(AgentCapabilities::needs_elevation("browser", &requested));
+    }
+
+    #[test]
+    fn browser_elevation_needed_for_network() {
+        let requested = AgentCapabilities {
+            can_network: true,
+            ..AgentCapabilities::browser_default()
+        };
+        assert!(AgentCapabilities::needs_elevation("browser", &requested));
+    }
+
+    #[test]
+    fn browser_elevation_not_needed_for_restricted() {
+        // Browser defaults are already restricted -- no elevation needed.
+        let requested = AgentCapabilities::browser_default();
+        assert!(!AgentCapabilities::needs_elevation("browser", &requested));
+    }
+
+    #[test]
+    fn non_browser_elevation_not_needed() {
+        // Even with elevated caps, non-browser platform never needs elevation.
+        let requested = AgentCapabilities {
+            can_spawn: true,
+            can_network: true,
+            ipc_scope: IpcScope::All,
+            ..Default::default()
+        };
+        assert!(!AgentCapabilities::needs_elevation("native", &requested));
+        assert!(!AgentCapabilities::needs_elevation("wasi", &requested));
+    }
+
+    #[test]
+    fn browser_elevation_needed_for_ipc_all() {
+        let requested = AgentCapabilities {
+            ipc_scope: IpcScope::All,
+            ..AgentCapabilities::browser_default()
+        };
+        assert!(AgentCapabilities::needs_elevation("browser", &requested));
+    }
+
+    #[test]
+    fn request_elevation_builds_request() {
+        let current = AgentCapabilities::browser_default();
+        let requested = AgentCapabilities {
+            can_network: true,
+            ..AgentCapabilities::browser_default()
+        };
+        let req = AgentCapabilities::request_elevation(&current, &requested, "browser");
+        assert_eq!(req.pid, 0);
+        assert!(!req.current.can_network);
+        assert!(req.requested.can_network);
+        assert!(req.reason.contains("browser"));
     }
 }

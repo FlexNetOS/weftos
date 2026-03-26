@@ -391,6 +391,7 @@ impl GateBackend for GovernanceGate {
             action: action.to_owned(),
             effect,
             context: ctx_map,
+            node_id: None,
         };
 
         let result = self.engine.evaluate(&request);

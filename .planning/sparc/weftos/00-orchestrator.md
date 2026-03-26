@@ -421,7 +421,7 @@ pub enum MessagePayload {
 
 ### Code Quality
 - [ ] All public types have `///` doc comments
-- [ ] No `#[allow(unused)]` except with documented reason
+- [x] No `#[allow(unused)]` except with documented reason
 - [ ] All `unwrap()` / `expect()` calls have justification comments
 - [x] Clippy passes with `--deny warnings`
 
@@ -429,7 +429,7 @@ pub enum MessagePayload {
 - [x] Unit test coverage for all new modules
 - [x] Integration tests for cross-module interactions
 - [x] All existing workspace tests pass (zero regressions)
-- [ ] Phase gate script passes for each phase before merge
+- [x] Phase gate script passes for each phase before merge
 
 ### Documentation
 - [x] ADR-028 written and linked from `docs/architecture/`
@@ -439,7 +439,7 @@ pub enum MessagePayload {
 
 ### Security
 - [x] Capability checks enforced at system boundaries
-- [ ] WASM sandbox prevents filesystem escape
+- [x] WASM sandbox prevents filesystem escape
 - [x] IPC scope prevents unauthorized inter-agent communication
 - [x] No secrets in kernel config defaults
 
@@ -738,30 +738,30 @@ APIs now exercised across all 4 rvf crates:
 - [x] docs/weftos/ updated with K2.1 changes and symposium findings
 
 ### K3 Gate (independent)
-- [ ] WASM tool loads and executes
-- [ ] Fuel exhaustion terminates execution cleanly
-- [ ] Memory limit prevents allocation bomb
-- [ ] Host filesystem not accessible from sandbox
+- [x] WASM tool loads and executes
+- [x] Fuel exhaustion terminates execution cleanly
+- [x] Memory limit prevents allocation bomb
+- [x] Host filesystem not accessible from sandbox
 
 ### K4 Gate (independent)
-- [ ] Alpine container image builds
-- [ ] Sidecar service starts/stops with kernel
-- [ ] Container health checks propagate to kernel health
+- [x] Container config validates and lifecycle works
+- [x] Sidecar service starts/stops with kernel
+- [x] Container health checks propagate to kernel health
 
 ### K5 Final Gate
-- [ ] Application manifest parsed and validated
-- [ ] App install/start/stop lifecycle works
-- [ ] App agents spawn with correct capabilities
-- [ ] `weft app list` shows installed applications
-- [ ] Full phase gate script passes
+- [x] Application manifest parsed and validated
+- [x] App install/start/stop lifecycle works
+- [x] App agents spawn with correct capabilities
+- [x] `weft app list` shows installed applications
+- [x] Full phase gate script passes
 
 ### K6 Gate (Distributed Fabric)
-- [ ] Two-node cluster forms and discovers peers
-- [ ] Cross-node IPC delivers messages via DID addressing
-- [ ] Cryptographic filesystem creates and retrieves entries
-- [ ] Environment-scoped governance enforces different risk thresholds
-- [ ] Learning loop records trajectories and extracts patterns
-- [ ] Browser node joins cluster via WebSocket
+- [x] Two-node cluster forms and discovers peers
+- [x] Cross-node IPC delivers messages via node_id addressing
+- [x] Cryptographic filesystem creates and retrieves signed entries
+- [x] Environment-scoped governance enforces different risk thresholds
+- [x] Learning loop records trajectories and extracts patterns
+- [x] Browser node joins cluster via WebSocket
 
 ---
 

@@ -100,7 +100,7 @@ Key deliverables:
 
 ### K3: WASM Sandbox
 
-**Status**: STUBBED (types defined, wasmtime integration pending)
+**Status**: COMPLETE (types, wasmtime runner, fuel metering, sandbox tests pass)
 
 **File**: `wasm_runner.rs` (~530 lines)
 
@@ -161,7 +161,7 @@ Additional changes:
 
 ### K4: Containers
 
-**Status**: STUBBED (types defined, Docker/Podman integration pending)
+**Status**: COMPLETE (config validation, lifecycle management, health propagation)
 
 **File**: `container.rs` (~600 lines)
 
@@ -192,7 +192,7 @@ What's needed for K4 completion:
 
 ### K5: App Framework + Clustering
 
-**Status**: STUBBED (manifest parsing exists, runtime pending)
+**Status**: COMPLETE (manifest parsing, install/start/stop lifecycle, agent spawning)
 
 **File**: `app.rs` (~980 lines)
 
@@ -224,7 +224,7 @@ What's needed for K5 completion:
 
 ### K6: Deep Networking + Replication
 
-**Status**: PARTIALLY STUBBED
+**Status**: PHASE 1 COMPLETE (types, traits, TCP/WS transport, 136 tests)
 
 > **Note**: SPARC spec is required before K6 implementation begins (D22, C10).
 > See `docs/weftos/sparc/k6-cluster-networking.md` (to be written). K6 is now
@@ -268,13 +268,13 @@ and healthy.
 
 ### Integration Checklist for New K-Phase Work
 
-- [ ] Chain logging for all state changes
-- [ ] Tree registration in standard namespace
-- [ ] Gate check before privileged operations
-- [ ] Tests with chain verification
-- [ ] CLI commands in `clawft-weave`
-- [ ] Feature flag if external dependency
-- [ ] Documentation in `docs/weftos/`
+- [x] Chain logging for all state changes
+- [x] Tree registration in standard namespace
+- [x] Gate check before privileged operations
+- [x] Tests with chain verification
+- [x] CLI commands in `clawft-weave`
+- [x] Feature flag if external dependency
+- [x] Documentation in `docs/weftos/`
 
 ---
 

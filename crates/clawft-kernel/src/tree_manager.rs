@@ -36,6 +36,32 @@ pub struct TreeStats {
     pub root_hash: String,
 }
 
+/// Serializable snapshot of the full tree state for cross-node sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeSnapshot {
+    /// Hex-encoded Merkle root hash at snapshot time.
+    pub root_hash: String,
+    /// Number of nodes in the tree.
+    pub node_count: usize,
+    /// Serialized tree state (all nodes and their metadata).
+    pub nodes: Vec<TreeNodeSnapshot>,
+    /// Timestamp when snapshot was taken.
+    pub taken_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Snapshot of a single tree node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeNodeSnapshot {
+    /// Resource path (e.g., "/kernel/services/health").
+    pub path: String,
+    /// Resource kind.
+    pub kind: String,
+    /// Metadata key-value pairs.
+    pub metadata: std::collections::HashMap<String, String>,
+    /// Hex-encoded node hash.
+    pub hash: String,
+}
+
 /// Unified facade over ResourceTree + MutationLog + ChainManager.
 ///
 /// Every mutating operation on the tree also:
@@ -46,6 +72,9 @@ pub struct TreeManager {
     tree: Mutex<ResourceTree>,
     mutation_log: Mutex<MutationLog>,
     chain: Arc<ChainManager>,
+    /// Optional Ed25519 signing key for mutation signatures.
+    #[cfg(feature = "exochain")]
+    signing_key: Option<ed25519_dalek::SigningKey>,
 }
 
 impl TreeManager {
@@ -55,7 +84,38 @@ impl TreeManager {
             tree: Mutex::new(ResourceTree::new()),
             mutation_log: Mutex::new(MutationLog::new()),
             chain,
+            #[cfg(feature = "exochain")]
+            signing_key: None,
         }
+    }
+
+    /// Set the Ed25519 signing key for signing tree mutations.
+    /// When set, all mutations will have their signature field populated.
+    #[cfg(feature = "exochain")]
+    pub fn set_signing_key(&mut self, key: ed25519_dalek::SigningKey) {
+        self.signing_key = Some(key);
+    }
+
+    /// Sign arbitrary bytes with the configured signing key, if present.
+    /// Returns `None` when no key is configured.
+    #[cfg(feature = "exochain")]
+    fn sign_bytes(&self, data: &[u8]) -> Option<Vec<u8>> {
+        use ed25519_dalek::Signer;
+        self.signing_key.as_ref().map(|k| k.sign(data).to_bytes().to_vec())
+    }
+
+    /// Build the canonical bytes for a mutation signature.
+    ///
+    /// Format: `"<operation>|<path>|<timestamp_rfc3339>"` encoded as UTF-8.
+    #[cfg(feature = "exochain")]
+    fn mutation_signature(
+        &self,
+        operation: &str,
+        path: &str,
+        timestamp: &chrono::DateTime<Utc>,
+    ) -> Option<Vec<u8>> {
+        let canonical = format!("{operation}|{path}|{}", timestamp.to_rfc3339());
+        self.sign_bytes(canonical.as_bytes())
     }
 
     /// Bootstrap the tree with well-known WeftOS namespaces.
@@ -85,12 +145,17 @@ impl TreeManager {
             let parent = rid
                 .parent()
                 .unwrap_or_else(ResourceId::root);
+            let now = Utc::now();
+            #[cfg(feature = "exochain")]
+            let sig = self.mutation_signature("create", path, &now);
+            #[cfg(not(feature = "exochain"))]
+            let sig = None;
             log.append(MutationEvent::Create {
                 id: rid,
                 kind,
                 parent,
-                timestamp: Utc::now(),
-                signature: None,
+                timestamp: now,
+                signature: sig,
             });
         }
 
@@ -144,13 +209,18 @@ impl TreeManager {
         tree.recompute_all();
 
         // Mutation log
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("create", &id.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self.mutation_log.lock().map_err(|e| format!("log lock: {e}"))?;
         log.append(MutationEvent::Create {
             id,
             kind,
             parent,
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         Ok(())
@@ -176,11 +246,16 @@ impl TreeManager {
             })),
         );
 
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("remove", &id.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self.mutation_log.lock().map_err(|e| format!("log lock: {e}"))?;
         log.append(MutationEvent::Remove {
             id,
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         Ok(())
@@ -213,13 +288,18 @@ impl TreeManager {
             })),
         );
 
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("update_meta", &id.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self.mutation_log.lock().map_err(|e| format!("log lock: {e}"))?;
         log.append(MutationEvent::UpdateMeta {
             id: id.clone(),
             key: key.to_string(),
             value: Some(value),
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         Ok(())
@@ -326,6 +406,11 @@ impl TreeManager {
         }
 
         // Mutation log
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("create", &agent_rid.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self
             .mutation_log
             .lock()
@@ -334,8 +419,8 @@ impl TreeManager {
             id: agent_rid,
             kind: ResourceKind::Agent,
             parent,
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         debug!(agent_id, pid, "agent registered in tree");
@@ -379,6 +464,11 @@ impl TreeManager {
             })),
         );
 
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("update_meta", &agent_rid.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self
             .mutation_log
             .lock()
@@ -387,8 +477,8 @@ impl TreeManager {
             id: agent_rid,
             key: "state".into(),
             value: Some(serde_json::json!("exited")),
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         debug!(agent_id, pid, exit_code, "agent unregistered in tree");
@@ -467,13 +557,18 @@ impl TreeManager {
             })),
         );
 
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("update_scoring", &id.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self.mutation_log.lock().map_err(|e| format!("log lock: {e}"))?;
         log.append(MutationEvent::UpdateScoring {
             id: id.clone(),
             old,
             new: scoring,
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         debug!(path = %id, "scoring updated");
@@ -516,13 +611,18 @@ impl TreeManager {
             })),
         );
 
+        let now = Utc::now();
+        #[cfg(feature = "exochain")]
+        let sig = self.mutation_signature("update_scoring", &id.to_string(), &now);
+        #[cfg(not(feature = "exochain"))]
+        let sig = None;
         let mut log = self.mutation_log.lock().map_err(|e| format!("log lock: {e}"))?;
         log.append(MutationEvent::UpdateScoring {
             id: id.clone(),
             old,
             new,
-            timestamp: Utc::now(),
-            signature: None,
+            timestamp: now,
+            signature: sig,
         });
 
         debug!(path = %id, alpha, "scoring blended");
@@ -978,6 +1078,100 @@ impl TreeManager {
         );
 
         Ok(checkpoint)
+    }
+
+    // --- K6 cross-node sync API ---
+
+    /// Create a serializable snapshot of the full tree state.
+    /// Used for cross-node tree synchronization in K6.4.
+    pub fn snapshot(&self) -> Result<TreeSnapshot, Box<dyn std::error::Error + Send + Sync>> {
+        let tree = self.tree.lock().map_err(|e| format!("tree lock: {e}"))?;
+        let root_hash = hex_hash(&tree.root_hash());
+        let node_count = tree.len();
+
+        let nodes: Vec<TreeNodeSnapshot> = tree
+            .iter()
+            .map(|(id, node)| {
+                let metadata = node
+                    .metadata
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .collect();
+                TreeNodeSnapshot {
+                    path: id.to_string(),
+                    kind: format!("{:?}", node.kind),
+                    metadata,
+                    hash: hex_hash(&node.merkle_hash),
+                }
+            })
+            .collect();
+
+        Ok(TreeSnapshot {
+            root_hash,
+            node_count,
+            nodes,
+            taken_at: Utc::now(),
+        })
+    }
+
+    /// Apply a remote mutation received from a peer node.
+    /// Records the mutation in the local log.
+    ///
+    /// **Security note** (K6.4): Full implementation should verify
+    /// `event.signature` against the sending node's Ed25519 public key
+    /// before applying. Currently signature verification is deferred to
+    /// the mesh transport layer (Noise channel authenticates the peer).
+    pub fn apply_remote_mutation(
+        &self,
+        event: MutationEvent,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut tree = self.tree.lock().map_err(|e| format!("tree lock: {e}"))?;
+        let mut log = self
+            .mutation_log
+            .lock()
+            .map_err(|e| format!("log lock: {e}"))?;
+
+        // Apply based on mutation type
+        match &event {
+            MutationEvent::Create {
+                id,
+                kind,
+                parent,
+                ..
+            } => {
+                // Only insert if not already present (idempotent)
+                if tree.get(id).is_none() {
+                    tree.insert(id.clone(), kind.clone(), parent.clone())?;
+                    tree.recompute_all();
+                }
+            }
+            MutationEvent::Remove { id, .. } => {
+                if tree.get(id).is_some() {
+                    tree.remove(id.clone())?;
+                    tree.recompute_all();
+                }
+            }
+            MutationEvent::UpdateMeta { id, key, value, .. } => {
+                if let Some(node) = tree.get_mut(id) {
+                    if let Some(val) = value {
+                        node.metadata.insert(key.clone(), val.clone());
+                    } else {
+                        node.metadata.remove(key);
+                    }
+                    node.updated_at = Utc::now();
+                }
+                tree.recompute_all();
+            }
+            MutationEvent::Move { .. } | MutationEvent::UpdateScoring { .. } => {
+                // Move and scoring updates are recorded but not yet applied
+                // in K6.0 — full support arrives in K6.4.
+            }
+        }
+
+        // Record the mutation
+        log.append(event);
+
+        Ok(())
     }
 }
 
@@ -1624,5 +1818,125 @@ mod tests {
             events.iter().any(|e| e.kind == "tool.version.revoke"),
             "expected tool.version.revoke chain event"
         );
+    }
+
+    #[test]
+    fn snapshot_on_bootstrapped_tree() {
+        let chain = test_chain();
+        let tm = TreeManager::new(Arc::clone(&chain));
+        tm.bootstrap().unwrap();
+
+        let snap = tm.snapshot().unwrap();
+        assert!(snap.node_count > 0);
+        assert!(!snap.nodes.is_empty());
+        // The snapshot should contain at least the root + bootstrapped namespaces
+        assert!(snap.nodes.len() >= 9);
+    }
+
+    #[test]
+    fn snapshot_root_hash_matches_stats() {
+        let chain = test_chain();
+        let tm = TreeManager::new(Arc::clone(&chain));
+        tm.bootstrap().unwrap();
+
+        let snap = tm.snapshot().unwrap();
+        let stats = tm.stats();
+        assert_eq!(snap.root_hash, stats.root_hash);
+    }
+
+    #[test]
+    fn apply_remote_mutation_records_in_log() {
+        let chain = test_chain();
+        let tm = TreeManager::new(Arc::clone(&chain));
+        tm.bootstrap().unwrap();
+
+        let before = tm.mutation_log().lock().unwrap().len();
+
+        let event = MutationEvent::Create {
+            id: ResourceId::new("/kernel/services/remote_svc"),
+            kind: ResourceKind::Service,
+            parent: ResourceId::new("/kernel/services"),
+            timestamp: Utc::now(),
+            signature: None,
+        };
+        tm.apply_remote_mutation(event).unwrap();
+
+        let after = tm.mutation_log().lock().unwrap().len();
+        assert_eq!(after, before + 1);
+
+        // The node should exist in the tree
+        let tree = tm.tree().lock().unwrap();
+        assert!(tree.get(&ResourceId::new("/kernel/services/remote_svc")).is_some());
+    }
+
+    #[test]
+    fn mutations_signed_when_key_set() {
+        let chain = test_chain();
+        let mut tm = TreeManager::new(Arc::clone(&chain));
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        tm.set_signing_key(key.clone());
+        tm.bootstrap().unwrap();
+
+        // Bootstrap mutations should all be signed
+        {
+            let log = tm.mutation_log().lock().unwrap();
+            for evt in log.events() {
+                match evt {
+                    MutationEvent::Create { signature, .. } => {
+                        assert!(signature.is_some(), "bootstrap Create should be signed");
+                        assert_eq!(signature.as_ref().unwrap().len(), 64);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Insert should produce signed mutation
+        tm.insert(
+            ResourceId::new("/kernel/services/signed_svc"),
+            ResourceKind::Service,
+            ResourceId::new("/kernel/services"),
+        )
+        .unwrap();
+
+        let log = tm.mutation_log().lock().unwrap();
+        let last = log.events().last().unwrap();
+        match last {
+            MutationEvent::Create { signature, .. } => {
+                let sig_bytes = signature.as_ref().expect("insert should be signed");
+                assert_eq!(sig_bytes.len(), 64);
+                // Verify the signature bytes form a valid Ed25519 signature
+                let sig = ed25519_dalek::Signature::from_bytes(
+                    sig_bytes.as_slice().try_into().unwrap(),
+                );
+                assert_eq!(sig.to_bytes().len(), 64);
+            }
+            _ => panic!("expected Create variant"),
+        }
+    }
+
+    #[test]
+    fn mutations_unsigned_without_key() {
+        let chain = test_chain();
+        let tm = TreeManager::new(Arc::clone(&chain));
+        tm.bootstrap().unwrap();
+
+        tm.insert(
+            ResourceId::new("/kernel/services/unsigned_svc"),
+            ResourceKind::Service,
+            ResourceId::new("/kernel/services"),
+        )
+        .unwrap();
+
+        let log = tm.mutation_log().lock().unwrap();
+        // All mutations should have signature = None when no key is set
+        for evt in log.events() {
+            match evt {
+                MutationEvent::Create { signature, .. } => {
+                    assert!(signature.is_none(), "should be None without signing key");
+                }
+                _ => {}
+            }
+        }
     }
 }

@@ -25,6 +25,7 @@ use tracing::debug;
 use crate::capability::{AgentCapabilities, IpcScope};
 use crate::container::PortMapping;
 use crate::process::Pid;
+use crate::supervisor::SpawnRequest;
 
 // ── Manifest Types ──────────────────────────────────────────────────
 
@@ -587,6 +588,117 @@ impl AppManager {
             .tools
             .iter()
             .map(|t| format!("{}/{}", manifest.name, t.name))
+            .collect()
+    }
+
+    /// Start an installed or stopped application.
+    ///
+    /// Transitions the app through `Starting` to `Running` and builds
+    /// [`SpawnRequest`]s for each agent declared in the manifest. The
+    /// caller (kernel boot / CLI) is responsible for executing the spawn
+    /// requests via the [`AgentSupervisor`].
+    ///
+    /// Returns the list of spawn requests so the caller can hand them to
+    /// the supervisor.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::NotFound` if the app is not installed, or
+    /// `AppError::InvalidState` if the app is not in `Installed` or
+    /// `Stopped` state.
+    pub fn start(&self, name: &str) -> Result<Vec<SpawnRequest>, AppError> {
+        // Validate current state allows starting.
+        {
+            let entry = self.apps.get(name).ok_or_else(|| AppError::NotFound {
+                name: name.to_owned(),
+            })?;
+            let startable = matches!(entry.state, AppState::Installed | AppState::Stopped);
+            if !startable {
+                return Err(AppError::InvalidState {
+                    name: name.to_owned(),
+                    expected: "Installed or Stopped".into(),
+                    actual: entry.state.to_string(),
+                });
+            }
+        }
+
+        // Transition: current -> Starting
+        self.transition_to(name, AppState::Starting)?;
+
+        // Build spawn requests from manifest agent specs.
+        let spawn_requests = {
+            let entry = self.apps.get(name).ok_or_else(|| AppError::NotFound {
+                name: name.to_owned(),
+            })?;
+            Self::build_spawn_requests(&entry.manifest)
+        };
+
+        // Transition: Starting -> Running
+        self.transition_to(name, AppState::Running)?;
+
+        debug!(
+            app = name,
+            agents = spawn_requests.len(),
+            "application started"
+        );
+
+        Ok(spawn_requests)
+    }
+
+    /// Stop a running application.
+    ///
+    /// Transitions `Running` -> `Stopping` -> `Stopped` and clears the
+    /// recorded agent PIDs and service names.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AppError::NotFound` or `AppError::InvalidState`.
+    pub fn stop(&self, name: &str) -> Result<(), AppError> {
+        {
+            let entry = self.apps.get(name).ok_or_else(|| AppError::NotFound {
+                name: name.to_owned(),
+            })?;
+            if entry.state != AppState::Running {
+                return Err(AppError::InvalidState {
+                    name: name.to_owned(),
+                    expected: "Running".into(),
+                    actual: entry.state.to_string(),
+                });
+            }
+        }
+
+        self.transition_to(name, AppState::Stopping)?;
+
+        // Clear runtime bookkeeping.
+        {
+            let mut entry = self.apps.get_mut(name).ok_or_else(|| AppError::NotFound {
+                name: name.to_owned(),
+            })?;
+            entry.agent_pids.clear();
+            entry.service_names.clear();
+        }
+
+        self.transition_to(name, AppState::Stopped)?;
+
+        debug!(app = name, "application stopped");
+        Ok(())
+    }
+
+    /// Build [`SpawnRequest`]s for every agent declared in a manifest.
+    ///
+    /// Each request carries the agent's capabilities from the manifest
+    /// and a namespaced agent ID (`app-name/agent-id`).
+    pub fn build_spawn_requests(manifest: &AppManifest) -> Vec<SpawnRequest> {
+        manifest
+            .agents
+            .iter()
+            .map(|agent| SpawnRequest {
+                agent_id: format!("{}/{}", manifest.name, agent.id),
+                capabilities: Some(agent.capabilities.clone()),
+                parent_pid: None,
+                env: HashMap::new(),
+                backend: None,
+            })
             .collect()
     }
 }
@@ -1390,5 +1502,346 @@ mod tests {
         assert_eq!(manifest.hooks.on_start, Some("scripts/migrate.sh".into()));
         assert_eq!(manifest.hooks.on_stop, Some("scripts/cleanup.sh".into()));
         assert!(manifest.hooks.on_remove.is_none());
+    }
+
+    // ── K5 Gate Tests ──────────────────────────────────────────────
+
+    #[test]
+    fn k5_manifest_parsed_and_validated() {
+        // Programmatic manifest creation and validation.
+        let manifest = AppManifest {
+            name: "test-app".into(),
+            version: "1.0.0".into(),
+            description: "A test application".into(),
+            author: None,
+            license: None,
+            agents: vec![AgentSpec {
+                id: "worker".into(),
+                role: "coder".into(),
+                capabilities: AgentCapabilities::default(),
+                auto_start: true,
+            }],
+            tools: Vec::new(),
+            services: vec![ServiceSpec {
+                name: "api".into(),
+                image: None,
+                command: Some("serve".into()),
+                ports: vec![PortMapping {
+                    host_port: 8080,
+                    container_port: 8080,
+                    protocol: "tcp".into(),
+                }],
+                env: HashMap::new(),
+                health_endpoint: None,
+            }],
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        assert!(validate_manifest(&manifest).is_ok());
+        assert!(!manifest.name.is_empty());
+        assert!(!manifest.version.is_empty());
+
+        // Also verify JSON parsing path.
+        let json = serde_json::to_string(&manifest).unwrap();
+        let parsed = AppManifest::from_json_str(&json).unwrap();
+        assert_eq!(parsed.name, "test-app");
+        assert_eq!(parsed.agents.len(), 1);
+        assert_eq!(parsed.services.len(), 1);
+    }
+
+    #[test]
+    fn k5_app_install_start_stop_lifecycle() {
+        let mgr = AppManager::new();
+        let manifest = AppManifest {
+            name: "lifecycle-app".into(),
+            version: "2.0.0".into(),
+            description: "Lifecycle test".into(),
+            author: None,
+            license: None,
+            agents: vec![
+                AgentSpec {
+                    id: "alpha".into(),
+                    role: "coder".into(),
+                    capabilities: AgentCapabilities::default(),
+                    auto_start: true,
+                },
+                AgentSpec {
+                    id: "beta".into(),
+                    role: "reviewer".into(),
+                    capabilities: AgentCapabilities {
+                        can_network: true,
+                        ..Default::default()
+                    },
+                    auto_start: false,
+                },
+            ],
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+
+        // Install
+        let app_id = mgr.install(manifest).unwrap();
+        assert_eq!(app_id, "lifecycle-app");
+        let app = mgr.inspect(&app_id).unwrap();
+        assert_eq!(app.state, AppState::Installed);
+
+        // Start -- returns spawn requests for both agents
+        let spawn_reqs = mgr.start(&app_id).unwrap();
+        assert_eq!(spawn_reqs.len(), 2);
+        assert_eq!(spawn_reqs[0].agent_id, "lifecycle-app/alpha");
+        assert_eq!(spawn_reqs[1].agent_id, "lifecycle-app/beta");
+
+        let app = mgr.inspect(&app_id).unwrap();
+        assert_eq!(app.state, AppState::Running);
+
+        // Stop
+        mgr.stop(&app_id).unwrap();
+        let app = mgr.inspect(&app_id).unwrap();
+        assert_eq!(app.state, AppState::Stopped);
+
+        // Restart after stop
+        let spawn_reqs = mgr.start(&app_id).unwrap();
+        assert_eq!(spawn_reqs.len(), 2);
+        let app = mgr.inspect(&app_id).unwrap();
+        assert_eq!(app.state, AppState::Running);
+    }
+
+    #[test]
+    fn k5_app_agents_spawn_with_correct_capabilities() {
+        let manifest = AppManifest {
+            name: "cap-app".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: vec![
+                AgentSpec {
+                    id: "networker".into(),
+                    role: "fetcher".into(),
+                    capabilities: AgentCapabilities {
+                        can_network: true,
+                        can_spawn: false,
+                        can_ipc: true,
+                        can_exec_tools: true,
+                        ipc_scope: IpcScope::All,
+                        ..Default::default()
+                    },
+                    auto_start: true,
+                },
+                AgentSpec {
+                    id: "sandboxed".into(),
+                    role: "compute".into(),
+                    capabilities: AgentCapabilities {
+                        can_network: false,
+                        can_spawn: false,
+                        can_ipc: false,
+                        can_exec_tools: false,
+                        ipc_scope: IpcScope::None,
+                        ..Default::default()
+                    },
+                    auto_start: true,
+                },
+            ],
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+
+        let spawn_reqs = AppManager::build_spawn_requests(&manifest);
+        assert_eq!(spawn_reqs.len(), 2);
+
+        // First agent: networker with network access
+        assert_eq!(spawn_reqs[0].agent_id, "cap-app/networker");
+        let caps0 = spawn_reqs[0].capabilities.as_ref().unwrap();
+        assert!(caps0.can_network);
+        assert!(!caps0.can_spawn);
+        assert!(caps0.can_ipc);
+        assert!(caps0.can_exec_tools);
+
+        // Second agent: sandboxed with no capabilities
+        assert_eq!(spawn_reqs[1].agent_id, "cap-app/sandboxed");
+        let caps1 = spawn_reqs[1].capabilities.as_ref().unwrap();
+        assert!(!caps1.can_network);
+        assert!(!caps1.can_spawn);
+        assert!(!caps1.can_ipc);
+        assert!(!caps1.can_exec_tools);
+        assert_eq!(caps1.ipc_scope, IpcScope::None);
+    }
+
+    #[test]
+    fn k5_app_list_shows_installed() {
+        let mgr = AppManager::new();
+
+        let app1 = AppManifest {
+            name: "app-one".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        let app2 = AppManifest {
+            name: "app-two".into(),
+            version: "2.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+
+        mgr.install(app1).unwrap();
+        mgr.install(app2).unwrap();
+
+        let list = mgr.list();
+        assert_eq!(list.len(), 2);
+        let names: Vec<&str> = list.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"app-one"));
+        assert!(names.contains(&"app-two"));
+    }
+
+    #[test]
+    fn k5_invalid_manifest_rejected() {
+        let mgr = AppManager::new();
+
+        // Empty name
+        let bad = AppManifest {
+            name: String::new(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        assert!(mgr.install(bad).is_err());
+
+        // Empty version
+        let bad = AppManifest {
+            name: "ok-name".into(),
+            version: String::new(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        assert!(mgr.install(bad).is_err());
+
+        // Invalid name chars
+        let bad = AppManifest {
+            name: "bad name!".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        assert!(mgr.install(bad).is_err());
+
+        // No valid apps were installed
+        assert!(mgr.is_empty());
+    }
+
+    #[test]
+    fn k5_start_wrong_state_fails() {
+        let mgr = AppManager::new();
+        let manifest = AppManifest {
+            name: "state-test".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        mgr.install(manifest).unwrap();
+        mgr.start("state-test").unwrap();
+
+        // Already running -- start again should fail
+        let err = mgr.start("state-test").unwrap_err();
+        assert!(matches!(err, AppError::InvalidState { .. }));
+    }
+
+    #[test]
+    fn k5_stop_wrong_state_fails() {
+        let mgr = AppManager::new();
+        let manifest = AppManifest {
+            name: "stop-test".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: Vec::new(),
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        mgr.install(manifest).unwrap();
+
+        // Not running -- stop should fail
+        let err = mgr.stop("stop-test").unwrap_err();
+        assert!(matches!(err, AppError::InvalidState { .. }));
+    }
+
+    #[test]
+    fn k5_stop_clears_agent_pids() {
+        let mgr = AppManager::new();
+        let manifest = AppManifest {
+            name: "pid-test".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            author: None,
+            license: None,
+            agents: vec![AgentSpec {
+                id: "w".into(),
+                role: "worker".into(),
+                capabilities: AgentCapabilities::default(),
+                auto_start: true,
+            }],
+            tools: Vec::new(),
+            services: Vec::new(),
+            capabilities: AppCapabilities::default(),
+            hooks: AppHooks::default(),
+        };
+        mgr.install(manifest).unwrap();
+        mgr.start("pid-test").unwrap();
+
+        // Simulate supervisor assigning PIDs after start.
+        mgr.add_agent_pid("pid-test", 42).unwrap();
+        mgr.add_service_name("pid-test", "svc".into()).unwrap();
+        let app = mgr.inspect("pid-test").unwrap();
+        assert_eq!(app.agent_pids.len(), 1);
+        assert_eq!(app.service_names.len(), 1);
+
+        // Stop clears runtime bookkeeping.
+        mgr.stop("pid-test").unwrap();
+        let app = mgr.inspect("pid-test").unwrap();
+        assert!(app.agent_pids.is_empty());
+        assert!(app.service_names.is_empty());
     }
 }

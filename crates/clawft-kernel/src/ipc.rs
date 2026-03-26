@@ -38,6 +38,14 @@ pub enum MessageTarget {
     },
     /// Send to the kernel itself.
     Kernel,
+    /// Route to a specific process on a remote node (K6).
+    /// The inner target is resolved on the destination node.
+    RemoteNode {
+        /// Remote node identifier.
+        node_id: String,
+        /// Target to resolve on the remote node.
+        target: Box<MessageTarget>,
+    },
 }
 
 /// Payload types for kernel messages.
@@ -199,6 +207,38 @@ impl KernelMessage {
                 result,
             },
         )
+    }
+}
+
+/// Globally unique process identifier: (node_id, local_pid).
+///
+/// Used for cross-node process addressing in K6 mesh networking.
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GlobalPid {
+    /// Node that owns this process.
+    pub node_id: String,
+    /// Local PID on that node.
+    pub pid: Pid,
+}
+
+impl GlobalPid {
+    /// Create a GlobalPid for a local process.
+    pub fn local(pid: Pid, node_id: &str) -> Self {
+        Self {
+            node_id: node_id.to_string(),
+            pid,
+        }
+    }
+
+    /// Check if this PID belongs to the given node.
+    pub fn is_local(&self, my_node_id: &str) -> bool {
+        self.node_id == my_node_id
+    }
+}
+
+impl std::fmt::Display for GlobalPid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.node_id, self.pid)
     }
 }
 
@@ -501,6 +541,45 @@ mod tests {
             MessagePayload::Signal(KernelSignal::Ping).type_name(),
             "signal"
         );
+    }
+
+    #[test]
+    fn remote_node_serde_roundtrip() {
+        let target = MessageTarget::RemoteNode {
+            node_id: "node-42".into(),
+            target: Box::new(MessageTarget::Process(7)),
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        let restored: MessageTarget = serde_json::from_str(&json).unwrap();
+        match restored {
+            MessageTarget::RemoteNode { node_id, target } => {
+                assert_eq!(node_id, "node-42");
+                assert!(matches!(*target, MessageTarget::Process(7)));
+            }
+            other => panic!("expected RemoteNode, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn global_pid_equality() {
+        let a = GlobalPid::local(1, "node-a");
+        let b = GlobalPid::local(1, "node-b");
+        let c = GlobalPid::local(1, "node-a");
+        assert_ne!(a, b, "same pid on different nodes must not be equal");
+        assert_eq!(a, c, "same pid on same node must be equal");
+    }
+
+    #[test]
+    fn global_pid_is_local() {
+        let gpid = GlobalPid::local(5, "my-node");
+        assert!(gpid.is_local("my-node"));
+        assert!(!gpid.is_local("other-node"));
+    }
+
+    #[test]
+    fn global_pid_display() {
+        let gpid = GlobalPid::local(42, "alpha");
+        assert_eq!(gpid.to_string(), "alpha:42");
     }
 
     #[test]

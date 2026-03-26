@@ -82,6 +82,44 @@ pub mod topic;
 #[allow(clippy::new_without_default)]
 pub mod wasm_runner;
 
+// ── Mesh networking modules (K6) ──────────────────────────────
+#[cfg(feature = "mesh")]
+pub mod mesh;
+#[cfg(feature = "mesh")]
+pub mod mesh_noise;
+#[cfg(feature = "mesh")]
+pub mod mesh_framing;
+#[cfg(feature = "mesh")]
+pub mod mesh_listener;
+#[cfg(feature = "mesh")]
+pub mod mesh_discovery;
+#[cfg(feature = "mesh")]
+pub mod mesh_bootstrap;
+#[cfg(feature = "mesh")]
+pub mod mesh_ipc;
+#[cfg(feature = "mesh")]
+pub mod mesh_dedup;
+#[cfg(feature = "mesh")]
+pub mod mesh_service;
+#[cfg(feature = "mesh")]
+pub mod mesh_chain;
+#[cfg(feature = "mesh")]
+pub mod mesh_tree;
+#[cfg(feature = "mesh")]
+pub mod mesh_process;
+#[cfg(feature = "mesh")]
+pub mod mesh_service_adv;
+#[cfg(feature = "mesh")]
+pub mod mesh_heartbeat;
+#[cfg(feature = "mesh")]
+pub mod mesh_tcp;
+#[cfg(feature = "mesh")]
+pub mod mesh_ws;
+#[cfg(feature = "mesh")]
+pub mod mesh_mdns;
+#[cfg(feature = "mesh")]
+pub mod mesh_kad;
+
 // Re-export key types at the crate level for convenience.
 pub use a2a::A2ARouter;
 pub use agency::{
@@ -94,8 +132,8 @@ pub use app::{
 };
 pub use boot::{Kernel, KernelState};
 pub use capability::{
-    AgentCapabilities, CapabilityChecker, IpcScope, ResourceLimits, ResourceType, SandboxPolicy,
-    ToolPermissions,
+    AgentCapabilities, CapabilityChecker, CapabilityElevationRequest, ElevationResult, IpcScope,
+    ResourceLimits, ResourceType, SandboxPolicy, ToolPermissions,
 };
 #[cfg(feature = "exochain")]
 pub use chain::{
@@ -143,7 +181,61 @@ pub use hnsw_service::{HnswSearchResult, HnswService, HnswServiceConfig};
 pub use impulse::{ImpulseQueue, ImpulseType};
 #[cfg(feature = "ecc")]
 pub use cluster::NodeEccCapability;
-pub use ipc::{KernelIpc, KernelMessage, KernelSignal, MessagePayload, MessageTarget};
+pub use ipc::{GlobalPid, KernelIpc, KernelMessage, KernelSignal, MessagePayload, MessageTarget};
+#[cfg(any(feature = "mesh", feature = "exochain"))]
+pub use cluster::NodeIdentity;
+#[cfg(feature = "mesh")]
+pub use mesh::{MeshError, MeshPeer, MeshStream, MeshTransport, TransportListener, WeftHandshake, MAX_MESSAGE_SIZE};
+#[cfg(feature = "mesh")]
+pub use mesh_noise::{EncryptedChannel, NoiseConfig, NoisePattern};
+#[cfg(feature = "mesh")]
+pub use mesh_framing::{FrameType, MeshFrame};
+#[cfg(feature = "mesh")]
+pub use mesh_listener::{JoinRequest, JoinResponse, MeshConnectionPool, PeerInfo};
+#[cfg(feature = "mesh")]
+pub use mesh_discovery::{
+    DiscoveredPeer, DiscoveryBackend, DiscoveryCoordinator, DiscoveryError, DiscoverySource,
+};
+#[cfg(feature = "mesh")]
+pub use mesh_bootstrap::{BootstrapDiscovery, PeerExchangeDiscovery};
+#[cfg(feature = "mesh")]
+pub use mesh_ipc::{MeshIpcEnvelope, MeshIpcError};
+#[cfg(feature = "mesh")]
+pub use mesh_dedup::DedupFilter;
+#[cfg(feature = "mesh")]
+pub use mesh_service::{
+    RemoteServiceEndpoint, ServiceResolutionCache, ServiceResolveRequest, ServiceResolveResponse,
+};
+#[cfg(feature = "mesh")]
+pub use mesh_chain::{
+    ChainBridgeEvent, ChainForkStatus, ChainSyncRequest, ChainSyncResponse, SyncStateDigest,
+};
+#[cfg(feature = "mesh")]
+pub use mesh_tree::{
+    MerkleProof, TreeDiffType, TreeNodeDiff, TreeSyncAction, TreeSyncRequest, TreeSyncResponse,
+};
+#[cfg(feature = "mesh")]
+pub use mesh_process::{
+    ConsensusEntry, ConsensusOp, ConsensusRole, ConsistentHashRing, CrdtGossipState,
+    DistributedProcessTable, MetadataConsensus, ProcessAdvertisement, ProcessStatus,
+    ResourceSummary,
+};
+#[cfg(feature = "mesh")]
+pub use mesh_service_adv::{ClusterServiceRegistry, ServiceAdvertisement};
+#[cfg(feature = "mesh")]
+pub use mesh_heartbeat::{HeartbeatConfig, HeartbeatState, HeartbeatTracker, PeerHeartbeat, PingRequest, PingResponse};
+#[cfg(feature = "mesh")]
+pub use mesh_tcp::TcpTransport;
+#[cfg(feature = "mesh")]
+pub use mesh_ws::WsTransport;
+#[cfg(feature = "mesh")]
+pub use mesh_mdns::{MdnsAnnouncement, MdnsDiscovery, WEFTOS_SERVICE_NAME};
+#[cfg(feature = "mesh")]
+pub use mesh_kad::{
+    DhtEntry, DhtKey, KademliaDiscovery, KademliaTable, NamespacedDhtKey,
+    bucket_index, leading_zeros, xor_distance,
+    K_BUCKET_SIZE, ALPHA, KEY_BITS,
+};
 pub use process::{Pid, ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 pub use service::{
     McpAdapter, ServiceApi, ServiceAuditLevel, ServiceContract, ServiceEndpoint, ServiceEntry,
