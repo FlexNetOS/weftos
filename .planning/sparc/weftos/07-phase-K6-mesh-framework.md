@@ -5,7 +5,7 @@
 **Duration**: Weeks 11-16 (6 sub-phases)
 **Goal**: Extend WeftOS from a single-node kernel into a multi-node cluster with encrypted peer-to-peer networking, distributed IPC, chain replication, tree synchronization, and cluster-wide service discovery
 **Gate from**: K2 C10, K5 Symposium (2026-03-25)
-**Symposium Decisions**: D1-D14, Commitments C1-C5
+**Symposium Decisions**: D1-D15, Commitments C1-C5
 
 ---
 
@@ -642,6 +642,41 @@ multiplexed QUIC streams over a single Noise-encrypted connection per node pair.
 | 6 | Impulses | Ephemeral flood (TTL-bounded) | K7 |
 | 7+ | IPC | KernelMessage / ServiceApi | K6.3 |
 
+#### Stream Prioritization
+
+QUIC supports per-stream weighting. Higher-priority streams get bandwidth
+preference when the connection is congested:
+
+| Priority | Stream | Rationale |
+|----------|--------|-----------|
+| 0 (highest) | Control (0) | Heartbeat, capability exchange |
+| 1 | Chain (1) | Foundation — all other sync depends on chain state |
+| 2 | Tree (2) | Service discovery depends on tree state |
+| 3 | IPC (7+) | User-facing agent communication |
+| 4 | Causal (3) | Cognitive — can tolerate slight delay |
+| 4 | CrossRef (5) | Cognitive — same priority as causal |
+| 5 | HNSW (4) | Batch — tolerates delay, large payloads |
+| 6 (lowest) | Impulse (6) | Ephemeral — TTL-bounded, loss-tolerant |
+
+Priority is set via QUIC's `set_priority()` on stream creation. Adjustable
+at runtime if cognitive load increases (e.g., during ECC spectral analysis,
+promote Causal to priority 2).
+
+#### Backpressure and Flow Control
+
+QUIC provides connection-level and stream-level flow control natively.
+Additional WeftOS-specific backpressure:
+
+- **Chain sync**: If receiver falls >1000 events behind, switch from
+  event-by-event to checkpoint-based catch-up (bulk RVF transfer)
+- **HNSW batch**: Limit to 100 vectors per batch frame. Receiver ACKs
+  before next batch.
+- **Impulse flood**: Drop impulses older than TTL without forwarding.
+  Monitor impulse queue depth — if >1000 pending, throttle emission rate.
+- **DeFi high-churn**: In oracle-heavy scenarios (rapid price updates),
+  impulse stream may spike. The TTL mechanism ensures self-limiting behavior.
+  Monitor via `ecc.tick.drift` chain events.
+
 #### Why One Connection, Not Separate Protocols
 
 QUIC provides native stream multiplexing. Using separate protocols would
@@ -672,6 +707,86 @@ deduplication. Same semantics as CausalGraph edges.
 
 **Impulses (Stream 6)**: Ephemeral events with short TTL (e.g., 5 cognitive ticks).
 Not persisted to chain. Gossipped via mesh GossipSub. Deduplicated by (impulse_id, hlc).
+
+#### Delta Computation: Peer State Exchange
+
+When a sync stream opens, peers exchange a `SyncStateDigest` to determine
+what needs syncing:
+
+```rust
+/// Compact summary of a node's CMVG state, exchanged on stream open.
+#[derive(Serialize, Deserialize)]
+pub struct SyncStateDigest {
+    /// Chain: highest sequence number + hash
+    pub chain_seq: u64,
+    pub chain_hash: [u8; 32],
+    /// Tree: Merkle root hash
+    pub tree_root_hash: [u8; 32],
+    /// Causal: edge count + vector clock summary
+    pub causal_edge_count: u64,
+    pub causal_vclock_hash: [u8; 32],  // hash of serialized vector clock
+    /// HNSW: vector count + last insert chain_seq
+    pub hnsw_count: u32,
+    pub hnsw_last_seq: u64,
+    /// CrossRef: count + latest HLC
+    pub crossref_count: u64,
+    pub crossref_latest_hlc: u64,
+}
+```
+
+Delta computation per structure:
+
+| Structure | Digest Compare | Delta Action |
+|-----------|---------------|-------------|
+| Chain | `peer.chain_seq < local.chain_seq` | Send events `[peer_seq+1..local_seq]` |
+| Tree | `peer.tree_root_hash != local` | Initiate Merkle diff walk |
+| Causal | `peer.causal_vclock_hash != local` | Exchange vector clocks, send missing deltas |
+| HNSW | `peer.hnsw_last_seq < local` | Send vector entries added after peer's seq |
+| CrossRef | `peer.crossref_latest_hlc < local` | Send crossrefs with hlc > peer's latest |
+
+The digest is ~140 bytes — exchanged once on stream open, then periodically
+(every 30s) to detect drift without full re-sync.
+
+#### Sync Message Framing
+
+Sync messages use RVF wire segments with a `SyncStreamType` discriminator
+in the segment type byte. This reuses the existing `rvf-wire` zero-copy
+serialization with content hash integrity:
+
+```rust
+/// Sync frame header (inside RVF segment payload)
+#[derive(Serialize, Deserialize)]
+pub struct SyncFrame {
+    /// Which sync stream this frame belongs to
+    pub stream_type: u8,  // matches SyncStreamType discriminant
+    /// Frame sequence within the stream (for ordering/dedup)
+    pub frame_seq: u64,
+    /// Payload type within the stream
+    pub payload_type: SyncPayloadType,
+}
+
+#[repr(u8)]
+pub enum SyncPayloadType {
+    StateDigest = 0x00,     // SyncStateDigest exchange
+    ChainEvents = 0x01,     // batch of ChainEvent
+    TreeDiff = 0x02,        // Merkle diff nodes
+    CausalDelta = 0x03,     // CRDT delta with vector clock
+    HnswBatch = 0x04,       // vector entry batch
+    CrossRefBatch = 0x05,   // crossref edge batch
+    ImpulseFlood = 0x06,    // impulse batch
+    Ack = 0x0F,             // acknowledgment for backpressure
+}
+```
+
+RVF segment layout for sync:
+```
+[SegmentHeader (64B)] [SyncFrame (10B)] [payload (variable)] [padding]
+```
+
+Content hash in the segment header covers `SyncFrame + payload`,
+providing integrity verification without additional checksumming.
+This means `rvf-wire::validate_segment()` verifies sync frame integrity
+using the same path as chain segment verification — no new validation code.
 
 #### Chain Replication as Implicit CMVG Sync
 
@@ -845,6 +960,12 @@ The symposium refined several decisions from doc 12:
 - [ ] Remote service calls use same governance gate as local calls
 - [ ] Chain log replication syncs events between mesh peers (K6.4)
 - [ ] Tree Merkle diff transfers only changed subtrees (K6.4)
+- [ ] QUIC stream priorities set per SyncStreamType (D15)
+- [ ] Backpressure: chain checkpoint catch-up when >1000 events behind (D15)
+- [ ] SyncStateDigest exchanged on stream open for delta computation (D15)
+- [ ] Sync frames use RVF wire segments with SyncStreamType discriminator (D15)
+- [ ] PeerMetrics tracks observability dimensions for affinity scoring (D15)
+- [ ] KEM upgrade completes before sync streams are opened (D15)
 
 ### Testing Verification Commands
 
@@ -984,6 +1105,21 @@ The final session key combines both secrets via HKDF.
 4. Both derive: `final_key = HKDF(classical_ss || pq_ss || "weftos-hybrid-kem-v1")`
 5. Rekey the transport with `final_key`
 
+#### KEM Upgrade Timing
+
+The hybrid Noise + ML-KEM-768 upgrade runs once per connection establishment,
+**before** any sync streams are opened. Sequence:
+
+1. TCP/QUIC connection established
+2. Noise XX handshake (mutual auth, classical key)
+3. ML-KEM-768 encapsulate/decapsulate (PQ key)
+4. HKDF combine → final session key
+5. Rekey transport
+6. NOW open sync streams (0-7+)
+
+All streams inherit the hybrid-encrypted transport. No per-stream encryption
+needed — QUIC encrypts at the connection level.
+
 **Negotiation**: Advertised via `kem_supported: bool` in the Noise handshake payload.
 Graceful degradation — nodes that don't support KEM stay on classical Noise.
 
@@ -1023,6 +1159,57 @@ from ECC gossip (see M9).
 **Test**: Process advertisement gossip, cross-node service discovery, failure
 detection, CRDT merge convergence, service resolution fallback (local-first),
 circuit breaker state transitions, affinity routing preference.
+
+#### Observability Scoring for Affinity and Circuit Decisions
+
+Mesh connections track per-peer metrics that feed into service resolution
+ranking and circuit breaker decisions:
+
+```rust
+/// Per-peer observability metrics, updated on every interaction.
+pub struct PeerMetrics {
+    /// Rolling average RTT from ping/pong (microseconds)
+    pub avg_rtt_us: u64,
+    /// P95 RTT over last 100 interactions
+    pub p95_rtt_us: u64,
+    /// Success rate: successful calls / total calls (0.0 - 1.0)
+    pub success_rate: f64,
+    /// Error rate over sliding window (last 60s)
+    pub error_rate_60s: f64,
+    /// Risk delta: change in EffectVector magnitude after remote calls
+    /// (tracks whether this peer's responses increase governance risk)
+    pub risk_delta_avg: f64,
+    /// Governance deny rate: fraction of calls denied by remote gate
+    pub gate_deny_rate: f64,
+    /// Last seen timestamp (for staleness detection)
+    pub last_seen: Instant,
+    /// Consecutive failures (for circuit breaker)
+    pub consecutive_failures: u32,
+    /// NodeEccCapability.headroom_ratio (from gossip, K7)
+    pub headroom_ratio: Option<f32>,
+}
+```
+
+**Dimensions used per phase:**
+
+| Phase | Dimensions | Decision |
+|-------|-----------|----------|
+| K6.3 | `avg_rtt_us`, `success_rate` | Lowest-latency + round-robin tiebreak |
+| K6.5 | + `consecutive_failures`, `error_rate_60s` | Circuit breaker threshold (>50% error → OPEN) |
+| K6.5 | + `gate_deny_rate` | Avoid peers that frequently deny (governance mismatch) |
+| K7 | + `headroom_ratio`, `risk_delta_avg` | Load-aware + risk-aware selection |
+
+**Circuit breaker thresholds (initial):**
+- OPEN trigger: `error_rate_60s > 0.5` OR `consecutive_failures > 5`
+- Cooldown: 30s
+- HALF-OPEN test: 1 ping + 1 lightweight ServiceApi call
+
+**Affinity scoring (K6.5):**
+```
+score = (1.0 / avg_rtt_us) * success_rate * (1.0 - gate_deny_rate)
+        * (has_pool_connection ? 1.5 : 1.0)   // prefer existing connections
+```
+Highest score wins. Recalculated every 30s or on circuit state change.
 
 #### K7 (Future): Full CMVG Cognitive Sync
 
@@ -1078,7 +1265,7 @@ Full cognitive sync via dedicated QUIC streams (D14):
 | `14-exochain-substrate.md` | Chain manager extended with replication + bridge events |
 | `docs/weftos/k5-symposium/01-mesh-architecture.md` | Authoritative 5-layer architecture |
 | `docs/weftos/k5-symposium/04-k6-implementation-plan.md` | Authoritative phase plan |
-| `docs/weftos/k5-symposium/05-symposium-results.md` | Decisions D1-D12, Commitments C1-C5 |
+| `docs/weftos/k5-symposium/05-symposium-results.md` | Decisions D1-D15, Commitments C1-C5 |
 | `docs/weftos/sparc/k6-cluster-networking.md` | Earlier K6 sketch (superseded by this plan) |
 | `.planning/development_notes/k6-readiness-audit.md` | Readiness matrix (41 GREEN, 22 YELLOW, 21 RED) |
 | `docs/weftos/k5-symposium/05-symposium-results.md` | Decision D14: CMVG cognitive sync via multiplexed QUIC streams |

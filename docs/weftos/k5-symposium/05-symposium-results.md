@@ -1,7 +1,7 @@
 # K5 Symposium Results
 
 **Date**: 2026-03-25
-**Status**: COMPLETE -- 14 decisions rendered, 5 commitments made
+**Status**: COMPLETE -- 15 decisions rendered, 5 commitments made
 **Branch**: feature/weftos-kernel-sprint
 **Predecessor**: [ECC Symposium Results](../ecc-symposium/05-symposium-results-report.md)
 
@@ -386,6 +386,26 @@ reconstructs most CMVG state without dedicated streams.
 
 **Cross-references**: M11 in `01-mesh-architecture.md`, CMVG Cognitive Sync
 Architecture in `07-phase-K6-mesh-framework.md`
+
+### D15: Sync Framing, Stream Prioritization, Delta Computation, and Observability
+
+**Decision**: Sync frames use RVF wire segments with `SyncStreamType` discriminator.
+QUIC stream prioritization: Chain > Tree > IPC > Cognitive > Impulse.
+`SyncStateDigest` (~140 bytes) exchanged on stream open for delta computation.
+`PeerMetrics` tracks 8 observability dimensions feeding affinity scoring
+and circuit breaker decisions. Hybrid KEM upgrade runs once before streams open.
+
+**Rationale**: Stream prioritization ensures foundation state (chain, tree)
+propagates before cognitive and ephemeral data. `SyncStateDigest` enables
+efficient delta computation without full state exchange. `PeerMetrics` provides
+the observability backbone for progressive resolution strategies (round-robin
+in K6.3 → affinity in K6.5 → load-aware in K7). KEM timing before stream open
+ensures all sync traffic inherits hybrid-encrypted transport.
+
+**Origin**: K6 SPARC refinement (D14 elaboration)
+
+**Cross-references**: CMVG Cognitive Sync Architecture, Stream Prioritization,
+Delta Computation, Observability Scoring in `07-phase-K6-mesh-framework.md`
 
 ---
 
