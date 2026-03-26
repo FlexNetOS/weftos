@@ -189,10 +189,9 @@ A verifier checks both signatures. If either fails, the event is rejected.
 This provides quantum resistance today without abandoning the classical
 signature that existing tooling understands.
 
-### ML-KEM-768 Hybrid Key Exchange (Future -- K7+)
+### ML-KEM-768 Hybrid Key Exchange (moved to K6.4b by D11)
 
-When NIST ML-KEM-768 implementations mature, the Noise handshake can be
-upgraded to a hybrid scheme:
+The Noise handshake is upgraded to a hybrid scheme in K6.4b:
 
 ```
 shared_secret = HKDF(X25519_shared || ML-KEM-768_shared)
@@ -318,12 +317,12 @@ implement handshake rate limiting with exponential backoff.
 
 **Mitigation**:
 - Chain events are dual-signed with ML-DSA-65 (quantum-resistant) today
-- ML-KEM-768 hybrid key exchange planned for K7+
+- ML-KEM-768 hybrid key exchange in K6.4b (moved from K7+ by D11)
 - Forward secrecy limits exposure -- past ephemeral keys are discarded
 
 **Residual risk**: Noise handshake key exchange is not quantum-resistant until
-K7+ hybrid ML-KEM-768 upgrade. "Harvest now, decrypt later" attacks on
-transport-layer data are possible.
+K6.4b hybrid ML-KEM-768 upgrade. "Harvest now, decrypt later" attacks on
+transport-layer data are possible until K6.4b is deployed.
 
 ### Threat Summary
 
@@ -449,7 +448,7 @@ Key rotation is a governance-gated operation:
 | S3 | Noise IK for known peers | 1-RTT reconnection performance |
 | S4 | ChaChaPoly + BLAKE2b in Noise | No AES-NI dependency, BLAKE3 migration path |
 | S5 | ML-DSA-65 dual signing on chain events | Quantum-resistant provenance today |
-| S6 | ML-KEM-768 hybrid KEM deferred to K7+ | Implementations not mature enough |
+| S6 | ML-KEM-768 hybrid KEM deferred to K7+ (updated by D11 to K6.4b) | Implementations not mature enough; D11 moved hybrid KEM to K6.4b using existing ruvector-dag ML-KEM |
 | S7 | Browser nodes are restricted by default | Untrusted environment, governance-gated upgrade |
 | S8 | governance.genesis as cluster trust root | Already exists, natural authority anchor |
 | S9 | 16 MiB max message size | Prevents memory exhaustion |

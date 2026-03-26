@@ -45,6 +45,7 @@ IDENTITY       Ed25519 keypair = node identity, governance.genesis = trust root
 | `crates/clawft-kernel/src/mesh_kad.rs` | K6.2 | Kademlia DHT wrapper (libp2p-kad) |
 | `crates/clawft-kernel/src/mesh_mdns.rs` | K6.2 | mDNS local discovery (libp2p-mdns) |
 | `crates/clawft-kernel/src/mesh_bootstrap.rs` | K6.2 | Static seed peer bootstrap |
+| `crates/clawft-kernel/src/mesh_adapter.rs` | K6.3 | `MeshAdapter` -- incoming mesh dispatch through local A2ARouter |
 | `crates/clawft-kernel/src/mesh_ipc.rs` | K6.3 | Serialize/deserialize KernelMessage over mesh streams |
 | `crates/clawft-kernel/src/mesh_service.rs` | K6.3 | Cross-node service registry query protocol |
 | `crates/clawft-kernel/src/mesh_dedup.rs` | K6.3 | Message deduplication (bloom filter on message IDs) |
@@ -113,6 +114,93 @@ pub struct MeshConfig {
     pub seed_peers: Vec<String>,
     pub identity_key_path: Option<PathBuf>,
     pub max_message_size: usize,  // default 16 MiB (D8)
+}
+```
+
+#### Transport Types
+
+```rust
+/// A bidirectional byte stream over any transport.
+pub trait MeshStream: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+
+/// Listens for incoming mesh connections.
+#[async_trait]
+pub trait TransportListener: Send + Sync {
+    type Stream: MeshStream;
+    async fn accept(&mut self) -> Result<(Self::Stream, SocketAddr), MeshError>;
+    fn local_addr(&self) -> Result<SocketAddr, MeshError>;
+}
+```
+
+#### Protocol Message Types
+
+```rust
+/// WeftOS mesh handshake payload (sent inside Noise XX step 3).
+#[derive(Serialize, Deserialize)]
+pub struct WeftHandshake {
+    pub node_id: [u8; 32],
+    pub governance_genesis_hash: [u8; 32],
+    pub governance_version: String,
+    pub capabilities: u32,
+    pub kem_supported: bool,
+    pub kem_public_key: Option<Vec<u8>>,
+    pub supported_sync_streams: Vec<u8>,
+    pub chain_seq: u64,
+}
+
+/// Request to join a mesh cluster.
+#[derive(Serialize, Deserialize)]
+pub struct JoinRequest {
+    pub node_id: [u8; 32],
+    pub governance_genesis_hash: [u8; 32],
+    pub platform: String,
+    pub transports: Vec<String>,
+    pub chain_seq: u64,
+    pub tree_root_hash: [u8; 32],
+}
+
+/// Response to a join request.
+#[derive(Serialize, Deserialize)]
+pub struct JoinResponse {
+    pub accepted: bool,
+    pub reason: Option<String>,
+    pub peer_list: Vec<PeerInfo>,
+    pub governance_rule_count: u32,
+}
+
+/// Chain sync request.
+#[derive(Serialize, Deserialize)]
+pub struct ChainSyncRequest {
+    pub from_seq: u64,
+    pub from_hash: [u8; 32],
+    pub max_events: u32,
+}
+
+/// Chain sync response.
+#[derive(Serialize, Deserialize)]
+pub struct ChainSyncResponse {
+    pub events: Vec<Vec<u8>>,  // RVF-serialized chain events
+    pub has_more: bool,
+    pub tip_seq: u64,
+    pub tip_hash: [u8; 32],
+}
+
+/// DHT service advertisement.
+#[derive(Serialize, Deserialize)]
+pub struct ServiceAdvertisement {
+    pub node_id: [u8; 32],
+    pub version: u64,
+    pub capabilities: u32,
+    pub methods: Vec<String>,
+}
+
+/// DHT process advertisement.
+#[derive(Serialize, Deserialize)]
+pub struct ProcessAdvertisement {
+    pub global_pid: GlobalPid,
+    pub agent_id: String,
+    pub node_id: [u8; 32],
+    pub state: String,
 }
 ```
 
@@ -533,6 +621,106 @@ fn handle_join_request(request: JoinRequest, peer: &EncryptedPeer):
             peer.send(JoinResponse::Rejected(reason)).await?
 ```
 
+### MeshAdapter Dispatch (K6.3)
+
+```
+fn MeshAdapter::handle_incoming(msg: KernelMessage):
+    // 1. Validate sender is authenticated (Noise channel verified)
+    // 2. Check governance gate (ipc.remote.receive)
+    gate.check(msg.from, "ipc.remote.receive", context)?
+
+    // 3. If it has a correlation_id, try to complete a pending request
+    if a2a.try_complete_request(msg.clone()):
+        return  // response delivered to waiting future
+
+    // 4. Otherwise, route through normal A2ARouter dispatch
+    a2a.send(msg).await
+```
+
+### mesh.request() Correlation (K6.3)
+
+```
+fn mesh.request(node_id, msg, timeout):
+    // 1. Assign correlation_id if not set
+    msg.correlation_id = Some(uuid::new_v4())
+
+    // 2. Register in pending_requests (reuse A2ARouter pattern)
+    let (tx, rx) = oneshot::channel()
+    pending.insert(msg.correlation_id, tx)
+
+    // 3. Send over Noise channel
+    channel = pool.get_or_dial(node_id)
+    channel.send(serialize(msg))
+
+    // 4. Wait with timeout
+    match timeout(duration, rx).await:
+        Ok(response) -> response
+        Err(_) -> remove pending, return Timeout error
+```
+
+### Tree Merkle Diff (K6.4)
+
+```
+fn tree_merkle_diff(local_tree, peer_digest):
+    if local_tree.root_hash() == peer_digest.tree_root_hash:
+        return  // trees are identical
+
+    // Walk tree breadth-first, compare node hashes
+    queue = [(root_id, peer_root_hash)]
+    diff_nodes = []
+
+    while queue not empty:
+        (node_id, peer_hash) = queue.pop()
+        local_node = local_tree.get(node_id)
+
+        if local_node.hash != peer_hash:
+            diff_nodes.push(local_node)
+            for child in local_node.children:
+                queue.push((child.id, request_child_hash(peer, child.id)))
+
+    // Send only the differing nodes
+    send_tree_diff(diff_nodes)
+```
+
+### SWIM Heartbeat Protocol (K6.5)
+
+```
+fn swim_heartbeat_loop(cluster: ClusterMembership, interval: Duration):
+    loop:
+        sleep(interval)  // default 1s
+
+        // 1. Pick a random peer to probe
+        target = cluster.random_active_peer()
+        if target is None: continue
+
+        // 2. Direct ping
+        result = timeout(500ms, ping(target))
+        if result.is_ok():
+            target.update_last_seen(now())
+            continue
+
+        // 3. Direct ping failed -- indirect probe via k random peers
+        witnesses = cluster.random_peers(k=3, excluding=target)
+        indirect_ok = false
+        for witness in witnesses:
+            result = timeout(1s, request_ping(witness, target))
+            if result.is_ok():
+                indirect_ok = true
+                break
+
+        // 4. Update membership state
+        if indirect_ok:
+            target.update_last_seen(now())
+        else:
+            target.mark_suspect()
+            // After suspicion_timeout (5s), promote to Unreachable
+            spawn_after(5s, || {
+                if target.is_still_suspect():
+                    target.mark_unreachable()
+                    cluster.broadcast_unreachable(target)
+            })
+```
+
 ---
 
 ## A -- Architecture
@@ -909,6 +1097,65 @@ consuming messages received. The mesh layer provides the I/O bridge:
 - `GlobalPid` (C2) is used only at mesh boundaries. Local code continues
   to use bare `Pid`.
 
+### Resolved Questions
+
+**Q1 (Chain merge strategy)**: Leader-based Raft for metadata consensus
+(who owns which PID, service registry state). Delta-consensus with CRDT
+for CMVG state (causal graph edges, crossrefs). Chain events are linear
+and append-only -- no merge needed, just replication catch-up.
+
+**Q2 (Wire format)**: RVF segments for sync frames (SyncFrame header +
+payload, validated by rvf-wire). Bincode for lightweight RPC messages
+(JoinRequest, ChainSyncRequest). JSON for ServiceApi calls (existing pattern).
+
+**Q5 (Split-brain handling)**: Governance genesis hash acts as partition
+identifier. During a network partition, nodes can only communicate with
+peers sharing the same genesis hash. On reconnect, the partition with the
+longer chain (higher sequence) is authoritative. Nodes in the shorter
+partition catch up via chain replication.
+
+**Q3 (NAT traversal)**: QUIC hole-punching via coordinating relay node.
+Relay nodes are well-known bootstrap peers that forward connection setup
+packets. Once direct connection established, relay is no longer involved.
+
+**Q4 (Browser-to-browser)**: WebRTC DataChannel with signaling through
+any connected native node. Browser nodes cannot be relay nodes.
+
+### Key Rotation Protocol (S10, K6.5)
+
+Nodes must support rolling key updates without losing mesh identity:
+
+1. Generate new Ed25519 keypair
+2. Create `key.rotate` chain event:
+   - Signed by BOTH old and new keys (dual-signed for continuity)
+   - Contains old_pubkey, new_pubkey, effective_after (chain_seq + grace_period)
+3. Broadcast key rotation announcement via mesh gossip
+4. During grace period: peers accept signatures from either key
+5. After grace period: old key revoked, only new key accepted
+6. DHT records updated with new node_id
+
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct KeyRotationEvent {
+    pub old_key: [u8; 32],
+    pub new_key: [u8; 32],
+    pub effective_after_seq: u64,
+    pub old_key_signature: [u8; 64],  // old key signs new_key
+    pub new_key_signature: [u8; 64],  // new key signs old_key
+}
+```
+
+### Browser Node Restrictions (S7)
+
+Browser nodes run in WASM sandbox with restricted capabilities:
+- Default `IpcScope::Restricted` -- can only message whitelisted services
+- Cannot be relay nodes or DHT bootstrap nodes
+- All connections through WebSocket to a native coordinator
+- Governance `browser_policy` rules enforce additional constraints:
+  - No direct filesystem access
+  - No agent spawning (can request via IPC to coordinator)
+  - Rate-limited IPC (max 100 msg/s)
+
 ### Doc 12 Deviations
 
 The symposium refined several decisions from doc 12:
@@ -966,6 +1213,15 @@ The symposium refined several decisions from doc 12:
 - [ ] Sync frames use RVF wire segments with SyncStreamType discriminator (D15)
 - [ ] PeerMetrics tracks observability dimensions for affinity scoring (D15)
 - [ ] KEM upgrade completes before sync streams are opened (D15)
+- [ ] Key rotation protocol allows rolling key updates with grace period (S10)
+- [ ] Browser nodes default to IpcScope::Restricted (S7)
+- [ ] Browser capability elevation requires governance gate approval (S7)
+- [ ] ruvector-cluster ConsistentHashRing used for PID-to-node assignment (D7)
+- [ ] ruvector-raft used for metadata consensus (service registry, process table) (D7)
+- [ ] ruvector-delta-consensus used for CRDT state gossip (D7)
+- [ ] InMemoryTransport enables mesh tests without real networking
+- [ ] MockPeer simulates remote nodes for protocol testing
+- [ ] Clock trait enables deterministic timeout testing
 
 ### Testing Verification Commands
 
@@ -1004,6 +1260,41 @@ maintain backward compatibility. No new crate dependencies.
 | Sign `MutationEvent.signature` with node key | `tree_manager.rs` | ~15 | -- |
 
 **Test**: Existing tests pass. New variant serde roundtrips. GlobalPid equality.
+
+#### Test Infrastructure (K6.0)
+
+Built BEFORE any mesh code, used by ALL subsequent phases:
+
+```rust
+/// In-memory transport for unit/integration tests.
+/// No real networking -- immediate delivery between test nodes.
+pub struct InMemoryTransport {
+    peers: DashMap<[u8; 32], mpsc::Sender<Vec<u8>>>,
+}
+
+impl MeshTransport for InMemoryTransport { ... }
+
+/// Simulated remote node for protocol testing.
+pub struct MockPeer {
+    pub identity: NodeIdentity,
+    pub chain: ChainManager,
+    pub services: ServiceRegistry,
+    pub governance_genesis_hash: [u8; 32],
+}
+
+/// Injectable clock for deterministic timeout/TTL testing.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+    fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
+
+pub struct SystemClock;  // real clock (production)
+pub struct MockClock;    // controllable clock (tests)
+```
+
+All timeout-dependent code (cache TTL, circuit breaker cooldown,
+heartbeat intervals) must use the `Clock` trait, not `Instant::now()`
+directly. This enables deterministic testing.
 
 #### K6.1: Transport + Noise Encryption (~420 lines, 3 new deps)
 
@@ -1222,6 +1513,17 @@ Full cognitive sync via dedicated QUIC streams (D14):
 - **Load-aware resolution**: Uses `NodeEccCapability.headroom_ratio` from
   ECC gossip (see M9)
 
+#### Manual Testing (K6)
+
+The manual testing guide (`.planning/development_notes/manual-testing-guide.md`)
+needs two new passes:
+
+- **Pass 6: Mesh Networking** -- multi-node startup, cross-node service calls,
+  chain sync verification, peer discovery, connection pool behavior
+- **Pass 7: Mesh Security** -- unauthorized peer rejection, governance gate
+  enforcement on remote calls, Noise encryption verification, foreign cluster
+  isolation via genesis hash prefix
+
 ### Line Count Summary
 
 | Phase | New Lines | Changed Lines | New Deps |
@@ -1239,16 +1541,16 @@ Full cognitive sync via dedicated QUIC streams (D14):
 
 ## Open Questions (Inherited from Symposium)
 
-| # | Question | Impact | Resolve By |
-|---|----------|--------|-----------|
-| Q1 | Chain merge: leader-based consensus or DAG? | K6.4 architecture | Before K6.4 |
-| Q2 | Wire format: JSON or RVF for KernelMessage? | Performance vs debuggability | K6.1 design |
-| Q3 | Browser identity persistence across sessions | UX + security | K6.1 browser transport |
-| Q4 | Full libp2p-kad or lighter custom DHT? | Dep weight | K6.2 design |
-| Q5 | Split-brain handling on network partition | Consistency vs availability | Before K6.4 |
-| Q6 | BLAKE3 (ECC D6) or stay with SHAKE-256? | Hash migration | K6.0 design |
-| Q7 | Maximum practical cluster size? | Config defaults, test scenarios | K6.2 testing |
-| Q8 | Tree sync: full snapshot or Merkle proof exchange? | Bandwidth vs complexity | K6.4 design |
+| # | Question | Impact | Resolve By | Status |
+|---|----------|--------|-----------|--------|
+| Q1 | Chain merge: leader-based consensus or DAG? | K6.4 architecture | Before K6.4 | **Resolved** -- see Refinement "Resolved Questions" |
+| Q2 | Wire format: JSON or RVF for KernelMessage? | Performance vs debuggability | K6.1 design | **Resolved** -- see Refinement "Resolved Questions" |
+| Q3 | Browser identity persistence across sessions | UX + security | K6.1 browser transport | **Resolved** -- see Refinement "Resolved Questions" |
+| Q4 | Full libp2p-kad or lighter custom DHT? | Dep weight | K6.2 design | **Resolved** -- see Refinement "Resolved Questions" |
+| Q5 | Split-brain handling on network partition | Consistency vs availability | Before K6.4 | **Resolved** -- see Refinement "Resolved Questions" |
+| Q6 | BLAKE3 (ECC D6) or stay with SHAKE-256? | Hash migration | K6.0 design | Open |
+| Q7 | Maximum practical cluster size? | Config defaults, test scenarios | K6.2 testing | Open |
+| Q8 | Tree sync: full snapshot or Merkle proof exchange? | Bandwidth vs complexity | K6.4 design | Open |
 
 ---
 
