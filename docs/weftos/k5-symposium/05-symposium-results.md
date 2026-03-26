@@ -1,7 +1,7 @@
 # K5 Symposium Results
 
 **Date**: 2026-03-25
-**Status**: COMPLETE -- 13 decisions rendered, 5 commitments made
+**Status**: COMPLETE -- 14 decisions rendered, 5 commitments made
 **Branch**: feature/weftos-kernel-sprint
 **Predecessor**: [ECC Symposium Results](../ecc-symposium/05-symposium-results-report.md)
 
@@ -364,6 +364,28 @@ gates, chain witnessing, and all existing middleware apply uniformly to remote
 calls.
 
 **Origin**: Mesh Architecture Panel (K6.3 refinement)
+
+### D14: CMVG Cognitive Sync via Multiplexed QUIC Streams
+
+**Decision**: CMVG cognitive substrate syncs via multiplexed QUIC streams over
+the same mesh connection as IPC traffic. No separate tree sync protocol.
+Chain replication (K6.4) implicitly carries ECC mutations via `ecc.*` events,
+providing ~80% CMVG sync. Dedicated cognitive streams (causal CRDT merge,
+vector batch, impulse flood) added in K7 for real-time coordination.
+CmvgSyncService registered as SystemService, queryable via ServiceApi (D13).
+
+**Rationale**: QUIC provides native stream multiplexing. Using separate protocols
+would duplicate connection management, authentication, governance gates, and
+chain witnessing. One Noise-encrypted connection per node pair covers control,
+chain replication, tree sync, IPC, and (in K7) all cognitive structure sync.
+Chain events already include `ecc.hnsw.insert`, `ecc.causal.link`,
+`ecc.crossref.create`, and `ecc.impulse.emit`, so replaying the chain
+reconstructs most CMVG state without dedicated streams.
+
+**Origin**: CMVG Architecture (K3c + K6 mesh synthesis)
+
+**Cross-references**: M11 in `01-mesh-architecture.md`, CMVG Cognitive Sync
+Architecture in `07-phase-K6-mesh-framework.md`
 
 ---
 

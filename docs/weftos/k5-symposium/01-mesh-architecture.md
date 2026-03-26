@@ -428,3 +428,29 @@ crates are needed.
 | M8 | 16 MiB max message size | Prevents memory exhaustion attacks |
 | M9 | Layered service resolution with genesis-hash DHT keys | Defense-in-depth cluster isolation, prevents DHT storms, enables replicated service selection |
 | M10 | Mesh RPCs reuse ServiceApi adapter pattern (D13) | No dedicated mesh protocol; all services remotely callable via existing dispatch |
+| M11 | CMVG sync uses multiplexed QUIC streams over same mesh connection (D14) | No separate tree sync protocol; chain replication provides implicit CMVG sync in K6.4, dedicated cognitive streams in K7 |
+
+---
+
+### CMVG Cognitive Sync (D14)
+
+The ECC cognitive substrate (K3c) syncs across the mesh using multiplexed
+QUIC streams. Rather than a separate tree sync protocol, all CMVG structures
+share the same Noise-encrypted connection as IPC traffic.
+
+**Design principle**: chain replication implicitly carries CMVG mutations via
+`ecc.*` events. Dedicated cognitive streams (causal merge, vector batch,
+impulse flood) are optimization for real-time coordination in K7.
+
+| Structure | Sync Mode | Conflict Resolution |
+|-----------|-----------|-------------------|
+| ExoChain | Log replication | Linear, no conflicts |
+| ResourceTree | Merkle diff | Hash comparison, subtree transfer |
+| CausalGraph | CRDT G-Set merge | Add-only, HLC ordering |
+| HNSW | Entry batch transfer | Insert replay, graph rebuilds locally |
+| CrossRefs | Edge gossip | Add-only, HLC dedup |
+| Impulses | Ephemeral flood | TTL expiry, (id, hlc) dedup |
+
+**M11**: CMVG sync uses multiplexed QUIC streams over the same mesh
+connection, not a separate protocol. Chain replication in K6.4 provides
+implicit CMVG sync. Dedicated cognitive streams in K7.

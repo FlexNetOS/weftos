@@ -5,7 +5,7 @@
 **Duration**: Weeks 11-16 (6 sub-phases)
 **Goal**: Extend WeftOS from a single-node kernel into a multi-node cluster with encrypted peer-to-peer networking, distributed IPC, chain replication, tree synchronization, and cluster-wide service discovery
 **Gate from**: K2 C10, K5 Symposium (2026-03-25)
-**Symposium Decisions**: D1-D13, Commitments C1-C5
+**Symposium Decisions**: D1-D14, Commitments C1-C5
 
 ---
 
@@ -624,6 +624,88 @@ fn handle_join_request(request: JoinRequest, peer: &EncryptedPeer):
 | `boot.rs` | Boot sequence adds mesh listener + peer discovery when feature enabled | D5 |
 | `service.rs` | `ServiceRegistry` gains cross-node service advertisement | D10 |
 
+### CMVG Cognitive Sync Architecture
+
+The Causal Merkle Vector Graph (CMVG) from K3c syncs across the mesh using
+multiplexed QUIC streams over a single Noise-encrypted connection per node pair.
+
+#### Stream Multiplexing
+
+| Stream | Structure | Sync Mode | Phase |
+|--------|-----------|-----------|-------|
+| 0 | Control | Ping, capability, handshake | K6.1 |
+| 1 | ExoChain | Ordered log replication | K6.4 |
+| 2 | ResourceTree | Merkle diff anti-entropy | K6.4 |
+| 3 | CausalGraph | CRDT delta merge (G-Set) | K7 |
+| 4 | HNSW Index | Vector entry batch transfer | K7 |
+| 5 | CrossRefs | Add-only edge gossip | K7 |
+| 6 | Impulses | Ephemeral flood (TTL-bounded) | K7 |
+| 7+ | IPC | KernelMessage / ServiceApi | K6.3 |
+
+#### Why One Connection, Not Separate Protocols
+
+QUIC provides native stream multiplexing. Using separate protocols would
+duplicate connection management, authentication, governance gates, and
+chain witnessing. One connection per node pair covers everything.
+
+#### Sync Modes by Structure
+
+**ExoChain (Stream 1)**: Log replication. Peer reports its sequence + hash,
+sender sends missing events as RVF segments. Linear chain = no merge conflict.
+Uses `ruvector-delta-consensus` with LWW on sequence numbers for leaderless mesh.
+
+**ResourceTree (Stream 2)**: Merkle tree anti-entropy. Compare root hashes,
+recurse on differing subtrees, transfer only changed nodes. O(changed) not O(total).
+The existing `exo-resource-tree` already computes Merkle root hashes.
+
+**CausalGraph (Stream 3)**: CRDT add-only G-Set. Edges have unique
+(source, target, type) keys and are never deleted. Merge = union.
+`CausalEdge.timestamp` (HLC) and `chain_seq` provide causal ordering.
+Uses `ruvector-delta-consensus::CausalDelta` with vector clocks.
+
+**HNSW Index (Stream 4)**: Vector entries (id, embedding, metadata) transferred
+as insert batches. HNSW graph structure is NOT synced — it rebuilds lazily
+on the receiving node. Chain events (`ecc.hnsw.insert`) provide the insert log.
+
+**CrossRefs (Stream 5)**: Add-only cross-structure edges gossipped with HLC
+deduplication. Same semantics as CausalGraph edges.
+
+**Impulses (Stream 6)**: Ephemeral events with short TTL (e.g., 5 cognitive ticks).
+Not persisted to chain. Gossipped via mesh GossipSub. Deduplicated by (impulse_id, hlc).
+
+#### Chain Replication as Implicit CMVG Sync
+
+Chain events include `ecc.hnsw.insert`, `ecc.causal.link`, `ecc.crossref.create`,
+`ecc.impulse.emit`. Replaying the chain reconstructs ~80% of CMVG state.
+Dedicated streams (3-6) are optimization for real-time cognitive coordination —
+they provide lower latency than waiting for chain replication.
+
+#### CmvgSyncService (K7)
+
+```rust
+pub struct CmvgSyncService {
+    chain: Arc<ChainManager>,
+    tree: Arc<TreeManager>,
+    causal: Arc<CausalGraph>,
+    hnsw: Arc<HnswService>,
+    crossrefs: Arc<CrossRefStore>,
+    impulses: Arc<ImpulseQueue>,
+}
+
+enum SyncStreamType {
+    Chain,    // Stream 1
+    Tree,     // Stream 2
+    Causal,   // Stream 3
+    Hnsw,     // Stream 4
+    CrossRef, // Stream 5
+    Impulse,  // Stream 6
+}
+```
+
+Registered as `SystemService`, remotely queryable via `ServiceApi` (D13):
+- `cmvg.sync_status` → current state hashes for all structures
+- `cmvg.delta { since_seq }` → changes since a given chain sequence
+
 ### Ruvector Reuse -- Symposium D7
 
 Ruvector algorithms are pure computation, producing messages to send and
@@ -761,6 +843,8 @@ The symposium refined several decisions from doc 12:
 - [ ] MeshAdapter dispatches incoming mesh messages through local A2ARouter
 - [ ] mesh.request() supports correlated request-response with timeout
 - [ ] Remote service calls use same governance gate as local calls
+- [ ] Chain log replication syncs events between mesh peers (K6.4)
+- [ ] Tree Merkle diff transfers only changed subtrees (K6.4)
 
 ### Testing Verification Commands
 
@@ -864,7 +948,15 @@ mesh.request() supports correlated RPC with timeout.
 
 #### K6.4: Chain Replication + Tree Sync (~300 lines)
 
-Synchronize chain events and resource tree state across nodes.
+Synchronize chain events and resource tree state across nodes. This phase
+also establishes the first two CMVG cognitive sync streams (D14):
+
+- **Chain log replication (Stream 1)**: Ordered event replication using
+  `ruvector-delta-consensus` with LWW on sequence numbers. Chain events
+  implicitly carry CMVG mutations via `ecc.*` event kinds, providing ~80%
+  of CMVG state sync without dedicated cognitive streams.
+- **Tree Merkle diff sync (Stream 2)**: Anti-entropy using Merkle root hash
+  comparison, recursing on differing subtrees, transferring only changed nodes.
 
 | File | Purpose | Lines |
 |------|---------|:-----:|
@@ -932,6 +1024,17 @@ from ECC gossip (see M9).
 detection, CRDT merge convergence, service resolution fallback (local-first),
 circuit breaker state transitions, affinity routing preference.
 
+#### K7 (Future): Full CMVG Cognitive Sync
+
+Full cognitive sync via dedicated QUIC streams (D14):
+
+- **Streams 3-6**: CausalGraph CRDT merge, HNSW vector batch transfer,
+  CrossRef edge gossip, Impulse ephemeral flood
+- **CmvgSyncService**: Registered as `SystemService`, remotely queryable
+  via `ServiceApi` (D13) — exposes `cmvg.sync_status` and `cmvg.delta`
+- **Load-aware resolution**: Uses `NodeEccCapability.headroom_ratio` from
+  ECC gossip (see M9)
+
 ### Line Count Summary
 
 | Phase | New Lines | Changed Lines | New Deps |
@@ -978,3 +1081,4 @@ circuit breaker state transitions, affinity routing preference.
 | `docs/weftos/k5-symposium/05-symposium-results.md` | Decisions D1-D12, Commitments C1-C5 |
 | `docs/weftos/sparc/k6-cluster-networking.md` | Earlier K6 sketch (superseded by this plan) |
 | `.planning/development_notes/k6-readiness-audit.md` | Readiness matrix (41 GREEN, 22 YELLOW, 21 RED) |
+| `docs/weftos/k5-symposium/05-symposium-results.md` | Decision D14: CMVG cognitive sync via multiplexed QUIC streams |
