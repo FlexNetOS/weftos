@@ -1,7 +1,7 @@
 {
   "domain": "clawft-weftos",
   "source": "decisions-and-phases",
-  "generated_at": "2026-03-26T20:16:30.078336+00:00",
+  "generated_at": "2026-03-26T23:00:14.793213+00:00",
   "nodes": [
     {
       "id": "decision:k2:D1",
@@ -86,8 +86,7 @@
       "title": "ExoChain-stored immutable API contracts",
       "rationale": "Service API schemas are critical artifacts. Immutable chain-anchored schemas are source of truth.",
       "panel": "Governance",
-      "status": "scheduled",
-      "resolution": "Sprint 10. EVENT_KIND_API_CONTRACT_REGISTERED constant added in 09b.",
+      "status": "pending",
       "commitments": [
         "C3"
       ]
@@ -109,8 +108,7 @@
       "title": "WASM-compiled shell with container sandbox",
       "rationale": "Shell scripts compiled to WASM, hash-chained, run inside container sandbox.",
       "panel": "Governance",
-      "status": "deferred",
-      "resolution": "Requires Wasmtime (D4) + container runtime. Deferred to post-Sprint 10.",
+      "status": "pending",
       "commitments": [
         "C5"
       ]
@@ -122,8 +120,7 @@
       "title": "Enable post-quantum signing immediately",
       "rationale": "rvf-crypto already has ML-DSA-65 DualKey; just not called yet.",
       "panel": "Crypto",
-      "status": "implemented",
-      "resolution": "Unblocked. dual_sign(), verify_dual_signature(), set_ml_dsa_key() in chain.rs with 8+ tests.",
+      "status": "blocked",
       "commitments": [
         "C6"
       ]
@@ -135,8 +132,7 @@
       "title": "Chain-agnostic blockchain anchoring trait",
       "rationale": "Define trait surface now, implement simplest binding first.",
       "panel": "Crypto",
-      "status": "deferred",
-      "resolution": "Deferred to post-1.0. Requires external chain SDKs.",
+      "status": "pending",
       "commitments": [
         "C7"
       ]
@@ -148,8 +144,7 @@
       "title": "Zero-knowledge proofs as foundational capability",
       "rationale": "ZK critical for rollups, privacy-preserving governance, verifiable computation.",
       "panel": "Crypto",
-      "status": "deferred",
-      "resolution": "Deferred to post-1.0. Requires ZK circuit infrastructure.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -191,8 +186,7 @@
       "title": "Layered routing: tiny-dancer learned + governance enforced",
       "rationale": "tiny-dancer suggests, capabilities verify, governance gate checks, message delivered.",
       "panel": "Strategy",
-      "status": "deferred",
-      "resolution": "Deferred. Requires governance trajectory learning data.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -202,8 +196,7 @@
       "title": "SONA at K5, training data pipeline from K3 forward",
       "rationale": "K3/K4 build training data into all endpoints. SONA reuptake spike in late K4.",
       "panel": "Strategy",
-      "status": "superseded",
-      "resolution": "Superseded by Weaver ECC model (Sprint 09c).",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -223,8 +216,7 @@
       "title": "Configurable N-dimensional effect algebra",
       "rationale": "Edge devices use 3D, full nodes use 10D. Configuration-driven dimensionality.",
       "panel": "IPC",
-      "status": "scheduled",
-      "resolution": "Sprint 10. Refactor EffectVector to HashMap-based dimensions.",
+      "status": "pending",
       "commitments": [
         "C9"
       ]
@@ -258,8 +250,7 @@
       "title": "Hierarchical ToolRegistry with kernel base + per-agent overlays",
       "rationale": "Shared base (Arc) + per-agent overlay registries. Resolves CF-3 waste.",
       "panel": "Kernel Auditor",
-      "status": "implemented",
-      "resolution": "Already in wasm_runner.rs: parent: Option<Arc<ToolRegistry>>, with_parent(), 4 tests.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -269,8 +260,7 @@
       "title": "Context-based gate actions: generic tool.exec with rich context",
       "rationale": "Pass tool name + effect vector as context; governance handles granularity.",
       "panel": "Services Architect",
-      "status": "implemented",
-      "resolution": "Sprint 09b: with_tool_context() builder in GovernanceRequest.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -280,8 +270,7 @@
       "title": "Implement all 25 remaining tools in K4",
       "rationale": "Reference implementations prove the pattern; remaining tools are straightforward.",
       "panel": "Research Analyst",
-      "status": "deferred",
-      "resolution": "Deferred to post-Sprint 10. Tool framework must be stable first.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -291,8 +280,7 @@
       "title": "Wasmtime integration in K4 alongside container runtime",
       "rationale": "WASM container provides same isolation as Docker for WASM modules.",
       "panel": "Integration Architect",
-      "status": "scheduled",
-      "resolution": "Sprint 10. Wire wasmtime::Engine into WasmToolRunner.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -302,8 +290,7 @@
       "title": "Disk-persisted compiled module cache",
       "rationale": "Wasmtime compilation is 50-200ms; disk persistence survives restarts.",
       "panel": "Integration Architect",
-      "status": "deferred",
-      "resolution": "Bundled with D4 Wasmtime integration in Sprint 10.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -313,8 +300,7 @@
       "title": "Configurable WASI with read-only sandbox default",
       "rationale": "Per-tool filesystem access via ToolSpec.permissions.",
       "panel": "Research Analyst",
-      "status": "scheduled",
-      "resolution": "Sprint 10, bundled with D4 Wasmtime integration.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -324,8 +310,7 @@
       "title": "Tree metadata for version history",
       "rationale": "Fast O(1) version queries without chain traversal.",
       "panel": "Services Architect",
-      "status": "scheduled",
-      "resolution": "Sprint 10. Add TreeNodeVersion struct to tree_manager.rs.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -335,8 +320,7 @@
       "title": "Informational revocation; governance gate handles enforcement",
       "rationale": "Revocation is data; governance rules decide what to do with it.",
       "panel": "Services Architect",
-      "status": "implemented",
-      "resolution": "Sprint 09b: EVENT_KIND_CAPABILITY_REVOKED + EVENT_KIND_TOOL_VERSION_REVOKED constants.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -346,8 +330,7 @@
       "title": "Central authority + CA chain for tool signing",
       "rationale": "Kernel signs built-ins; developer keypairs with kernel-signed CA for third-party.",
       "panel": "Research Analyst",
-      "status": "deferred",
-      "resolution": "Deferred to post-1.0. PKI infrastructure out of scope.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -357,8 +340,7 @@
       "title": "Separate ServiceApi and BuiltinTool concepts",
       "rationale": "Tools are one-shot; services are long-running. Different lifecycles.",
       "panel": "Integration Architect",
-      "status": "implemented",
-      "resolution": "Already separated: ServiceApi in service.rs, BuiltinTool in wasm_runner.rs.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -378,8 +360,7 @@
       "title": "Multi-layer sandboxing: governance + environment + sudo override",
       "rationale": "Three-layer defense in depth: governance, environment config, user override.",
       "panel": "Research Analyst",
-      "status": "implemented",
-      "resolution": "Sprint 09b: SandboxLayer enum, SandboxDecision, check_path_multilayer() in wasm_runner.rs.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -399,8 +380,7 @@
       "title": "tiny-dancer scoring for native vs WASM routing",
       "rationale": "Governance finds the right route; tiny-dancer finds the best route.",
       "panel": "RUV Expert",
-      "status": "deferred",
-      "resolution": "Deferred. Coupled with k2:D17 governance trajectory learning.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -450,8 +430,7 @@
       "title": "DEMOCRITUS as continuous nervous system operation",
       "rationale": "Not batch; 30-second micro-batches distributed across network.",
       "panel": "User Insight",
-      "status": "implemented",
-      "resolution": "Mapped to Sprint 09c Weaver Runtime CognitiveTick integration.",
+      "status": "pending",
       "commitments": []
     },
     {
@@ -647,18 +626,16 @@
       "type": "commitment",
       "symposium": "k2",
       "description": "Define ServiceApi internal surface trait",
-      "status": "implemented",
-      "phase": "K3",
-      "resolution": "ServiceApi trait in service.rs with call(), list_services(), health(). ShellAdapter + McpAdapter."
+      "status": "pending",
+      "phase": "K3"
     },
     {
       "id": "commitment:k2:C3",
       "type": "commitment",
       "symposium": "k2",
       "description": "Chain-anchored service contracts",
-      "status": "scheduled",
-      "phase": "Sprint 10",
-      "resolution": "EVENT_KIND_API_CONTRACT_REGISTERED constant added. Full integration Sprint 10."
+      "status": "pending",
+      "phase": "K3"
     },
     {
       "id": "commitment:k2:C4",
@@ -673,27 +650,24 @@
       "type": "commitment",
       "symposium": "k2",
       "description": "WASM-compiled shell pipeline",
-      "status": "deferred",
-      "phase": "post-Sprint 10",
-      "resolution": "Deferred. Requires Wasmtime (D4) + container runtime."
+      "status": "pending",
+      "phase": "K3/K4"
     },
     {
       "id": "commitment:k2:C6",
       "type": "commitment",
       "symposium": "k2",
       "description": "Enable post-quantum dual signing (DualKey)",
-      "status": "implemented",
-      "phase": "K2.1",
-      "resolution": "Unblocked. dual_sign(), verify_dual_signature(), 8+ tests in chain.rs."
+      "status": "blocked",
+      "phase": "K2.1"
     },
     {
       "id": "commitment:k2:C7",
       "type": "commitment",
       "symposium": "k2",
       "description": "ChainAnchor trait for blockchain anchoring",
-      "status": "deferred",
-      "phase": "post-1.0",
-      "resolution": "Deferred. Requires external chain SDKs."
+      "status": "pending",
+      "phase": "K3/K4"
     },
     {
       "id": "commitment:k2:C8",
@@ -708,9 +682,8 @@
       "type": "commitment",
       "symposium": "k2",
       "description": "Configurable N-dimensional EffectVector",
-      "status": "scheduled",
-      "phase": "Sprint 10",
-      "resolution": "Refactor EffectVector from fixed 5D to HashMap-based N-dimensional."
+      "status": "pending",
+      "phase": "K3"
     },
     {
       "id": "commitment:k2:C10",
@@ -725,63 +698,56 @@
       "type": "commitment",
       "symposium": "k3",
       "description": "Hierarchical ToolRegistry with Arc-shared base",
-      "status": "implemented",
-      "phase": "K4",
-      "resolution": "Already in wasm_runner.rs: parent: Option<Arc<ToolRegistry>>, with_parent()."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-2",
       "type": "commitment",
       "symposium": "k3",
       "description": "Enriched gate context (tool name + effect vector)",
-      "status": "implemented",
-      "phase": "Sprint 09b",
-      "resolution": "with_tool_context() builder in GovernanceRequest."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-3",
       "type": "commitment",
       "symposium": "k3",
       "description": "Multi-layer FsReadFileTool sandboxing",
-      "status": "implemented",
-      "phase": "Sprint 09b",
-      "resolution": "SandboxLayer enum + SandboxDecision + check_path_multilayer() in wasm_runner.rs."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-4",
       "type": "commitment",
       "symposium": "k3",
       "description": "All 25 remaining tool implementations",
-      "status": "deferred",
-      "phase": "post-Sprint 10",
-      "resolution": "Deferred. Requires stable tool framework."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-5",
       "type": "commitment",
       "symposium": "k3",
       "description": "Wasmtime activation + disk cache + WASI scope",
-      "status": "scheduled",
-      "phase": "Sprint 10",
-      "resolution": "Wire wasmtime::Engine into WasmToolRunner + CompiledModuleCache."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-6",
       "type": "commitment",
       "symposium": "k3",
       "description": "Tree version history persistence",
-      "status": "scheduled",
-      "phase": "Sprint 10",
-      "resolution": "Add TreeNodeVersion struct to tree_manager.rs."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k3:AC-7",
       "type": "commitment",
       "symposium": "k3",
       "description": "CA chain signing for tools",
-      "status": "deferred",
-      "phase": "post-1.0",
-      "resolution": "Deferred. PKI infrastructure out of scope for pre-1.0."
+      "status": "pending",
+      "phase": "K4"
     },
     {
       "id": "commitment:k5:C1",
