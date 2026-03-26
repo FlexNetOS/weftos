@@ -1,47 +1,176 @@
-# clawft
+# clawft + WeftOS
 
-[![Crates.io](https://img.shields.io/crates/v/clawft.svg)](https://crates.io/crates/clawft)
-[![docs.rs](https://docs.rs/clawft/badge.svg)](https://docs.rs/clawft)
-[![CI](https://github.com/clawft/clawft/actions/workflows/ci.yml/badge.svg)](https://github.com/clawft/clawft/actions/workflows/ci.yml)
+[![CI](https://github.com/weave-logic-ai/clawft/actions/workflows/ci.yml/badge.svg)](https://github.com/weave-logic-ai/clawft/actions/workflows/ci.yml)
 [![License](https://img.shields.io/crates/l/clawft.svg)](LICENSE)
 
-A modular, async Rust framework for building AI assistants that connect to
-multiple messaging channels and LLM providers. The CLI binary is called `weft`.
+**clawft** is a modular, async Rust framework for building AI assistants.
+**WeftOS** is the kernel layer that turns clawft into a distributed operating
+system for AI agents — with process management, capability-based security,
+mesh networking, and a cognitive substrate.
 
-clawft provides a 6-stage message processing pipeline, pluggable channel
-adapters (Telegram, Slack, Discord), and a provider-agnostic LLM layer with
-OpenAI-compatible API support.
+Together, they run on 5 platforms: native Linux/macOS/Windows binaries, WASI
+containers, browser tabs (via WASM), edge devices, and cloud VMs — forming
+encrypted peer-to-peer clusters across all of them.
+
+## What This Is
+
+```
++------------------------------------------------------------------+
+|                        clawft                                     |
+|  AI assistant framework: LLM providers, channels, tools, skills  |
++------------------------------------------------------------------+
+|                        WeftOS                                     |
+|  Kernel: processes, IPC, governance, ExoChain, mesh networking   |
++------------------------------------------------------------------+
+|                     ECC Cognitive Substrate                       |
+|  Causal DAG, cognitive tick, HNSW search, impulse queue          |
++------------------------------------------------------------------+
+|                     Platform Layer                                |
+|  Native (tokio) | WASI | Browser (wasm32) | Edge | Cloud        |
++------------------------------------------------------------------+
+```
+
+**clawft** handles the AI layer: connecting to LLM providers (OpenAI, Anthropic,
+Ollama, local models), managing conversations across channels (Telegram, Slack,
+Discord, CLI, WebSocket), executing tools in sandboxes, and composing agent
+skills.
+
+**WeftOS** handles the OS layer: booting a kernel with a process table, enforcing
+per-agent RBAC capabilities, routing messages between agents (locally and across
+nodes), maintaining an append-only hash chain (ExoChain) for audit trails,
+synchronizing resource trees across clusters, and governing all operations
+through a three-branch constitutional model.
+
+**ECC** (Ephemeral Causal Cognition) is the cognitive substrate: a causal DAG
+that tracks how ideas relate, a cognitive tick that adaptively processes events,
+HNSW approximate nearest neighbor search for semantic memory, cross-references
+linking structures across the kernel, and an impulse queue for ephemeral
+real-time signals.
+
+## Platform Support
+
+| Platform | Binary | Transport | Features |
+|----------|--------|-----------|----------|
+| **Linux** (x86_64, aarch64) | `weft` / `weave` | TCP, QUIC, WebSocket | Full kernel + mesh + WASM sandbox |
+| **macOS** (x86_64, aarch64) | `weft` / `weave` | TCP, QUIC, WebSocket | Full kernel + mesh + WASM sandbox |
+| **Windows** (x86_64) | `weft.exe` / `weave.exe` | TCP, WebSocket | Full kernel + mesh |
+| **Browser** (wasm32) | `clawft-wasm` | WebSocket | Agent framework, restricted IPC |
+| **WASI** (wasm32-wasi) | `clawft-wasi` | WebSocket | Agent framework, sandboxed tools |
+| **Edge** (ARM64) | `weft` | TCP, mDNS | Kernel + local mesh discovery |
+| **Cloud VM** | `weft` / `weave` | TCP, QUIC, WebSocket | Full stack + Kademlia DHT |
+| **Docker** | `alpine:weft` | Configurable | Sidecar orchestration |
+
+All platforms can join the same mesh cluster. A browser tab running `clawft-wasm`
+connects via WebSocket to a cloud VM running full WeftOS, which peers with edge
+devices over mDNS — all sharing the same governance rules, chain state, and
+service registry.
 
 ## Key Features
 
-- **Multi-channel messaging** -- Telegram, Slack, and Discord adapters with a
-  unified PluginHost architecture
-- **LLM provider abstraction** -- OpenAI-compatible and native provider
-  interfaces behind a single trait
-- **6-stage pipeline** -- Classifier, Router, Assembler, Transport, Scorer,
+### clawft (AI Framework)
+
+- **Multi-provider LLM** — OpenAI, Anthropic, Ollama, vLLM, llama.cpp, and any
+  OpenAI-compatible API behind a single trait
+- **Multi-channel messaging** — Telegram, Slack, Discord, CLI, WebSocket, HTTP
+  with a unified PluginHost architecture
+- **6-stage pipeline** — Classifier, Router, Assembler, Transport, Scorer,
   Learner for structured message processing
-- **Tool system** -- File operations, shell execution, memory, web search/fetch,
-  message dispatch, and agent spawning
-- **MCP integration** -- Dual-mode Model Context Protocol support: `weft
-  mcp-server` exposes built-in tools to an LLM host (server mode), and
-  `tools.mcp_servers` config connects to external MCP servers as a client
-- **Session persistence** -- JSONL-based session history with consolidation,
-  long-term memory (MEMORY.md), and history summaries (HISTORY.md)
-- **Vector memory** -- Optional `vector-memory` feature gate for
-  IntelligentRouter, VectorStore, and SessionIndexer
-- **Scheduled jobs** -- CronService for recurring tasks with full CRUD
-  management
-- **Security** -- Workspace-sandboxed file operations with path traversal
-  prevention
-- **WASM support** -- `clawft-wasm` crate for wasm32 targets
-- **Tiny release binaries** -- opt-level="z", LTO, stripped, single codegen
-  unit, panic=abort
-- **Graceful shutdown** -- CancellationToken-based coordinated shutdown across
-  all services
+- **Tool system** — 27 built-in tools (filesystem, shell, memory, web, agent
+  management) with WASM sandboxing
+- **MCP integration** — Dual-mode Model Context Protocol: expose tools as server
+  or connect to external MCP servers as client
+- **Skills and agents** — Declarative SKILL.md format, multi-agent spawning,
+  inter-agent IPC
+- **Plugin system** — Git, Cargo, OAuth2, TreeSitter, browser, calendar,
+  containers — all hot-reloadable
+
+### WeftOS (Kernel)
+
+- **Process management** — PID allocation, state machine (Running/Suspended/
+  Stopping), resource tracking, agent supervisor with spawn/stop/restart
+- **IPC** — Typed `KernelMessage` envelopes with 7 target types (Process, Topic,
+  Broadcast, Service, ServiceMethod, RemoteNode, Kernel) and 6 payload variants
+- **Capability-based security** — Per-agent RBAC with IpcScope (All/ParentOnly/
+  Restricted/Topic/None), ToolPermissions, SandboxPolicy, ResourceLimits
+- **ExoChain** — Append-only hash chain with SHAKE-256 linking, Ed25519 + ML-DSA-65
+  dual signing, RVF segment persistence, witness chains, and lineage records
+- **Three-branch governance** — Legislative/Executive/Judicial branches evaluate
+  every privileged operation against 5-dimensional effect vectors (risk, fairness,
+  privacy, novelty, security). Environment-scoped: dev is lenient, prod is strict.
+- **WASM sandbox** — Wasmtime-based tool execution with fuel metering (CPU
+  budget), memory limits (allocation bomb prevention), and complete host
+  filesystem isolation
+- **Container integration** — Docker/Podman sidecar orchestration with health
+  check propagation to the kernel health system
+- **Application framework** — `weftapp.toml` manifests, install/start/stop
+  lifecycle, agent spawning with capability wiring from manifests
+
+### Mesh Networking (K6)
+
+- **Transport-agnostic** — TCP and WebSocket today, QUIC (quinn) ready.
+  `MeshTransport` trait makes any byte stream a mesh link.
+- **Noise Protocol encryption** — XX pattern for first contact, IK for known
+  peers. All inter-node traffic encrypted. Ed25519 static keys.
+- **Post-quantum protection** — Hybrid ML-KEM-768 + X25519 key exchange.
+  Graceful degradation when one side lacks KEM support. Protects against
+  store-now-decrypt-later quantum attacks.
+- **Peer discovery** — Static seed peers, peer exchange during handshake, mDNS
+  for LAN discovery (UDP multicast), Kademlia DHT for WAN discovery (XOR
+  distance, k-buckets, governance-namespaced keys).
+- **Cross-node IPC** — `MeshIpcEnvelope` transports `KernelMessage` across nodes
+  transparently. Hop counting prevents routing loops. Bloom filter deduplication
+  prevents double delivery.
+- **Distributed process table** — CRDT-based last-writer-wins process
+  advertisements. ConsistentHashRing for PID-to-node assignment.
+- **Service discovery** — `ClusterServiceRegistry` with round-robin and
+  affinity-based resolution. TTL-cached with negative cache. Circuit breaker
+  prevents cascade failures.
+- **Chain replication** — Incremental `tail_from()` sync, fork detection,
+  bridge events anchoring remote chain heads, backpressure with checkpoint
+  catch-up when >1000 events behind.
+- **Tree synchronization** — Merkle root comparison, incremental diff transfer
+  of only changed subtrees. Signed mutations verified against node Ed25519 keys.
+- **SWIM heartbeat** — Alive/Suspect/Dead state machine with configurable
+  timeouts. Direct ping + indirect probe via random witnesses.
+- **Metadata consensus** — Raft-style log for service registry and process table.
+  CRDT gossip for eventually-consistent state convergence.
+
+### ECC (Ephemeral Causal Cognition)
+
+The cognitive substrate that gives WeftOS agents the ability to reason about
+causality, search semantic memory, and process ephemeral signals in real-time.
+
+- **Causal DAG** — Typed, weighted edges tracking how ideas, events, and
+  decisions relate. BFS traversal and path finding. Every edge links to the
+  chain event that created it.
+- **Cognitive tick** — An adaptive processing interval that fires regularly,
+  processing accumulated causal edges, updating the HNSW index, and detecting
+  drift. Auto-calibrated at boot time based on hardware capability.
+- **HNSW search** — Approximate nearest neighbor search over high-dimensional
+  embeddings. Thread-safe wrapper around `instant-distance`. Enables semantic
+  queries like "find the 10 most similar past decisions."
+- **Cross-references** — BLAKE3-based `UniversalNodeId` links structures across
+  the kernel: chain events to tree nodes to causal edges to HNSW entries.
+  Bidirectional traversal.
+- **Impulse queue** — HLC-sorted ephemeral events with short TTL. For real-time
+  cognitive coordination: "this agent just completed a task" signals that decay
+  rather than persist.
+- **Boot-time calibration** — Benchmarks compute time per tick, measures p50/p95
+  latency, auto-adjusts tick interval for the hardware. Prevents cognitive
+  overload on constrained devices.
+- **Three operating modes** — The same engine runs in three modes:
+  - **Act**: Real-time conversation processing within the cognitive tick
+  - **Analyze**: Post-hoc understanding of existing corpora (transcripts, PRs,
+    research papers)
+  - **Generate**: Goal-directed content generation using causal planning
+- **Cluster advertisement** — `NodeEccCapability` advertises each node's
+  cognitive capacity (tick interval, compute headroom, HNSW vector count, causal
+  edge count, spectral analysis support) so the mesh can route ECC queries to
+  capable nodes.
 
 ## Quick Start
 
-### Install from crates.io
+### Install
 
 ```sh
 cargo install clawft-cli
@@ -49,310 +178,193 @@ cargo install clawft-cli
 
 ### Configure
 
-Create a configuration file (default: `config.json`):
-
-```json
-{
-  "llm": {
-    "provider": "openai",
-    "model": "gpt-4o",
-    "api_key_env": "OPENAI_API_KEY"
-  },
-  "agent": {
-    "system_prompt": "You are a helpful assistant.",
-    "workspace": "."
-  }
-}
-```
-
-Set environment variables for your LLM provider:
-
 ```sh
 export OPENAI_API_KEY="sk-..."
 ```
 
-### Run
-
-Start an interactive agent session:
+### Run an agent
 
 ```sh
 weft agent
-```
-
-Send a single message:
-
-```sh
 weft agent -m "Summarize this project"
 ```
 
-Start the gateway (channels + agent loop):
+### Run WeftOS kernel
 
 ```sh
-weft gateway
+weave boot                # Start the kernel
+weave ps                  # List running processes
+weave service list        # List registered services
+weave chain status        # ExoChain status
+weave app install myapp   # Install an application
+weave app list            # List installed apps
+weave cluster peers       # Show mesh peers
+weave ecc status          # ECC cognitive substrate status
 ```
-
-## CLI Usage
-
-```
-weft <COMMAND>
-
-Commands:
-  agent        Interactive agent session or single message
-  gateway      Start channels + agent loop
-  status       Configuration diagnostics
-  channels     Channel management
-  cron         Scheduled job management
-  sessions     Session management
-  memory       Agent memory operations
-  config       Configuration inspection
-  completions  Generate shell completions
-```
-
-### Examples
-
-```sh
-# Check configuration
-weft status
-
-# View channel status
-weft channels status
-
-# Manage scheduled jobs
-weft cron list
-weft cron add --name daily-summary --schedule "0 9 * * *" --command "summarize"
-weft cron enable daily-summary
-weft cron run daily-summary
-
-# Session management
-weft sessions list
-weft sessions inspect <session-id>
-weft sessions delete <session-id>
-
-# Memory operations
-weft memory show
-weft memory history
-weft memory search "authentication patterns"
-
-# Configuration
-weft config show
-weft config section llm
-
-# Shell completions
-weft completions bash > ~/.local/share/bash-completion/completions/weft
-weft completions zsh > ~/.zfunc/_weft
-weft completions fish > ~/.config/fish/completions/weft.fish
-```
-
-## Configuration
-
-clawft resolves configuration from multiple sources in order of precedence:
-
-1. Command-line arguments
-2. Environment variables
-3. Configuration file (`config.json`)
-
-### Configuration File
-
-```json
-{
-  "llm": {
-    "provider": "openai",
-    "model": "gpt-4o",
-    "api_key_env": "OPENAI_API_KEY",
-    "base_url": "https://api.openai.com/v1",
-    "max_tokens": 4096,
-    "temperature": 0.7
-  },
-  "agent": {
-    "system_prompt": "You are a helpful assistant.",
-    "workspace": "/path/to/workspace",
-    "tools": ["file", "shell", "memory", "web_search", "web_fetch", "message", "spawn"]
-  },
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token_env": "TELEGRAM_BOT_TOKEN"
-    },
-    "slack": {
-      "enabled": true,
-      "token_env": "SLACK_BOT_TOKEN",
-      "app_token_env": "SLACK_APP_TOKEN"
-    },
-    "discord": {
-      "enabled": true,
-      "token_env": "DISCORD_BOT_TOKEN"
-    }
-  },
-  "tools": {
-    "mcp_servers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
-      }
-    }
-  },
-  "services": {
-    "heartbeat_interval_secs": 30
-  }
-}
-```
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | OpenAI API key |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
-| `SLACK_BOT_TOKEN` | Slack bot OAuth token |
-| `SLACK_APP_TOKEN` | Slack app-level token (Socket Mode) |
-| `DISCORD_BOT_TOKEN` | Discord bot token |
-| `CLAWFT_CONFIG` | Path to configuration file |
-| `CLAWFT_LOG` | Log level (trace, debug, info, warn, error) |
 
 ## Architecture
 
-clawft is organized as a Cargo workspace with 9 crates:
-
-```mermaid
-graph TD
-    CLI[clawft-cli]
-    WASM[clawft-wasm]
-    CHANNELS[clawft-channels]
-    SERVICES[clawft-services]
-    TOOLS[clawft-tools]
-    CORE[clawft-core]
-    LLM[clawft-llm]
-    PLATFORM[clawft-platform]
-    TYPES[clawft-types]
-
-    CLI --> CORE
-    CLI --> CHANNELS
-    CLI --> SERVICES
-    CLI --> TOOLS
-    CLI --> LLM
-
-    WASM --> CORE
-    WASM --> PLATFORM
-
-    CHANNELS --> CORE
-    CHANNELS --> TYPES
-
-    SERVICES --> CORE
-    SERVICES --> TYPES
-
-    TOOLS --> CORE
-    TOOLS --> PLATFORM
-    TOOLS --> TYPES
-
-    CORE --> LLM
-    CORE --> PLATFORM
-    CORE --> TYPES
-
-    LLM --> TYPES
-    LLM --> PLATFORM
-
-    PLATFORM --> TYPES
-```
-
-| Crate | Description |
-|-------|-------------|
-| `clawft-types` | Core types: Config, events, errors |
-| `clawft-platform` | Platform abstraction (filesystem, HTTP, env, process) for native + WASM |
-| `clawft-core` | Agent engine: AgentLoop, MessageBus, 6-stage pipeline, session management, memory, security |
-| `clawft-llm` | LLM provider abstraction (OpenAI-compatible + native) |
-| `clawft-tools` | Tool implementations: file ops, shell, memory, web search/fetch, message, spawn |
-| `clawft-channels` | Channel plugins (Telegram, Slack, Discord) with PluginHost |
-| `clawft-services` | Background services: CronService, HeartbeatService, MCP |
-| `clawft-cli` | CLI binary `weft` with subcommands |
-| `clawft-wasm` | WASM entrypoint for wasm32 targets |
-
-### Message Pipeline
+clawft is organized as a Cargo workspace with 22 crates:
 
 ```
-Inbound message
-    |
-    v
-[Classifier] -- Categorize intent and extract metadata
-    |
-    v
-[Router] -- Select handler (or IntelligentRouter with vector-memory)
-    |
-    v
-[Assembler] -- Build LLM prompt with context, tools, and history
-    |
-    v
-[Transport] -- Send to LLM provider, stream response
-    |
-    v
-[Scorer] -- Evaluate response quality
-    |
-    v
-[Learner] -- Update memory and session state
-    |
-    v
-Outbound message (markdown -> channel-native format)
+clawft-cli / clawft-weave     CLI binaries (weft / weave)
+  |
+clawft-kernel                  WeftOS kernel (K0-K6)
+  |  |- boot, process, supervisor, capability
+  |  |- ipc, a2a, topic, cron, health, service
+  |  |- chain, tree_manager, gate, governance
+  |  |- wasm_runner, container, app, agency
+  |  |- mesh_*, mesh_tcp, mesh_ws (17 networking modules)
+  |  |- causal, cognitive_tick, hnsw_service (ECC)
+  |
+clawft-core                    Agent engine, MessageBus, pipeline
+clawft-llm                     LLM provider abstraction
+clawft-tools                   Tool implementations
+clawft-channels                Channel plugins
+clawft-services                Background services
+clawft-plugin-*                Plugin crates (git, cargo, oauth2, ...)
+clawft-security                Security policies
+clawft-wasm                    Browser WASM target
+exo-resource-tree              Merkle resource tree with mutation log
 ```
+
+### Feature Flags
+
+| Feature | Crate | Description |
+|---------|-------|-------------|
+| `native` | `clawft-kernel` | Tokio runtime, native file I/O (default) |
+| `exochain` | `clawft-kernel` | ExoChain hash chain + resource tree + gate backends |
+| `cluster` | `clawft-kernel` | Multi-node clustering via ruvector-cluster/raft |
+| `mesh` | `clawft-kernel` | Mesh networking (TCP, WebSocket, discovery, IPC) |
+| `ecc` | `clawft-kernel` | ECC cognitive substrate (causal DAG, HNSW, impulse) |
+| `wasm-sandbox` | `clawft-kernel` | Wasmtime WASM tool execution |
+| `containers` | `clawft-kernel` | Docker/Podman container integration |
+| `vector-memory` | `clawft-core` | IntelligentRouter, VectorStore, SessionIndexer |
+
+Build configurations:
+
+```sh
+# Minimal (single-node, no networking)
+cargo build --release
+
+# Full kernel with mesh networking
+cargo build --release --features "native,exochain,cluster,mesh,ecc"
+
+# Everything
+cargo build --release --features "native,exochain,cluster,mesh,ecc,wasm-sandbox,containers"
+
+# Browser target
+cargo build --release --target wasm32-unknown-unknown -p clawft-wasm
+```
+
+## Testing
+
+843 tests across all kernel features. Zero regressions across feature combinations.
+
+```sh
+# All tests (full features)
+cargo test -p clawft-kernel --features "native,exochain,cluster,mesh,wasm-sandbox"
+
+# Phase gate verification (K3-K6)
+scripts/k6-gate.sh
+
+# Build check
+scripts/build.sh check
+
+# Lint
+scripts/build.sh clippy
+```
+
+## Documentation
+
+The documentation site is built with [Fumadocs](https://fumadocs.vercel.app/)
+and lives in `docs/src/`:
+
+```sh
+cd docs/src
+npm install
+npm run dev     # http://localhost:3000
+```
+
+32 pages across two sections:
+- **clawft** — Getting started, architecture, CLI reference, configuration,
+  plugins, providers, channels, tools, skills, browser mode, deployment, security
+- **WeftOS** — Architecture, kernel phases (K0-K6), boot sequence, process table,
+  IPC, capabilities, ExoChain, governance, WASM sandbox, containers, app framework,
+  mesh networking, discovery, clustering, ECC, security, decisions, kernel guide
+
+## Governance Model
+
+WeftOS uses a three-branch constitutional governance model inspired by
+separation of powers:
+
+| Branch | Role | Example Rules |
+|--------|------|---------------|
+| **Legislative** | Define what agents can do | "Agents may not access /etc" |
+| **Executive** | Approve runtime operations | "Auto-approve low-risk tool calls" |
+| **Judicial** | Review and audit after the fact | "Flag operations with risk > 0.8" |
+
+Every privileged operation is evaluated against a 5-dimensional **EffectVector**:
+
+| Dimension | Measures |
+|-----------|----------|
+| Risk | Potential for harm or data loss |
+| Fairness | Equitable resource distribution |
+| Privacy | Data exposure and access scope |
+| Novelty | Deviation from established patterns |
+| Security | Attack surface and vulnerability |
+
+Environments apply different thresholds:
+- **Development**: Lenient (threshold 0.9) — rapid iteration
+- **Staging**: Normal (threshold 0.6) — pre-production validation
+- **Production**: Strict (threshold 0.3) — maximum safety
+
+## Security
+
+- **Capability-based access control** — Every agent has explicit capabilities
+  (IPC scope, tool permissions, spawn rights, resource limits)
+- **Dual-layer governance gate** — Routing-time check before message delivery +
+  handler-time check before tool execution
+- **Noise Protocol encryption** — All inter-node traffic encrypted with forward
+  secrecy and mutual authentication
+- **Post-quantum cryptography** — Hybrid ML-KEM-768 + X25519 key exchange,
+  Ed25519 + ML-DSA-65 dual chain signing
+- **WASM sandbox isolation** — Fuel metering, memory limits, no host filesystem
+  access by default
+- **Message size limits** — 16 MiB maximum at all deserialization boundaries
+- **Rate limiting** — Configurable peer addition rate limiting
+- **Browser sandboxing** — Browser agents start with `IpcScope::Restricted`,
+  capability elevation requires governance gate approval
+- **Tamper-evident audit trail** — ExoChain with SHAKE-256 hash linking,
+  integrity verification, witness chains
 
 ## Building from Source
 
 ### Prerequisites
 
-- Rust 1.93 or later (edition 2024)
-- Cargo
+- Rust 1.93+ (edition 2024)
+- Node.js 18+ (for documentation site)
+- Docker (optional, for container features)
 
 ### Build
 
 ```sh
-git clone https://github.com/clawft/clawft.git
+git clone https://github.com/weave-logic-ai/clawft.git
 cd clawft
-cargo build --release
-```
-
-The release binary will be at `target/release/weft`.
-
-### Build for WASM
-
-```sh
-cargo build --release --target wasm32-unknown-unknown -p clawft-wasm
-```
-
-## Feature Flags
-
-| Feature | Crate | Description |
-|---------|-------|-------------|
-| `vector-memory` | `clawft-core` | Enables IntelligentRouter, VectorStore, and SessionIndexer |
-
-Enable features at build time:
-
-```sh
-cargo build --release --features vector-memory
-```
-
-## Testing
-
-The workspace includes 892 tests across all crates.
-
-```sh
-# Run all tests
-cargo test --workspace
-
-# Run tests for a specific crate
-cargo test -p clawft-core
-
-# Run tests with the vector-memory feature
-cargo test --workspace --features vector-memory
+scripts/build.sh native          # Release binary
+scripts/build.sh native-debug    # Debug binary (fast iteration)
+scripts/build.sh test            # Run tests
+scripts/build.sh gate            # Full phase gate (11 checks)
+scripts/build.sh all             # Everything (native + wasi + browser + ui)
 ```
 
 ## Contributing
 
-Contributions are welcome. Please follow these guidelines:
-
 1. Fork the repository and create a feature branch
 2. Write tests for new functionality
-3. Ensure all tests pass: `cargo test --workspace`
-4. Run clippy: `cargo clippy --workspace -- -D warnings`
-5. Format code: `cargo fmt --all`
-6. Submit a pull request
+3. Run `scripts/build.sh gate` before submitting
+4. Follow the [kernel developer guide](docs/src/content/docs/weftos/kernel-guide.mdx)
+5. Submit a pull request
 
 ## License
 
@@ -367,10 +379,11 @@ at your option.
 
 ## Attribution
 
-clawft builds on ideas and patterns from several related projects:
+clawft + WeftOS builds on ideas and patterns from:
 
-- [claude-code](https://github.com/anthropics/claude-code) -- Anthropic's agentic coding tool
-- [claude-flow](https://github.com/ruvnet/claude-flow) -- Multi-agent orchestration framework
-- [ruvector](https://github.com/ruvnet/ruvector) -- Rust vector operations library
-- [nanobot](https://github.com/robinsonb5/nanobot) -- Lightweight bot framework
-- More TBD
+- [claude-code](https://github.com/anthropics/claude-code) — Anthropic's agentic coding tool
+- [claude-flow](https://github.com/ruvnet/claude-flow) — Multi-agent orchestration framework
+- [ruvector](https://github.com/ruvnet/ruvector) — Rust vector operations and distributed consensus
+- The WeftOS kernel architecture draws from microkernel OS design (L4, seL4),
+  capability-based security (Capsicum), and distributed systems research
+  (SWIM, Raft, CRDTs, Kademlia)
