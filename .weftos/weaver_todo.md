@@ -64,3 +64,51 @@ Last updated: 2026-03-26 (after graph ingestion)
 - [x] `weftos init` creates `.weftos/` + `weave.toml`
 - [x] 12 WeftOS agents defined (`agents/weftos/`)
 - [x] `weave init` installs agents + skills to `.claude/`
+
+What the Graph Reveals Now
+
+  Growth: Kernel grew 14.5% since mid-session analysis. The Weaver subsystem (6,571 lines) is now larger than 7 of the 22 workspace crates — it's
+   become a major subsystem in its own right.
+
+  The Bridge: process.rs (degree 26) is the single module connecting mesh, exochain, and os-patterns into a coherent kernel. If it breaks, three
+  feature domains disconnect.
+
+  Stale Feedback Loop: 12 decisions show as "pending" in the graph even though sprint 09b resolved them. The ingestion pipeline reads the
+  original symposium markdown, not the updated resolution docs. This is the Weaver's first self-identified bug — it can see its own data is
+  stale.
+
+  Where the Conversation Goes
+
+  1. Fix the Weaver's own feedback loop
+
+  The Weaver discovered it has stale data. This is the meta-Loom in action — it should update its own decision graph when resolutions are
+  committed. This is a live test of the self-improvement cycle.
+
+  2. Community detection on the graph
+
+  Can we automatically discover the 12 conversations from graph structure alone? If spectral clustering on the causal graph produces clusters
+  that match the manually-identified conversations, that validates the ECC model. If it doesn't, the divergence is itself interesting.
+
+  3. Real ONNX embeddings
+
+  The architecture is ready (OnnxEmbeddingProvider). Loading an actual model file would let us run semantic search: "find code similar to this
+  function" with real vector similarity instead of hash-based approximation.
+
+  4. Predictive analysis
+
+  The git history graph has temporal patterns. Can we predict which modules are likely to change next based on commit burst rhythm and coupling?
+
+  5. Cross-project test
+
+  Run weftos init on the mentra project (the glasses firmware) and see what the Weaver discovers about a completely different domain. The
+  WeaverKnowledgeBase should then carry "Rust project" patterns learned from clawft into the mentra analysis.
+
+  6. Technical debt as a graph metric
+
+  Define: debt_score = (fan_out * lines) / (tests * recency). High fan-out, large, poorly tested, old modules have the highest debt. The graph
+  can compute this across every module.
+
+  7. Automated SPARC plan generation
+
+  The Weaver has seen the pattern: identify gap → write SPARC plan → implement → test → review. Could it generate a SPARC plan from a gap report
+  automatically?

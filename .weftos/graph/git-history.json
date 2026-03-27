@@ -1,8 +1,57 @@
 {
   "domain": "clawft-weftos",
   "source": "git-history",
-  "generated_at": "2026-03-26T23:00:14.600278+00:00",
+  "generated_at": "2026-03-27T01:14:05.374816+00:00",
   "nodes": [
+    {
+      "id": "commit:ebf9f9e",
+      "type": "commit",
+      "hash": "ebf9f9e122445b9881530534fe40a552d8555cf1",
+      "author": "aepod",
+      "date": "2026-03-27T00:23:06+00:00",
+      "subject": "docs: VISION.md — the complete arc from agency to cognitive OS",
+      "files": [
+        "docs/weftos/VISION.md"
+      ],
+      "tags": [
+        "documentation",
+        "ecc"
+      ]
+    },
+    {
+      "id": "commit:769ee86",
+      "type": "commit",
+      "hash": "769ee8659db4d3776bc7fb427fe5530fe28738c8",
+      "author": "aepod",
+      "date": "2026-03-26T23:59:00+00:00",
+      "subject": "feat: session log ingestion — 29,029 nodes from 88 conversation files",
+      "files": [
+        ".weftos/graph/session-logs.json",
+        "scripts/weaver/ingest-sessions.py",
+        "scripts/weaver/ingest-sessions.sh"
+      ],
+      "tags": [
+        "ecc"
+      ]
+    },
+    {
+      "id": "commit:da5cec4",
+      "type": "commit",
+      "hash": "da5cec4b8331add636705984562650c355156c1f",
+      "author": "aepod",
+      "date": "2026-03-26T23:06:22+00:00",
+      "subject": "docs: Weaver v2 analysis — post-sprint reassessment",
+      "files": [
+        ".weftos/graph/decisions.json",
+        ".weftos/graph/git-history.json",
+        ".weftos/graph/module-deps.json",
+        "docs/weftos/weaver-analysis-v2.md"
+      ],
+      "tags": [
+        "documentation",
+        "ecc"
+      ]
+    },
     {
       "id": "commit:2a2bf9c",
       "type": "commit",
@@ -4711,6 +4760,42 @@
     },
     {
       "from": "commit:2a2bf9c",
+      "to": "commit:da5cec4",
+      "type": "Follows",
+      "weight": 1.0
+    },
+    {
+      "from": "commit:da5cec4",
+      "to": "commit:769ee86",
+      "type": "Follows",
+      "weight": 1.0
+    },
+    {
+      "from": "commit:769ee86",
+      "to": "commit:ebf9f9e",
+      "type": "Follows",
+      "weight": 1.0
+    },
+    {
+      "from": "commit:da5cec4",
+      "to": "commit:6441d9f",
+      "type": "Enables",
+      "weight": 0.7
+    },
+    {
+      "from": "commit:6441d9f",
+      "to": "commit:9700f09",
+      "type": "Enables",
+      "weight": 0.7
+    },
+    {
+      "from": "commit:da5cec4",
+      "to": "commit:9700f09",
+      "type": "Enables",
+      "weight": 0.7
+    },
+    {
+      "from": "commit:2a2bf9c",
       "to": "commit:d866bf5",
       "type": "Enables",
       "weight": 0.7
@@ -4952,12 +5037,6 @@
     {
       "from": "commit:d866bf5",
       "to": "commit:12ab016",
-      "type": "Enables",
-      "weight": 0.7
-    },
-    {
-      "from": "commit:6441d9f",
-      "to": "commit:9700f09",
       "type": "Enables",
       "weight": 0.7
     },
@@ -8184,8 +8263,44 @@
       "weight": 0.5
     },
     {
+      "from": "commit:656a7e7",
+      "to": "commit:da5cec4",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
       "from": "commit:e6d2c0c",
       "to": "commit:2a2bf9c",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:e6d2c0c",
+      "to": "commit:da5cec4",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:e6d2c0c",
+      "to": "commit:ebf9f9e",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:2a2bf9c",
+      "to": "commit:da5cec4",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:2a2bf9c",
+      "to": "commit:ebf9f9e",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:da5cec4",
+      "to": "commit:ebf9f9e",
       "type": "Correlates",
       "weight": 0.5
     },
@@ -10348,20 +10463,44 @@
       "to": "commit:6441d9f",
       "type": "Correlates",
       "weight": 0.5
+    },
+    {
+      "from": "commit:e6d2c0c",
+      "to": "commit:769ee86",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:2a2bf9c",
+      "to": "commit:769ee86",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:da5cec4",
+      "to": "commit:769ee86",
+      "type": "Correlates",
+      "weight": 0.5
+    },
+    {
+      "from": "commit:769ee86",
+      "to": "commit:ebf9f9e",
+      "type": "Correlates",
+      "weight": 0.5
     }
   ],
   "stats": {
-    "total_commits": 112,
-    "total_nodes": 112,
-    "total_edges": 1051,
+    "total_commits": 115,
+    "total_nodes": 115,
+    "total_edges": 1066,
     "date_range": {
       "from": "2026-02-17T06:48:38-05:00",
-      "to": "2026-03-26T22:53:34+00:00"
+      "to": "2026-03-27T00:23:06+00:00"
     },
     "tags": {
-      "documentation": 85,
+      "documentation": 87,
+      "ecc": 29,
       "wasm-sandbox": 29,
-      "ecc": 26,
       "service-framework": 21,
       "exochain": 20,
       "process-mgmt": 18,

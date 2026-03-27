@@ -1,7 +1,7 @@
 {
   "domain": "clawft-weftos",
   "source": "module-dependencies",
-  "generated_at": "2026-03-26T23:00:14.747015+00:00",
+  "generated_at": "2026-03-27T01:14:05.800177+00:00",
   "nodes": [
     {
       "id": "crate:clawft-channels",
@@ -47,7 +47,7 @@
       "id": "crate:clawft-kernel",
       "type": "crate",
       "files": 66,
-      "lines": 53405,
+      "lines": 53574,
       "dependencies": [
         "clawft-core",
         "clawft-platform",
@@ -684,7 +684,7 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/embedding.rs",
-      "lines": 532,
+      "lines": 578,
       "test_count": 10,
       "feature_gate": "ecc",
       "category": "K3c"
@@ -694,7 +694,7 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/embedding_onnx.rs",
-      "lines": 1082,
+      "lines": 1205,
       "test_count": 27,
       "feature_gate": "ecc",
       "category": "K3c"
