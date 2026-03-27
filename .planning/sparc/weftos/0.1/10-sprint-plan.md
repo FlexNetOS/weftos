@@ -184,24 +184,39 @@ PARALLEL — K8 GUI (W6 — Design Phase):
       - WebSocket bridge for real-time push (process changes, chain events, ticks)
       - Feature-gated: gui-tauri flag, kernel never depends on GUI crates
 
-    K8.2 — Core Dashboard Views (2D first, 3D deferred to Sprint 11):
-      1. DASHBOARD: system overview — node health, agent count, chain height,
-         ECC confidence, DEMOCRITUS tick rate, mesh peers, resource usage
-      2. PROCESS EXPLORER: live process table (PID, state, capabilities,
-         parent/child, resource usage) — like Activity Monitor
-      3. CHAIN VIEWER: ExoChain event timeline, filterable by type/agent/branch,
-         click to inspect full event + dual signatures
-      4. KNOWLEDGE GRAPH: interactive causal graph — React + Cytoscape.js
-         (or react-force-graph as stepping stone to Three.js),
-         community coloring, spectral partition overlay, search,
-         lambda_2 coherence gauge — THIS is the client analysis view
-      5. GOVERNANCE CONSOLE: live decisions, effect vectors, rule trace
+    K8.2 — Sprint 10 MVP Views (2 views: Dashboard + Admin Forms):
+      View 1 — DASHBOARD (read-only, proves WebSocket push):
+        - Node health, agent count, chain height, ECC confidence
+        - DEMOCRITUS tick rate, mesh peers, resource usage
+        - Auto-refreshes via WebSocket — no polling
+
+      View 2 — ADMIN FORMS (read-write, proves full Rust↔TS round-trip):
+        - Spawn/stop agent form (calls Supervisor → response)
+        - Edit governance rule (calls GovernanceEngine → confirmation)
+        - Register a service (calls ServiceRegistry → success/error)
+        - Query chain events (filter form → ExoChain results list)
+        - Configure a setting (calls ConfigService → persistence)
+        Forms test the critical path: TS form → Tauri invoke → Rust
+        handler → kernel API → response → TS UI update. If forms work,
+        everything else (graph viz, 3D, marketplace) is rendering.
+
+      Generational capability test:
+        - Have the Weaver generate a simple TSX admin form component
+        - Load it into the Tauri shell
+        - Verify it renders and functions against the kernel API
+        - This validates the self-building thesis at minimum viable scope
+
+    Deferred to Sprint 11 (K8.2 complete + K8.3):
+      - Process Explorer (live table)
+      - Chain Viewer (event timeline)
+      - Knowledge Graph (interactive causal graph, Cytoscape.js / R3F)
+      - Governance Console (live decisions, effect vectors)
+      - 3D ECC visualization (React Three Fiber)
 
     Wireframes/mockups:
-      - Produce mockups for all 5 views before coding
-      - Evaluate: Cytoscape.js (2D graph) vs react-force-graph-3d (3D preview)
+      - Produce mockups for Dashboard + Admin Forms before coding
       - Design the Rust → Tauri command layer (thin wrappers over ServiceApi)
-      - Plan: agent-generated TS component loading for Sprint 11 (K8.4)
+      - Sketch wireframes for Sprint 11 views (inform API design now)
 
 PARALLEL — OBSERVABILITY (W3 continued):
   - Config service (store/retrieve with change notifications)
