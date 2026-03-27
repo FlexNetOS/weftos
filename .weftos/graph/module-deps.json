@@ -1,7 +1,7 @@
 {
   "domain": "clawft-weftos",
   "source": "module-dependencies",
-  "generated_at": "2026-03-27T01:14:05.800177+00:00",
+  "generated_at": "2026-03-27T03:45:34.487124+00:00",
   "nodes": [
     {
       "id": "crate:clawft-channels",
@@ -46,8 +46,8 @@
     {
       "id": "crate:clawft-kernel",
       "type": "crate",
-      "files": 66,
-      "lines": 53574,
+      "files": 69,
+      "lines": 57559,
       "dependencies": [
         "clawft-core",
         "clawft-platform",
@@ -484,8 +484,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/a2a.rs",
-      "lines": 1452,
-      "test_count": 1,
+      "lines": 1979,
+      "test_count": 7,
       "feature_gate": null,
       "category": "K1"
     },
@@ -544,7 +544,7 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/boot.rs",
-      "lines": 2322,
+      "lines": 2671,
       "test_count": 4,
       "feature_gate": null,
       "category": "K1"
@@ -574,8 +574,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/causal.rs",
-      "lines": 695,
-      "test_count": 22,
+      "lines": 1858,
+      "test_count": 46,
       "feature_gate": "ecc",
       "category": "K3c"
     },
@@ -680,6 +680,16 @@
       "category": "K8"
     },
     {
+      "id": "module:clawft-kernel/democritus",
+      "type": "module",
+      "crate": "clawft-kernel",
+      "file": "crates/clawft-kernel/src/democritus.rs",
+      "lines": 774,
+      "test_count": 1,
+      "feature_gate": "ecc",
+      "category": "K3c"
+    },
+    {
       "id": "module:clawft-kernel/embedding",
       "type": "module",
       "crate": "clawft-kernel",
@@ -754,8 +764,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/hnsw_service.rs",
-      "lines": 280,
-      "test_count": 10,
+      "lines": 353,
+      "test_count": 12,
       "feature_gate": "ecc",
       "category": "K3c"
     },
@@ -940,6 +950,16 @@
       "category": "K6"
     },
     {
+      "id": "module:clawft-kernel/mesh_runtime",
+      "type": "module",
+      "crate": "clawft-kernel",
+      "file": "crates/clawft-kernel/src/mesh_runtime.rs",
+      "lines": 408,
+      "test_count": 6,
+      "feature_gate": "mesh",
+      "category": "K6"
+    },
+    {
       "id": "module:clawft-kernel/mesh_service",
       "type": "module",
       "crate": "clawft-kernel",
@@ -1020,6 +1040,16 @@
       "category": "K8"
     },
     {
+      "id": "module:clawft-kernel/persistence",
+      "type": "module",
+      "crate": "clawft-kernel",
+      "file": "crates/clawft-kernel/src/persistence.rs",
+      "lines": 173,
+      "test_count": 3,
+      "feature_gate": "ecc",
+      "category": "K3c"
+    },
+    {
       "id": "module:clawft-kernel/process",
       "type": "module",
       "crate": "clawft-kernel",
@@ -1064,8 +1094,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/supervisor.rs",
-      "lines": 1921,
-      "test_count": 48,
+      "lines": 2424,
+      "test_count": 66,
       "feature_gate": null,
       "category": "K1"
     },
@@ -2597,9 +2627,9 @@
     },
     {
       "from": "module:clawft-kernel/a2a",
-      "to": "tests:a2a:1",
+      "to": "tests:a2a:7",
       "type": "EvidenceFor",
-      "weight": 0.53
+      "weight": 0.71
     },
     {
       "from": "module:clawft-kernel/agency",
@@ -2663,7 +2693,7 @@
     },
     {
       "from": "module:clawft-kernel/causal",
-      "to": "tests:causal:22",
+      "to": "tests:causal:46",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -2752,6 +2782,18 @@
       "weight": 0.89
     },
     {
+      "from": "module:clawft-kernel/democritus",
+      "to": "feature:ecc",
+      "type": "Enables",
+      "weight": 1.0
+    },
+    {
+      "from": "module:clawft-kernel/democritus",
+      "to": "tests:democritus:1",
+      "type": "EvidenceFor",
+      "weight": 0.53
+    },
+    {
       "from": "module:clawft-kernel/embedding",
       "to": "feature:ecc",
       "type": "Enables",
@@ -2813,9 +2855,9 @@
     },
     {
       "from": "module:clawft-kernel/hnsw_service",
-      "to": "tests:hnsw_service:10",
+      "to": "tests:hnsw_service:12",
       "type": "EvidenceFor",
-      "weight": 0.8
+      "weight": 0.86
     },
     {
       "from": "module:clawft-kernel/impulse",
@@ -3022,6 +3064,18 @@
       "weight": 1.0
     },
     {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "feature:mesh",
+      "type": "Enables",
+      "weight": 1.0
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "tests:mesh_runtime:6",
+      "type": "EvidenceFor",
+      "weight": 0.68
+    },
+    {
       "from": "module:clawft-kernel/mesh_service",
       "to": "feature:mesh",
       "type": "Enables",
@@ -3118,6 +3172,18 @@
       "weight": 0.86
     },
     {
+      "from": "module:clawft-kernel/persistence",
+      "to": "feature:ecc",
+      "type": "Enables",
+      "weight": 1.0
+    },
+    {
+      "from": "module:clawft-kernel/persistence",
+      "to": "tests:persistence:3",
+      "type": "EvidenceFor",
+      "weight": 0.59
+    },
+    {
       "from": "module:clawft-kernel/process",
       "to": "tests:process:16",
       "type": "EvidenceFor",
@@ -3155,7 +3221,7 @@
     },
     {
       "from": "module:clawft-kernel/supervisor",
-      "to": "tests:supervisor:48",
+      "to": "tests:supervisor:66",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -4049,6 +4115,12 @@
     },
     {
       "from": "module:clawft-kernel/boot",
+      "to": "module:clawft-kernel/dead_letter",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/boot",
       "to": "module:clawft-kernel/error",
       "type": "Uses",
       "weight": 0.9
@@ -4091,6 +4163,18 @@
     },
     {
       "from": "module:clawft-kernel/boot",
+      "to": "module:clawft-kernel/log_service",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/boot",
+      "to": "module:clawft-kernel/metrics",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/boot",
       "to": "module:clawft-kernel/process",
       "type": "Uses",
       "weight": 0.9
@@ -4104,6 +4188,12 @@
     {
       "from": "module:clawft-kernel/boot",
       "to": "module:clawft-kernel/supervisor",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/boot",
+      "to": "module:clawft-kernel/timer",
       "type": "Uses",
       "weight": 0.9
     },
@@ -4240,6 +4330,36 @@
       "weight": 0.9
     },
     {
+      "from": "module:clawft-kernel/democritus",
+      "to": "module:clawft-kernel/causal",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/democritus",
+      "to": "module:clawft-kernel/crossref",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/democritus",
+      "to": "module:clawft-kernel/embedding",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/democritus",
+      "to": "module:clawft-kernel/hnsw_service",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/democritus",
+      "to": "module:clawft-kernel/impulse",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
       "from": "module:clawft-kernel/embedding_onnx",
       "to": "module:clawft-kernel/embedding",
       "type": "Uses",
@@ -4372,6 +4492,42 @@
       "weight": 0.9
     },
     {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/capability",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/error",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/ipc",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/mesh_ipc",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/process",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/mesh_runtime",
+      "to": "module:clawft-kernel/topic",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
       "from": "module:clawft-kernel/mesh_service_adv",
       "to": "module:clawft-kernel/ipc",
       "type": "Uses",
@@ -4422,6 +4578,18 @@
     {
       "from": "module:clawft-kernel/named_pipe",
       "to": "module:clawft-kernel/ipc",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/persistence",
+      "to": "module:clawft-kernel/causal",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/persistence",
+      "to": "module:clawft-kernel/hnsw_service",
       "type": "Uses",
       "weight": 0.9
     },
@@ -4488,6 +4656,12 @@
     {
       "from": "module:clawft-kernel/supervisor",
       "to": "module:clawft-kernel/ipc",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
+      "from": "module:clawft-kernel/supervisor",
+      "to": "module:clawft-kernel/monitor",
       "type": "Uses",
       "weight": 0.9
     },
@@ -4950,11 +5124,11 @@
   ],
   "stats": {
     "total_crates": 22,
-    "total_modules": 179,
+    "total_modules": 182,
     "total_features": 14,
-    "total_nodes": 215,
-    "total_edges": 476,
-    "avg_degree": 4.4,
+    "total_nodes": 218,
+    "total_edges": 500,
+    "avg_degree": 4.6,
     "most_connected": "module:clawft-kernel/process"
   }
 }
