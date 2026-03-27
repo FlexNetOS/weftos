@@ -1,7 +1,7 @@
 {
   "domain": "clawft-weftos",
   "source": "module-dependencies",
-  "generated_at": "2026-03-26T20:14:06.547899+00:00",
+  "generated_at": "2026-03-26T23:00:14.747015+00:00",
   "nodes": [
     {
       "id": "crate:clawft-channels",
@@ -46,8 +46,8 @@
     {
       "id": "crate:clawft-kernel",
       "type": "crate",
-      "files": 65,
-      "lines": 46632,
+      "files": 66,
+      "lines": 53405,
       "dependencies": [
         "clawft-core",
         "clawft-platform",
@@ -220,7 +220,7 @@
       "id": "crate:weftos",
       "type": "crate",
       "files": 3,
-      "lines": 487,
+      "lines": 492,
       "dependencies": [
         "clawft-core",
         "clawft-kernel",
@@ -504,7 +504,7 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/agent_loop.rs",
-      "lines": 1412,
+      "lines": 1831,
       "test_count": 0,
       "feature_gate": null,
       "category": "K1"
@@ -544,8 +544,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/boot.rs",
-      "lines": 1953,
-      "test_count": 2,
+      "lines": 2322,
+      "test_count": 4,
       "feature_gate": null,
       "category": "K1"
     },
@@ -584,8 +584,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/chain.rs",
-      "lines": 2814,
-      "test_count": 49,
+      "lines": 2985,
+      "test_count": 60,
       "feature_gate": "exochain",
       "category": "K5"
     },
@@ -644,8 +644,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/container.rs",
-      "lines": 1129,
-      "test_count": 24,
+      "lines": 1346,
+      "test_count": 38,
       "feature_gate": null,
       "category": "K4"
     },
@@ -684,8 +684,18 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/embedding.rs",
-      "lines": 215,
-      "test_count": 3,
+      "lines": 532,
+      "test_count": 10,
+      "feature_gate": "ecc",
+      "category": "K3c"
+    },
+    {
+      "id": "module:clawft-kernel/embedding_onnx",
+      "type": "module",
+      "crate": "clawft-kernel",
+      "file": "crates/clawft-kernel/src/embedding_onnx.rs",
+      "lines": 1082,
+      "test_count": 27,
       "feature_gate": "ecc",
       "category": "K3c"
     },
@@ -724,8 +734,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/governance.rs",
-      "lines": 1682,
-      "test_count": 56,
+      "lines": 1875,
+      "test_count": 67,
       "feature_gate": null,
       "category": "K1"
     },
@@ -1044,8 +1054,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/service.rs",
-      "lines": 1059,
-      "test_count": 22,
+      "lines": 1254,
+      "test_count": 35,
       "feature_gate": null,
       "category": "K1"
     },
@@ -1054,8 +1064,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/supervisor.rs",
-      "lines": 1833,
-      "test_count": 40,
+      "lines": 1921,
+      "test_count": 48,
       "feature_gate": null,
       "category": "K1"
     },
@@ -1104,7 +1114,7 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/wasm_runner.rs",
-      "lines": 4423,
+      "lines": 4547,
       "test_count": 93,
       "feature_gate": null,
       "category": "K3"
@@ -1114,8 +1124,8 @@
       "type": "module",
       "crate": "clawft-kernel",
       "file": "crates/clawft-kernel/src/weaver.rs",
-      "lines": 1369,
-      "test_count": 27,
+      "lines": 4957,
+      "test_count": 122,
       "feature_gate": "ecc",
       "category": "K3c"
     },
@@ -1994,7 +2004,7 @@
       "type": "module",
       "crate": "weftos",
       "file": "crates/weftos/src/init.rs",
-      "lines": 140,
+      "lines": 145,
       "test_count": 0,
       "feature_gate": null,
       "category": "K1"
@@ -2623,9 +2633,9 @@
     },
     {
       "from": "module:clawft-kernel/boot",
-      "to": "tests:boot:2",
+      "to": "tests:boot:4",
       "type": "EvidenceFor",
-      "weight": 0.56
+      "weight": 0.62
     },
     {
       "from": "module:clawft-kernel/calibration",
@@ -2665,7 +2675,7 @@
     },
     {
       "from": "module:clawft-kernel/chain",
-      "to": "tests:chain:49",
+      "to": "tests:chain:60",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -2707,7 +2717,7 @@
     },
     {
       "from": "module:clawft-kernel/container",
-      "to": "tests:container:24",
+      "to": "tests:container:38",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -2749,9 +2759,21 @@
     },
     {
       "from": "module:clawft-kernel/embedding",
-      "to": "tests:embedding:3",
+      "to": "tests:embedding:10",
       "type": "EvidenceFor",
-      "weight": 0.59
+      "weight": 0.8
+    },
+    {
+      "from": "module:clawft-kernel/embedding_onnx",
+      "to": "feature:ecc",
+      "type": "Enables",
+      "weight": 1.0
+    },
+    {
+      "from": "module:clawft-kernel/embedding_onnx",
+      "to": "tests:embedding_onnx:27",
+      "type": "EvidenceFor",
+      "weight": 1.0
     },
     {
       "from": "module:clawft-kernel/environment",
@@ -2773,7 +2795,7 @@
     },
     {
       "from": "module:clawft-kernel/governance",
-      "to": "tests:governance:56",
+      "to": "tests:governance:67",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -3127,13 +3149,13 @@
     },
     {
       "from": "module:clawft-kernel/service",
-      "to": "tests:service:22",
+      "to": "tests:service:35",
       "type": "EvidenceFor",
       "weight": 1.0
     },
     {
       "from": "module:clawft-kernel/supervisor",
-      "to": "tests:supervisor:40",
+      "to": "tests:supervisor:48",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -3187,7 +3209,7 @@
     },
     {
       "from": "module:clawft-kernel/weaver",
-      "to": "tests:weaver:27",
+      "to": "tests:weaver:122",
       "type": "EvidenceFor",
       "weight": 1.0
     },
@@ -4218,6 +4240,12 @@
       "weight": 0.9
     },
     {
+      "from": "module:clawft-kernel/embedding_onnx",
+      "to": "module:clawft-kernel/embedding",
+      "type": "Uses",
+      "weight": 0.9
+    },
+    {
       "from": "module:clawft-kernel/error",
       "to": "module:clawft-kernel/process",
       "type": "Uses",
@@ -4922,10 +4950,10 @@
   ],
   "stats": {
     "total_crates": 22,
-    "total_modules": 178,
+    "total_modules": 179,
     "total_features": 14,
-    "total_nodes": 214,
-    "total_edges": 473,
+    "total_nodes": 215,
+    "total_edges": 476,
     "avg_degree": 4.4,
     "most_connected": "module:clawft-kernel/process"
   }
