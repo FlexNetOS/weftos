@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for weft (clawft CLI)
 #
-# Uses cargo-chef for dependency caching and debian:bookworm-slim as the
-# runtime base (glibc required for wasmtime).
+# Uses cargo-chef for dependency caching and distroless/cc-debian12 as the
+# runtime base (includes glibc + libgcc + ca-certificates, no shell).
 #
 # Build:
 #   docker buildx build --platform linux/amd64,linux/arm64 -t weft .
@@ -29,10 +29,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ---------------------------------------------------------------------------
 FROM chef AS builder
 
-# Install build dependencies
+# Install build dependencies (pkg-config for system lib detection)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
-    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Build dependencies (cached layer -- only rebuilds when Cargo.toml/lock change)
@@ -47,26 +46,21 @@ RUN cargo build --release --bin weft \
 # ---------------------------------------------------------------------------
 # Stage 4: Runtime -- minimal image with only the binary
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 \
-    libgcc-s1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash weft
+FROM gcr.io/distroless/cc-debian12 AS runtime
 
 COPY --from=builder /app/target/release/weft /usr/local/bin/weft
 
-USER weft
-WORKDIR /home/weft
+# distroless runs as nonroot (uid 65534) by default
+USER nonroot
+WORKDIR /home/nonroot
 
 # Default config directory
-VOLUME ["/home/weft/.clawft"]
+VOLUME ["/home/nonroot/.clawft"]
 
 # Health check for gateway mode
+# HEALTHCHECK uses exec form (no shell in distroless)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["weft", "status"] || exit 1
+    CMD ["/usr/local/bin/weft", "status"]
 
 EXPOSE 8080
 
