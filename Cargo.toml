@@ -213,6 +213,10 @@ strip = true
 codegen-units = 1
 panic = "abort"
 
+# cargo-dist build profile
+[profile.dist]
+inherits = "release"
+
 [profile.release-wasm]
 inherits = "release"
 opt-level = "z"
