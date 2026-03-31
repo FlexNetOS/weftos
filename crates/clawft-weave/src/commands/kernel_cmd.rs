@@ -22,7 +22,6 @@ use comfy_table::{presets, Table};
 use clawft_kernel::{Kernel, KernelState};
 use clawft_platform::NativePlatform;
 
-#[cfg(unix)]
 use crate::client::DaemonClient;
 use crate::protocol;
 
@@ -159,7 +158,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             unreachable!("handled above");
         }
         KernelAction::Status => {
-            if let Some(mut client) = try_daemon_connect().await {
+            if let Some(mut client) = DaemonClient::connect().await {
                 let resp = client.simple_call("kernel.status").await?;
                 if resp.ok {
                     let result: protocol::KernelStatusResult =
@@ -185,7 +184,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             }
         }
         KernelAction::Services => {
-            if let Some(mut client) = try_daemon_connect().await {
+            if let Some(mut client) = DaemonClient::connect().await {
                 let resp = client.simple_call("kernel.services").await?;
                 if resp.ok {
                     let infos: Vec<protocol::ServiceInfo> =
@@ -204,7 +203,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             }
         }
         KernelAction::Ps => {
-            if let Some(mut client) = try_daemon_connect().await {
+            if let Some(mut client) = DaemonClient::connect().await {
                 let resp = client.simple_call("kernel.ps").await?;
                 if resp.ok {
                     let entries: Vec<protocol::ProcessInfo> =
@@ -223,7 +222,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             }
         }
         KernelAction::Attach { tail, level } => {
-            let mut client = try_daemon_connect()
+            let mut client = DaemonClient::connect()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("no daemon running (use 'weaver kernel start' first)"))?;
 
@@ -264,7 +263,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
                 tokio::time::sleep(poll_interval).await;
 
                 // Reconnect each poll (connection may be closed after response)
-                let mut poll_client = match try_daemon_connect().await {
+                let mut poll_client = match DaemonClient::connect().await {
                     Some(c) => c,
                     None => {
                         println!("\n[daemon disconnected]");
@@ -309,7 +308,7 @@ pub async fn run(args: KernelArgs) -> anyhow::Result<()> {
             }
         }
         KernelAction::Logs { count, level } => {
-            if let Some(mut client) = try_daemon_connect().await {
+            if let Some(mut client) = DaemonClient::connect().await {
                 let params = protocol::LogsParams {
                     count,
                     level: level.clone(),
@@ -612,35 +611,6 @@ fn print_event_log<P: clawft_platform::Platform>(
     println!("({} entries)", events.len());
 }
 
-// ── Daemon connect helper ────────────────────────────────────────
-
-/// Try to connect to the daemon. Returns `None` on non-Unix platforms
-/// (daemon uses Unix domain sockets; Windows named-pipe transport planned for v0.2).
-#[cfg(unix)]
-async fn try_daemon_connect() -> Option<DaemonClient> {
-    DaemonClient::connect().await
-}
-
-#[cfg(not(unix))]
-async fn try_daemon_connect() -> Option<DaemonClient> {
-    // Unix socket daemon is not available on Windows.
-    // Fall through to ephemeral kernel path.
-    None
-}
-
-// On non-Unix, define a stub DaemonClient so query arms can use Option<DaemonClient>.
-#[cfg(not(unix))]
-pub(crate) struct DaemonClient;
-
-#[cfg(not(unix))]
-impl DaemonClient {
-    pub async fn call(&mut self, _request: crate::protocol::Request) -> anyhow::Result<crate::protocol::Response> {
-        anyhow::bail!("daemon not available on this platform")
-    }
-    pub async fn simple_call(&mut self, _method: &str) -> anyhow::Result<crate::protocol::Response> {
-        anyhow::bail!("daemon not available on this platform")
-    }
-}
 
 // ── Signal / PID helpers (Unix only) ────────────────────────────
 

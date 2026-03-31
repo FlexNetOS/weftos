@@ -12,7 +12,6 @@
 
 use clap::{Parser, Subcommand};
 
-#[cfg(unix)]
 mod client;
 mod commands;
 #[cfg(unix)]

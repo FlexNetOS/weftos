@@ -1,50 +1,87 @@
-//! Daemon client — connects to a running kernel daemon over Unix socket.
+//! Daemon client — connects to a running kernel daemon.
 //!
-//! Used by `weaver kernel status`, `weaver kernel ps`, etc. to talk
-//! to a persistent daemon instead of booting an ephemeral kernel.
+//! On Unix, connects over a Unix domain socket. On other platforms,
+//! `connect()` always returns `None` (daemon transport not yet available).
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use crate::protocol::{Request, Response};
 
-use crate::protocol::{self, Request, Response};
+// ── Unix implementation ──────────────────────────────────────────
 
-/// A client connected to the kernel daemon.
-pub struct DaemonClient {
-    stream: UnixStream,
-}
+#[cfg(unix)]
+mod imp {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
 
-impl DaemonClient {
-    /// Try to connect to the daemon. Returns `None` if no daemon is running.
-    pub async fn connect() -> Option<Self> {
-        let path = protocol::socket_path();
-        let stream = UnixStream::connect(&path).await.ok()?;
-        Some(Self { stream })
+    use crate::protocol::{self, Request, Response};
+
+    /// A client connected to the kernel daemon.
+    pub struct DaemonClient {
+        stream: UnixStream,
     }
 
-    /// Send a request and wait for the response.
-    pub async fn call(&mut self, request: Request) -> anyhow::Result<Response> {
-        let mut json = serde_json::to_string(&request)?;
-        json.push('\n');
-
-        self.stream.write_all(json.as_bytes()).await?;
-
-        let mut reader = BufReader::new(&mut self.stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).await?;
-
-        if line.trim().is_empty() {
-            anyhow::bail!("daemon closed connection without response");
+    impl DaemonClient {
+        /// Try to connect to the daemon. Returns `None` if no daemon is running.
+        pub async fn connect() -> Option<Self> {
+            let path = protocol::socket_path();
+            let stream = UnixStream::connect(&path).await.ok()?;
+            Some(Self { stream })
         }
 
-        let response: Response = serde_json::from_str(line.trim())?;
-        Ok(response)
-    }
+        /// Send a request and wait for the response.
+        pub async fn call(&mut self, request: Request) -> anyhow::Result<Response> {
+            let mut json = serde_json::to_string(&request)?;
+            json.push('\n');
 
-    /// Convenience: send a no-params request.
-    pub async fn simple_call(&mut self, method: &str) -> anyhow::Result<Response> {
-        self.call(Request::new(method)).await
+            self.stream.write_all(json.as_bytes()).await?;
+
+            let mut reader = BufReader::new(&mut self.stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await?;
+
+            if line.trim().is_empty() {
+                anyhow::bail!("daemon closed connection without response");
+            }
+
+            let response: Response = serde_json::from_str(line.trim())?;
+            Ok(response)
+        }
+
+        /// Convenience: send a no-params request.
+        pub async fn simple_call(&mut self, method: &str) -> anyhow::Result<Response> {
+            self.call(Request::new(method)).await
+        }
     }
 }
+
+// ── Non-Unix stub ────────────────────────────────────────────────
+
+#[cfg(not(unix))]
+mod imp {
+    use crate::protocol::{Request, Response};
+
+    /// Stub daemon client for non-Unix platforms.
+    ///
+    /// `connect()` always returns `None`. Windows named-pipe transport
+    /// is planned for v0.2.
+    pub struct DaemonClient;
+
+    impl DaemonClient {
+        /// Always returns `None` on non-Unix platforms.
+        pub async fn connect() -> Option<Self> {
+            None
+        }
+
+        pub async fn call(&mut self, _request: Request) -> anyhow::Result<Response> {
+            anyhow::bail!("daemon not available on this platform")
+        }
+
+        pub async fn simple_call(&mut self, _method: &str) -> anyhow::Result<Response> {
+            anyhow::bail!("daemon not available on this platform")
+        }
+    }
+}
+
+pub use imp::DaemonClient;
 
 /// Check if a daemon is running (socket exists and accepts connections).
 #[allow(dead_code)]
@@ -52,13 +89,9 @@ pub async fn is_daemon_running() -> bool {
     DaemonClient::connect().await.is_some()
 }
 
-// ── RVF-framed client ────────────────────────────────────
+// ── RVF-framed client (Unix only) ────────────────────────────────
 
-/// A client that speaks the RVF-framed protocol to the kernel daemon.
-///
-/// Sends a 4-byte `RVFS` handshake on connect, then exchanges
-/// length-prefixed RVF segments with content-hash integrity.
-#[cfg(feature = "rvf-rpc")]
+#[cfg(all(unix, feature = "rvf-rpc"))]
 #[allow(dead_code)]
 pub struct RvfDaemonClient {
     reader: crate::rvf_codec::RvfFrameReader<tokio::net::unix::OwnedReadHalf>,
@@ -66,17 +99,15 @@ pub struct RvfDaemonClient {
     next_segment_id: u64,
 }
 
-#[cfg(feature = "rvf-rpc")]
+#[cfg(all(unix, feature = "rvf-rpc"))]
 #[allow(dead_code)]
 impl RvfDaemonClient {
-    /// Connect to the daemon in RVF mode. Returns `None` if no daemon is running.
     pub async fn connect() -> Option<Self> {
         use tokio::io::AsyncWriteExt;
+        use crate::protocol;
 
         let path = protocol::socket_path();
-        let mut stream = UnixStream::connect(&path).await.ok()?;
-
-        // Send RVF handshake magic so the daemon switches to RVF mode.
+        let mut stream = tokio::net::UnixStream::connect(&path).await.ok()?;
         stream.write_all(b"RVFS").await.ok()?;
 
         let (reader, writer) = stream.into_split();
@@ -87,7 +118,6 @@ impl RvfDaemonClient {
         })
     }
 
-    /// Send a request and wait for the RVF-framed response.
     pub async fn call(&mut self, request: Request) -> anyhow::Result<Response> {
         let (seg_type, payload, flags, segment_id) =
             crate::rvf_rpc::encode_request(&request, self.next_segment_id);
@@ -106,7 +136,6 @@ impl RvfDaemonClient {
         crate::rvf_rpc::decode_response(&frame)
     }
 
-    /// Convenience: send a no-params request.
     pub async fn simple_call(&mut self, method: &str) -> anyhow::Result<Response> {
         self.call(Request::new(method)).await
     }
@@ -118,7 +147,6 @@ mod tests {
 
     #[tokio::test]
     async fn connect_returns_none_when_no_daemon() {
-        // No daemon running in test environment
         let client = DaemonClient::connect().await;
         assert!(client.is_none());
     }
