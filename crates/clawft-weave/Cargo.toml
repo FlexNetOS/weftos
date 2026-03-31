@@ -19,7 +19,7 @@ path = "src/main.rs"
 dist = true
 
 [features]
-default = []
+default = ["exochain", "cluster"]
 cluster = ["clawft-kernel/cluster"]
 exochain = ["clawft-kernel/exochain", "dep:exo-resource-tree"]
 rvf-rpc = ["dep:rvf-wire", "dep:rvf-types"]

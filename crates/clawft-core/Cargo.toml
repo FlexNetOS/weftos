@@ -12,7 +12,7 @@ categories = ["development-tools"]
 
 [features]
 default = ["full", "native"]
-full = []
+full = ["rvf", "signing", "vector-memory"]
 native = [
     "dep:notify",
     "dep:dirs",

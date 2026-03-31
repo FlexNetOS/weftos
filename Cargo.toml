@@ -119,11 +119,11 @@ wasmtime-wasi = { version = "29", default-features = false, features = ["preview
 # File-system watching
 notify = "7"
 
-# RVF (RuVector Format) -- vector storage
-rvf-runtime = { path = "../ruvector/crates/rvf/rvf-runtime", default-features = false, features = ["std"] }
-rvf-types = { path = "../ruvector/crates/rvf/rvf-types", default-features = false, features = ["std"] }
-rvf-crypto = { path = "../ruvector/crates/rvf/rvf-crypto", default-features = false, features = ["std", "ed25519"] }
-rvf-wire = { path = "../ruvector/crates/rvf/rvf-wire" }
+# RVF (RuVector Format) -- vector storage (weave-logic-ai fork with ML-DSA dual signing)
+rvf-runtime = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep", default-features = false, features = ["std"] }
+rvf-types = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep", default-features = false, features = ["std"] }
+rvf-crypto = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep", default-features = false, features = ["std", "ed25519"] }
+rvf-wire = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep" }
 
 # CBOR codec (ExoChain payload format)
 ciborium = "0.2"
@@ -141,11 +141,11 @@ blake3 = "1.5"
 # Concurrent hash map
 dashmap = "6"
 
-# Distributed coordination (ruvector)
-ruvector-cluster = { path = "../ruvector/crates/ruvector-cluster" }
-ruvector-raft = { path = "../ruvector/crates/ruvector-raft" }
-ruvector-replication = { path = "../ruvector/crates/ruvector-replication" }
-cognitum-gate-tilezero = { path = "../ruvector/crates/cognitum-gate-tilezero" }
+# Distributed coordination (weave-logic-ai fork)
+ruvector-cluster = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep" }
+ruvector-raft = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep" }
+ruvector-replication = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep" }
+cognitum-gate-tilezero = { git = "https://github.com/weave-logic-ai/ruvector.git", branch = "perf/optimization-sweep" }
 parking_lot = "0.12"
 futures = "0.3"
 

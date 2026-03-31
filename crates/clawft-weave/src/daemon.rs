@@ -1200,6 +1200,8 @@ async fn dispatch(
                             branch: GovernanceBranch::Judicial,
                             severity: RuleSeverity::Blocking,
                             active: true,
+                            reference_url: None,
+                            sop_category: None,
                         })
                         .add_rule(GovernanceRule {
                             id: "cron-warn".into(),
@@ -1207,6 +1209,8 @@ async fn dispatch(
                             branch: GovernanceBranch::Executive,
                             severity: RuleSeverity::Warning,
                             active: true,
+                            reference_url: None,
+                            sop_category: None,
                         });
                     Some(std::sync::Arc::new(g))
                 };

@@ -11,7 +11,7 @@ keywords = ["kernel", "os", "process", "service", "health"]
 categories = ["development-tools"]
 
 [features]
-default = ["native"]
+default = ["native", "exochain", "cluster", "tilezero", "ecc"]
 native = [
     "dep:tokio",
     "dep:tokio-util",
