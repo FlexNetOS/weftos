@@ -202,7 +202,7 @@ create-release = true
 unix-archive = ".tar.gz"
 windows-archive = ".zip"
 # Include in archives
-include = ["LICENSE*", "README.md"]
+include = ["LICENSE", "README.md"]
 # Do not auto-include workspace crates — we mark distributable ones explicitly
 auto-includes = false
 
