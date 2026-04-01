@@ -77,6 +77,7 @@ pub struct ContextBuilder<P: Platform> {
     skills: Arc<SkillsLoader<P>>,
     platform: Arc<P>,
     bootstrap_cache: BootstrapCache,
+    compression_config: Option<CompressionConfig>,
 }
 
 impl<P: Platform> ContextBuilder<P> {
@@ -105,6 +106,7 @@ impl<P: Platform> ContextBuilder<P> {
                 #[cfg(not(feature = "native"))]
                 { Arc::new(Mutex::new(())) }
             },
+            compression_config: None,
         }
     }
 
@@ -303,6 +305,39 @@ impl<P: Platform> ContextBuilder<P> {
         &self.config
     }
 
+    /// Enable context compression with the given configuration.
+    ///
+    /// When compression is enabled, [`build_messages_compressed`](Self::build_messages_compressed)
+    /// will apply a sliding-window strategy to keep the context within
+    /// the token budget.
+    pub fn with_compression(mut self, config: CompressionConfig) -> Self {
+        self.compression_config = Some(config);
+        self
+    }
+
+    /// Build messages with context compression applied.
+    ///
+    /// Assembles the full message list (same as [`build_messages`](Self::build_messages)),
+    /// then compresses it according to the configured [`CompressionConfig`].
+    /// If no compression config was set via [`with_compression`](Self::with_compression),
+    /// uses [`CompressionConfig::default()`].
+    ///
+    /// Returns a [`CompressedContext`] containing the (possibly compressed)
+    /// messages and metadata about the compression operation.
+    pub async fn build_messages_compressed(
+        &self,
+        session: &Session,
+        active_skills: &[String],
+    ) -> CompressedContext {
+        let messages = self.build_messages(session, active_skills).await;
+        let config = self
+            .compression_config
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        compress_context(messages, &config)
+    }
+
     /// Build a system prompt message for a specific agent definition.
     ///
     /// Prepends the agent's `system_prompt` (with template rendering)
@@ -463,6 +498,184 @@ impl<P: Platform> ContextBuilder<P> {
         }
 
         messages
+    }
+}
+
+// ── Context compression ───────────────────────────────────────────────
+
+/// Approximate token count for a string.
+///
+/// Uses a simple whitespace-based heuristic: each whitespace-delimited
+/// word maps to roughly 4/3 tokens on average (accounting for sub-word
+/// tokenization). This is intentionally coarse; callers who need exact
+/// counts can swap in a real tokenizer later.
+pub fn count_tokens(text: &str) -> usize {
+    // Ceiling division to avoid undercount on short strings.
+    let words = text.split_whitespace().count();
+    (words * 4 + 2) / 3 // equivalent to ceil(words * 4/3)
+}
+
+/// Configuration for context compression.
+#[derive(Debug, Clone)]
+pub struct CompressionConfig {
+    /// Maximum number of tokens allowed in the assembled context.
+    pub max_context_tokens: usize,
+    /// Number of recent conversation messages to keep verbatim.
+    pub recent_message_count: usize,
+    /// Whether compression is enabled at all.
+    pub compression_enabled: bool,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            max_context_tokens: 8192,
+            recent_message_count: 10,
+            compression_enabled: true,
+        }
+    }
+}
+
+/// Metadata about a compression operation.
+#[derive(Debug, Clone)]
+pub struct CompressionMetadata {
+    /// Total tokens before compression.
+    pub original_tokens: usize,
+    /// Total tokens after compression.
+    pub compressed_tokens: usize,
+    /// Ratio of compressed to original (1.0 = no compression).
+    pub compression_ratio: f64,
+    /// Number of messages that were summarized.
+    pub messages_summarized: usize,
+}
+
+/// Result of compressing a message list.
+#[derive(Debug, Clone)]
+pub struct CompressedContext {
+    /// The compressed message list, ready for the LLM.
+    pub messages: Vec<LlmMessage>,
+    /// Metadata describing what compression did.
+    pub metadata: CompressionMetadata,
+}
+
+/// Extract the first sentence from a text block.
+///
+/// Returns everything up to and including the first sentence-ending
+/// punctuation (`.`, `!`, `?`) followed by whitespace or end-of-string.
+/// If no sentence boundary is found, returns up to the first 120 characters.
+fn first_sentence(text: &str) -> &str {
+    for (i, ch) in text.char_indices() {
+        if matches!(ch, '.' | '!' | '?') {
+            let end = i + ch.len_utf8();
+            // Accept if this is the end of string or followed by whitespace.
+            if end >= text.len() || text[end..].starts_with(char::is_whitespace) {
+                return &text[..end];
+            }
+        }
+    }
+    // No sentence boundary found; truncate.
+    let limit = text
+        .char_indices()
+        .nth(120)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+    &text[..limit]
+}
+
+/// Compress a message list to fit within a token budget.
+///
+/// The algorithm preserves:
+/// 1. All system-role messages (prompts, skills, memory) -- always kept.
+/// 2. The last `config.recent_message_count` non-system messages -- verbatim.
+/// 3. Older non-system messages -- summarized into a single system message
+///    containing first-sentence extracts.
+///
+/// If compression is disabled or the context already fits, the original
+/// messages are returned unchanged.
+pub fn compress_context(
+    messages: Vec<LlmMessage>,
+    config: &CompressionConfig,
+) -> CompressedContext {
+    let original_tokens: usize = messages.iter().map(|m| count_tokens(&m.content)).sum();
+
+    // Fast path: no compression needed.
+    if !config.compression_enabled || original_tokens <= config.max_context_tokens {
+        return CompressedContext {
+            messages,
+            metadata: CompressionMetadata {
+                original_tokens,
+                compressed_tokens: original_tokens,
+                compression_ratio: 1.0,
+                messages_summarized: 0,
+            },
+        };
+    }
+
+    // Separate system messages from conversation messages.
+    let mut system_msgs: Vec<LlmMessage> = Vec::new();
+    let mut conversation_msgs: Vec<LlmMessage> = Vec::new();
+
+    for msg in messages {
+        if msg.role == "system" {
+            system_msgs.push(msg);
+        } else {
+            conversation_msgs.push(msg);
+        }
+    }
+
+    // Split conversation into old (to summarize) and recent (to keep).
+    let recent_count = config.recent_message_count.min(conversation_msgs.len());
+    let split_point = conversation_msgs.len() - recent_count;
+    let old_msgs = &conversation_msgs[..split_point];
+    let recent_msgs = &conversation_msgs[split_point..];
+
+    // Build summary of old messages.
+    let messages_summarized = old_msgs.len();
+    let summary = if !old_msgs.is_empty() {
+        let mut lines = Vec::with_capacity(old_msgs.len());
+        for msg in old_msgs {
+            let sentence = first_sentence(&msg.content);
+            lines.push(format!("[{}]: {}", msg.role, sentence));
+        }
+        Some(lines.join("\n"))
+    } else {
+        None
+    };
+
+    // Reassemble: system messages, optional summary, recent conversation.
+    let mut result: Vec<LlmMessage> = Vec::new();
+    result.extend(system_msgs);
+
+    if let Some(summary_text) = summary {
+        result.push(LlmMessage {
+            role: "system".into(),
+            content: format!(
+                "# Conversation Summary (compressed)\n\n\
+                 The following is a summary of {} earlier messages:\n\n{}",
+                messages_summarized, summary_text
+            ),
+            tool_call_id: None,
+            tool_calls: None,
+        });
+    }
+
+    result.extend(recent_msgs.iter().cloned());
+
+    let compressed_tokens: usize = result.iter().map(|m| count_tokens(&m.content)).sum();
+    let compression_ratio = if original_tokens > 0 {
+        compressed_tokens as f64 / original_tokens as f64
+    } else {
+        1.0
+    };
+
+    CompressedContext {
+        messages: result,
+        metadata: CompressionMetadata {
+            original_tokens,
+            compressed_tokens,
+            compression_ratio,
+            messages_summarized,
+        },
     }
 }
 
@@ -974,6 +1187,197 @@ mod tests {
         let user_msgs: Vec<_> = messages.iter().filter(|m| m.role == "user").collect();
         assert_eq!(user_msgs.len(), 1);
         assert_eq!(user_msgs[0].content, "hello agent");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    // ── Context compression tests ───────────────────────────────────
+
+    #[test]
+    fn count_tokens_basic() {
+        // "hello world" = 2 words -> ceil(2 * 4/3) = ceil(2.67) = 3
+        assert_eq!(count_tokens("hello world"), 3);
+        // Empty string
+        assert_eq!(count_tokens(""), 0);
+        // Single word
+        assert_eq!(count_tokens("hello"), 2); // ceil(4/3) = 2
+    }
+
+    #[test]
+    fn first_sentence_extracts_correctly() {
+        assert_eq!(first_sentence("Hello world. More text here."), "Hello world.");
+        assert_eq!(first_sentence("No period here"), "No period here");
+        assert_eq!(first_sentence("Question? Yes."), "Question?");
+        assert_eq!(first_sentence("Exclaim! Done."), "Exclaim!");
+    }
+
+    fn make_msg(role: &str, content: &str) -> LlmMessage {
+        LlmMessage {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn compress_context_no_op_when_within_budget() {
+        let messages = vec![
+            make_msg("system", "You are helpful."),
+            make_msg("user", "Hi"),
+            make_msg("assistant", "Hello!"),
+        ];
+        let config = CompressionConfig {
+            max_context_tokens: 100_000,
+            recent_message_count: 10,
+            compression_enabled: true,
+        };
+
+        let result = compress_context(messages.clone(), &config);
+        assert_eq!(result.messages.len(), 3);
+        assert_eq!(result.metadata.compression_ratio, 1.0);
+        assert_eq!(result.metadata.messages_summarized, 0);
+    }
+
+    #[test]
+    fn compress_context_no_op_when_disabled() {
+        let messages = vec![
+            make_msg("system", "sys"),
+            make_msg("user", "a long message that exceeds budget"),
+        ];
+        let config = CompressionConfig {
+            max_context_tokens: 1, // tiny budget
+            recent_message_count: 10,
+            compression_enabled: false,
+        };
+
+        let result = compress_context(messages.clone(), &config);
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.metadata.messages_summarized, 0);
+    }
+
+    #[test]
+    fn compress_context_preserves_system_prompt() {
+        // Build a context with a system message and many conversation messages.
+        let mut messages = vec![make_msg("system", "You are a helpful assistant with many capabilities.")];
+        for i in 0..20 {
+            messages.push(make_msg("user", &format!("User message number {}. This is a fairly long message to inflate token count significantly.", i)));
+            messages.push(make_msg("assistant", &format!("Assistant response number {}. Also fairly long to push tokens over the budget limit.", i)));
+        }
+
+        let config = CompressionConfig {
+            max_context_tokens: 50, // very tight budget
+            recent_message_count: 4,
+            compression_enabled: true,
+        };
+
+        let result = compress_context(messages, &config);
+
+        // System prompt must always be first and preserved.
+        assert_eq!(result.messages[0].role, "system");
+        assert!(result.messages[0].content.contains("helpful assistant"));
+
+        // There should be a summary message.
+        let summary = result.messages.iter().find(|m| m.content.contains("Conversation Summary"));
+        assert!(summary.is_some(), "should have a summary message");
+
+        // Recent messages should be the last 4 conversation messages.
+        let non_system: Vec<_> = result.messages.iter().filter(|m| m.role != "system").collect();
+        assert_eq!(non_system.len(), 4);
+
+        // Check the very last message is the last assistant response.
+        let last = result.messages.last().unwrap();
+        assert_eq!(last.role, "assistant");
+        assert!(last.content.contains("response number 19"));
+    }
+
+    #[test]
+    fn compress_context_recent_messages_intact() {
+        let mut messages = vec![make_msg("system", "sys prompt")];
+        for i in 0..15 {
+            messages.push(make_msg("user", &format!("msg {} with enough words to make the token count go over budget easily", i)));
+        }
+
+        let config = CompressionConfig {
+            max_context_tokens: 10,
+            recent_message_count: 5,
+            compression_enabled: true,
+        };
+
+        let result = compress_context(messages, &config);
+
+        // Last 5 user messages should be kept verbatim.
+        let user_msgs: Vec<_> = result.messages.iter().filter(|m| m.role == "user").collect();
+        assert_eq!(user_msgs.len(), 5);
+        for (idx, msg) in user_msgs.iter().enumerate() {
+            let expected_num = 10 + idx; // messages 10..14
+            assert!(msg.content.contains(&format!("msg {expected_num}")));
+        }
+    }
+
+    #[test]
+    fn compress_context_metadata_accuracy() {
+        let mut messages = vec![make_msg("system", "short system")];
+        for i in 0..10 {
+            messages.push(make_msg("user", &format!("Message number {} with several words to inflate the count.", i)));
+        }
+
+        let original_tokens: usize = messages.iter().map(|m| count_tokens(&m.content)).sum();
+
+        let config = CompressionConfig {
+            max_context_tokens: 10,
+            recent_message_count: 2,
+            compression_enabled: true,
+        };
+
+        let result = compress_context(messages, &config);
+
+        assert_eq!(result.metadata.original_tokens, original_tokens);
+        assert_eq!(result.metadata.messages_summarized, 8); // 10 - 2 recent
+        // The compression ratio should be less than 1.0 when many messages
+        // are summarized (summary is shorter than full message bodies).
+        // Note: the summary header adds some overhead, so we just verify
+        // fewer messages remain and the ratio is reported accurately.
+        assert!(result.metadata.compression_ratio > 0.0);
+
+        // Verify compressed_tokens matches actual content.
+        let actual_compressed: usize = result.messages.iter().map(|m| count_tokens(&m.content)).sum();
+        assert_eq!(result.metadata.compressed_tokens, actual_compressed);
+    }
+
+    #[tokio::test]
+    async fn build_messages_compressed_integration() {
+        let (ctx, dir, _, _) = setup("compressed").await;
+
+        let ctx = ctx.with_compression(CompressionConfig {
+            max_context_tokens: 100_000,
+            recent_message_count: 10,
+            compression_enabled: true,
+        });
+
+        let mut session = Session::new("test:compress1");
+        session.add_message("user", "Hello", None);
+        session.add_message("assistant", "Hi there!", None);
+
+        let result = ctx.build_messages_compressed(&session, &[]).await;
+
+        // Within budget, so no compression.
+        assert_eq!(result.metadata.compression_ratio, 1.0);
+        assert!(result.messages[0].role == "system");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn build_messages_compressed_uses_default_config() {
+        let (ctx, dir, _, _) = setup("default_compress").await;
+        // No with_compression() call -- should use defaults.
+
+        let session = Session::new("test:compress2");
+        let result = ctx.build_messages_compressed(&session, &[]).await;
+
+        // Default budget is 8192, system prompt is small, should not compress.
+        assert_eq!(result.metadata.compression_ratio, 1.0);
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

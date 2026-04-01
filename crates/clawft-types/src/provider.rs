@@ -417,6 +417,67 @@ pub static PROVIDERS: &[ProviderSpec] = &[
         detect_by_base_keyword: "x.ai",
         strip_model_prefix: false,
     },
+    // === Local / air-gapped providers ===
+    ProviderSpec {
+        name: "local",
+        keywords: &["local"],
+        env_key: "LOCAL_LLM_API_KEY",
+        display_name: "Local",
+        litellm_prefix: "openai",
+        skip_prefixes: &["local/"],
+        is_gateway: false,
+        is_local: true,
+        is_oauth: false,
+        default_api_base: "http://localhost:11434/v1",
+        detect_by_key_prefix: "",
+        detect_by_base_keyword: "",
+        strip_model_prefix: true,
+    },
+    ProviderSpec {
+        name: "ollama",
+        keywords: &["ollama"],
+        env_key: "LOCAL_LLM_API_KEY",
+        display_name: "Ollama",
+        litellm_prefix: "openai",
+        skip_prefixes: &["ollama/", "local/"],
+        is_gateway: false,
+        is_local: true,
+        is_oauth: false,
+        default_api_base: "http://localhost:11434/v1",
+        detect_by_key_prefix: "",
+        detect_by_base_keyword: ":11434",
+        strip_model_prefix: true,
+    },
+    ProviderSpec {
+        name: "lmstudio",
+        keywords: &["lmstudio", "lm-studio"],
+        env_key: "LOCAL_LLM_API_KEY",
+        display_name: "LM Studio",
+        litellm_prefix: "openai",
+        skip_prefixes: &["lmstudio/"],
+        is_gateway: false,
+        is_local: true,
+        is_oauth: false,
+        default_api_base: "http://localhost:1234/v1",
+        detect_by_key_prefix: "",
+        detect_by_base_keyword: ":1234",
+        strip_model_prefix: true,
+    },
+    ProviderSpec {
+        name: "llamacpp",
+        keywords: &["llamacpp", "llama-cpp", "llama.cpp"],
+        env_key: "LOCAL_LLM_API_KEY",
+        display_name: "llama.cpp",
+        litellm_prefix: "openai",
+        skip_prefixes: &["llamacpp/"],
+        is_gateway: false,
+        is_local: true,
+        is_oauth: false,
+        default_api_base: "http://localhost:8080/v1",
+        detect_by_key_prefix: "",
+        detect_by_base_keyword: ":8080",
+        strip_model_prefix: true,
+    },
 ];
 
 /// Find a standard provider by model-name keyword (case-insensitive).
@@ -481,7 +542,7 @@ mod tests {
 
     #[test]
     fn provider_count() {
-        assert_eq!(PROVIDERS.len(), 15);
+        assert_eq!(PROVIDERS.len(), 19);
     }
 
     #[test]
@@ -550,6 +611,78 @@ mod tests {
         let spec = find_by_name("openai_codex").unwrap();
         assert!(spec.is_oauth);
         assert!(spec.env_key.is_empty());
+    }
+
+    #[test]
+    fn find_local_by_name() {
+        let spec = find_by_name("local").unwrap();
+        assert!(spec.is_local);
+        assert_eq!(spec.display_name, "Local");
+        assert_eq!(spec.default_api_base, "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn find_ollama_by_name() {
+        let spec = find_by_name("ollama").unwrap();
+        assert!(spec.is_local);
+        assert_eq!(spec.display_name, "Ollama");
+        assert_eq!(spec.default_api_base, "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn find_lmstudio_by_name() {
+        let spec = find_by_name("lmstudio").unwrap();
+        assert!(spec.is_local);
+        assert_eq!(spec.display_name, "LM Studio");
+        assert_eq!(spec.default_api_base, "http://localhost:1234/v1");
+    }
+
+    #[test]
+    fn find_llamacpp_by_name() {
+        let spec = find_by_name("llamacpp").unwrap();
+        assert!(spec.is_local);
+        assert_eq!(spec.display_name, "llama.cpp");
+        assert_eq!(spec.default_api_base, "http://localhost:8080/v1");
+    }
+
+    #[test]
+    fn find_gateway_detects_local_by_name() {
+        let spec = find_gateway(Some("local"), None, None).unwrap();
+        assert_eq!(spec.name, "local");
+        assert!(spec.is_local);
+    }
+
+    #[test]
+    fn find_gateway_detects_ollama_by_name() {
+        let spec = find_gateway(Some("ollama"), None, None).unwrap();
+        assert_eq!(spec.name, "ollama");
+        assert!(spec.is_local);
+    }
+
+    #[test]
+    fn find_gateway_detects_ollama_by_port() {
+        let spec =
+            find_gateway(None, None, Some("http://192.168.1.5:11434/v1")).unwrap();
+        assert_eq!(spec.name, "ollama");
+    }
+
+    #[test]
+    fn find_gateway_detects_lmstudio_by_port() {
+        let spec =
+            find_gateway(None, None, Some("http://localhost:1234/v1")).unwrap();
+        assert_eq!(spec.name, "lmstudio");
+    }
+
+    #[test]
+    fn all_local_providers_are_local() {
+        for name in &["local", "ollama", "lmstudio", "llamacpp", "vllm"] {
+            let spec = find_by_name(name).unwrap();
+            assert!(
+                spec.is_local,
+                "provider {} should be marked as local",
+                name
+            );
+        }
     }
 
     #[test]

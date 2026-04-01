@@ -128,6 +128,25 @@ pub fn builtin_providers() -> Vec<LlmProviderConfig> {
             headers: HashMap::new(),
             timeout_secs: None,
         },
+        // ── Local / air-gapped providers ────────────────────────────
+        LlmProviderConfig {
+            name: "local".into(),
+            base_url: "http://localhost:11434/v1".into(),
+            api_key_env: "LOCAL_LLM_API_KEY".into(),
+            model_prefix: Some("local/".into()),
+            default_model: Some("llama3.2".into()),
+            headers: HashMap::new(),
+            timeout_secs: Some(300),
+        },
+        LlmProviderConfig {
+            name: "ollama".into(),
+            base_url: "http://localhost:11434/v1".into(),
+            api_key_env: "LOCAL_LLM_API_KEY".into(),
+            model_prefix: Some("ollama/".into()),
+            default_model: Some("llama3.2".into()),
+            headers: HashMap::new(),
+            timeout_secs: Some(300),
+        },
     ]
 }
 
@@ -138,7 +157,7 @@ mod tests {
     #[test]
     fn builtin_providers_count() {
         let providers = builtin_providers();
-        assert_eq!(providers.len(), 9);
+        assert_eq!(providers.len(), 11);
     }
 
     #[test]
@@ -154,6 +173,8 @@ mod tests {
         assert!(names.contains(&"openrouter"));
         assert!(names.contains(&"gemini"));
         assert!(names.contains(&"xai"));
+        assert!(names.contains(&"local"));
+        assert!(names.contains(&"ollama"));
     }
 
     #[test]

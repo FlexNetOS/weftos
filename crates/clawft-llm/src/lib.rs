@@ -36,6 +36,8 @@ pub mod types;
 #[cfg(feature = "native")]
 pub mod failover;
 #[cfg(feature = "native")]
+pub mod local_provider;
+#[cfg(feature = "native")]
 pub mod openai_compat;
 #[cfg(feature = "native")]
 pub mod provider;
@@ -57,6 +59,8 @@ pub use types::{ChatMessage, ChatRequest, ChatResponse, StreamChunk, ToolCall, U
 
 #[cfg(feature = "native")]
 pub use failover::FailoverChain;
+#[cfg(feature = "native")]
+pub use local_provider::LocalProvider;
 #[cfg(feature = "native")]
 pub use openai_compat::OpenAiCompatProvider;
 #[cfg(feature = "native")]

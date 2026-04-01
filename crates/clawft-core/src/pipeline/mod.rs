@@ -8,6 +8,7 @@ pub mod cost_tracker;
 pub mod learner;
 #[cfg(feature = "native")]
 pub mod llm_adapter;
+pub mod mutation;
 pub mod permissions;
 pub mod rate_limiter;
 pub mod router;
