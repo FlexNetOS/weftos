@@ -1,0 +1,4 @@
+{
+  "title": "Integrations",
+  "pages": ["index", "paperclip", "openclaw", "local-inference", "cloud-providers", "ruflo"]
+}

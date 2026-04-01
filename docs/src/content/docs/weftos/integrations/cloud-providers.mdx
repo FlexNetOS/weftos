@@ -1,0 +1,127 @@
+---
+title: Cloud Providers
+description: Use Claude, Gemini, GPT, and other cloud LLM providers with WeftOS agents.
+---
+
+# Cloud LLM Providers
+
+WeftOS agents can use any cloud LLM provider through clawft's provider abstraction. The pipeline handles routing, cost tracking, and rate limiting automatically.
+
+## Supported Providers
+
+| Provider | Config prefix | Models | Notes |
+|----------|--------------|--------|-------|
+| **Anthropic (Claude)** | `anthropic/` | Claude 4.6, Sonnet, Haiku | Best for complex reasoning |
+| **Google (Gemini)** | `google/` | Gemini 2.5 Pro, Flash | Large context windows |
+| **OpenAI (GPT)** | `openai/` | GPT-4.1, GPT-4.1-mini | Broad ecosystem |
+| **DeepSeek** | `deepseek/` | DeepSeek-V3, DeepSeek-Coder | Cost-effective coding |
+| **xAI (Grok)** | `xai/` | Grok-3 | Real-time knowledge |
+| **OpenRouter** | `openrouter/` | Any model on OpenRouter | Multi-provider gateway |
+| **Groq** | `groq/` | Llama, Mixtral (fast inference) | Low latency |
+
+## Configuration
+
+### API keys
+
+Set environment variables:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GOOGLE_API_KEY="AIza..."
+export OPENAI_API_KEY="sk-..."
+```
+
+### Per-command
+
+```bash
+weft agent --model anthropic/claude-sonnet-4-6
+weft agent --model google/gemini-2.5-pro
+weft agent --model openai/gpt-4.1
+```
+
+### In config
+
+```toml
+[routing]
+mode = "tiered"
+
+[routing.tiers]
+simple = "groq/llama-3.1-8b"       # Fast, cheap
+moderate = "anthropic/claude-haiku-4-5"  # Balanced
+complex = "anthropic/claude-sonnet-4-6"  # Full power
+```
+
+## Tiered Routing
+
+clawft's pipeline automatically routes requests to the right model based on complexity:
+
+| Tier | Complexity | Latency | Cost | Use case |
+|------|-----------|---------|------|----------|
+| **1** | < 30% | ~500ms | Low | Simple questions, lookups |
+| **2** | 30-70% | ~2s | Medium | Code generation, analysis |
+| **3** | > 70% | ~5s | High | Architecture, security review |
+
+The complexity classifier runs before the LLM call and routes accordingly. You save cost on simple tasks without sacrificing quality on complex ones.
+
+```toml
+[routing]
+mode = "tiered"
+complexity_threshold_low = 0.3
+complexity_threshold_high = 0.7
+```
+
+## Cost Tracking
+
+Every provider call is tracked:
+
+```bash
+weft status  # Shows total token usage and estimated cost
+```
+
+The `cost_tracker.rs` module records per-agent, per-provider token usage. The BudgetBlock in the GUI shows this in real-time.
+
+## Claude (Anthropic)
+
+Claude is the recommended cloud provider for complex tasks:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+weft agent --model anthropic/claude-sonnet-4-6
+```
+
+Supports:
+- Streaming responses
+- Tool use (function calling)
+- Extended context (200K tokens)
+- Vision (image analysis)
+
+## Gemini (Google)
+
+Gemini excels at large-context tasks:
+
+```bash
+export GOOGLE_API_KEY="AIza..."
+weft agent --model google/gemini-2.5-pro
+```
+
+Supports:
+- 1M+ token context window
+- Multimodal (text, image, audio, video)
+- Code execution
+- Grounding with Google Search
+
+## Mixing Local + Cloud
+
+The tiered router can mix local and cloud providers:
+
+```toml
+[routing]
+mode = "tiered"
+
+[routing.tiers]
+simple = "local/phi3"                    # Free, fast, local
+moderate = "local/llama3.1"              # Free, local
+complex = "anthropic/claude-sonnet-4-6"  # Cloud for hard problems
+```
+
+Simple tasks stay local (zero cost, zero latency). Complex tasks escalate to Claude. Your data for simple queries never leaves your machine.

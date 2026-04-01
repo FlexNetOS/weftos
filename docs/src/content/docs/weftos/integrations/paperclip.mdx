@@ -1,0 +1,168 @@
+---
+title: Paperclip
+description: Run Paperclip multi-agent companies on WeftOS infrastructure for governance, provenance, and security.
+---
+
+# Paperclip Integration
+
+[Paperclip](https://github.com/paperclipai/paperclip) is an open-source orchestration platform for multi-agent "companies" — teams of AI agents organized into CEO/Manager/Worker hierarchies with budgets, goals, and approval gates.
+
+WeftOS provides the infrastructure layer underneath Paperclip: cryptographic governance, ExoChain provenance, WASM sandboxing, and mesh networking.
+
+## Architecture
+
+```
+Paperclip (companies, org charts, budgets, dashboard)
+    ↓ HTTP API
+WeftOS kernel (governance, provenance, sandbox, mesh)
+    ↓ pipeline
+clawft agent runtime (7-stage pipeline, skills, tools)
+    ↓ provider
+LLM (Ollama, vLLM, Claude, OpenAI)
+```
+
+Paperclip manages the **what** (goals, task assignment, budget tracking). WeftOS manages the **how** (execution governance, audit trail, resource isolation).
+
+## WeftOS Types for Paperclip Patterns
+
+WeftOS includes Rust-native types that mirror Paperclip's organizational model:
+
+```rust
+use clawft_types::company::{Company, OrgChart, OrgNode, OrgRole};
+use clawft_types::goal::{Goal, GoalTree, GoalStatus};
+
+// Define a company
+let company = Company {
+    id: "acme".into(),
+    name: "Acme AI Corp".into(),
+    description: Some("Automated code review company".into()),
+    created_at: chrono::Utc::now(),
+};
+
+// Build an org chart
+let mut chart = OrgChart::new("acme".into());
+chart.nodes.push(OrgNode {
+    agent_id: "agent-ceo".into(),
+    role: OrgRole::Ceo,
+    reports_to: None,
+    budget_cents: 10_000, // $100 budget
+    goals: vec!["ship-v1".into()],
+});
+chart.nodes.push(OrgNode {
+    agent_id: "agent-reviewer".into(),
+    role: OrgRole::Worker,
+    reports_to: Some("agent-ceo".into()),
+    budget_cents: 2_000,
+    goals: vec!["review-prs".into()],
+});
+```
+
+## HeartbeatScheduler
+
+The HeartbeatScheduler implements Paperclip's agent lifecycle pattern:
+
+```rust
+use clawft_kernel::heartbeat::{HeartbeatScheduler, HeartbeatConfig};
+use std::time::Duration;
+
+let mut scheduler = HeartbeatScheduler::new();
+
+scheduler.register(HeartbeatConfig {
+    agent_id: "agent-reviewer".into(),
+    interval: Duration::from_secs(300), // every 5 minutes
+    enabled: true,
+});
+
+// On each tick, get agents that need to wake
+let delta = Duration::from_secs(1);
+let wake_list = scheduler.tick(delta);
+for agent_id in wake_list {
+    // Execute agent's task queue
+}
+```
+
+Each heartbeat cycles through 5 phases: **Wake → CheckQueue → Execute → Sleep → Report**.
+
+## HTTP API
+
+WeftOS exposes an HTTP API (behind the `http-api` feature flag) that Paperclip's adapter can call:
+
+### Execute a task
+
+```
+POST /api/v1/execute
+{
+    "agent_id": "agent-reviewer",
+    "task": "Review PR #42 for security issues",
+    "context": {
+        "repo": "weave-logic-ai/weftos",
+        "pr_number": 42
+    }
+}
+```
+
+Response:
+```json
+{
+    "result": "Reviewed PR #42. Found 2 potential issues...",
+    "score": 0.85,
+    "tokens_used": 1234,
+    "chain_hash": "abc123..."
+}
+```
+
+### Governance check
+
+```
+POST /api/v1/govern
+{
+    "action": "execute_shell_command",
+    "agent_id": "agent-reviewer",
+    "context": {
+        "command": "rm -rf /tmp/build",
+        "risk": 0.7
+    }
+}
+```
+
+Response:
+```json
+{
+    "decision": "deny",
+    "reason": "High-risk shell command requires Manager approval",
+    "effect_vector": [0.7, 0.5, 0.3, 0.8, 0.6],
+    "chain_hash": "def456..."
+}
+```
+
+## Paperclip Adapter
+
+The TypeScript adapter (`@paperclipai/adapter-weftos`) bridges Paperclip's heartbeat protocol to WeftOS:
+
+```typescript
+// In Paperclip company.json
+{
+  "agents": {
+    "reviewer": {
+      "adapter": "weftos",
+      "config": {
+        "base_url": "http://localhost:8080",
+        "model": "local/llama3.1"
+      }
+    }
+  }
+}
+```
+
+See the [adapter spec](/docs/specs/paperclip-adapter-spec.md) for the complete protocol documentation.
+
+## What Paperclip Gets from WeftOS
+
+| Capability | Without WeftOS | With WeftOS |
+|-----------|---------------|-------------|
+| Audit trail | Flat log in Postgres | Cryptographic ExoChain with hash linking |
+| Tool isolation | Node.js child process | WASM sandbox with capability enforcement |
+| Governance | Approval gates | Constitutional 3-branch engine with effect vectors |
+| Memory | File-based PARA system | HNSW vector search with semantic retrieval |
+| Networking | Single instance | Encrypted P2P mesh across nodes |
+| Performance | Node.js (GC pauses) | Compiled Rust (sub-ms kernel ops) |

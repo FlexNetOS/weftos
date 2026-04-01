@@ -1,0 +1,36 @@
+---
+title: Integrations Overview
+description: How external tools, agent runtimes, and inference servers plug into WeftOS.
+---
+
+# Integrations
+
+WeftOS is designed to work with existing tools, not replace them. The stack has four layers — each accepts different integrations.
+
+```
+┌─────────────────────────────────────────────────┐
+│  Orchestration   Paperclip (companies, budgets) │
+├─────────────────────────────────────────────────┤
+│  Agent Runtimes  OpenClaw · clawft · NanoClaw   │
+├─────────────────────────────────────────────────┤
+│  Kernel          WeftOS (governance, mesh, IPC)  │
+├─────────────────────────────────────────────────┤
+│  Inference       Ollama · vLLM · llama.cpp       │
+└─────────────────────────────────────────────────┘
+```
+
+## Integration Points
+
+| Layer | What plugs in | How it connects |
+|-------|--------------|-----------------|
+| **Orchestration** | [Paperclip](/weftos/integrations/paperclip) | HTTP API (`/api/v1/execute`), heartbeat protocol |
+| **Agent runtimes** | [OpenClaw](/weftos/integrations/openclaw), clawft, NanoClaw | Kernel process tree, A2A IPC, tool registry |
+| **Inference** | [Ollama, vLLM, llama.cpp](/weftos/integrations/local-inference) | `LocalProvider` in clawft-llm, OpenAI-compatible API |
+
+## How It Works
+
+**Orchestration** tools like Paperclip sit above WeftOS. They manage business logic (who does what, budgets, org charts) and delegate task execution down to WeftOS via the HTTP API. WeftOS handles governance, provenance, and sandboxing.
+
+**Agent runtimes** run as processes inside the WeftOS kernel. Each gets a PID, capabilities, and access to IPC. The kernel doesn't care what runtime you use — OpenClaw, clawft's built-in pipeline, or a custom agent. They all go through the same governance engine.
+
+**Inference servers** provide the LLM backend. clawft's `LocalProvider` speaks the OpenAI-compatible API that Ollama, vLLM, llama.cpp, and LM Studio all implement. No cloud API keys needed — your data stays on your hardware.

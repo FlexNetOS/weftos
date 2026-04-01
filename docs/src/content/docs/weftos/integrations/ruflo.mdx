@@ -1,0 +1,127 @@
+---
+title: RuFlo
+description: Use RuFlo for swarm orchestration, agent coordination, and CI/CD automation with WeftOS.
+---
+
+# RuFlo Integration
+
+[RuFlo](https://github.com/ruvnet/claude-flow) (claude-flow) is a multi-agent orchestration CLI that coordinates AI agent swarms. WeftOS can use RuFlo as an external swarm coordinator, and RuFlo can use WeftOS as its execution kernel.
+
+## How They Relate
+
+| Tool | Role | Focus |
+|------|------|-------|
+| **RuFlo** | Swarm coordinator | Agent spawning, task orchestration, memory, hooks |
+| **WeftOS** | Execution kernel | Governance, provenance, sandboxing, mesh |
+| **clawft** | Agent runtime | 7-stage pipeline, skills, tools, LLM providers |
+
+RuFlo excels at **coordinating multiple agents** — spawning them, distributing tasks, managing shared memory, and running hooks. WeftOS excels at **securing the execution** — governance checks, cryptographic audit trails, and process isolation.
+
+## Using RuFlo with WeftOS
+
+### As a swarm coordinator
+
+RuFlo can orchestrate multiple WeftOS-hosted agents:
+
+```bash
+# Initialize a RuFlo swarm
+ruflo swarm init --topology hierarchical --max-agents 8
+
+# Spawn agents that run on WeftOS
+ruflo agent spawn -t coder --name code-agent
+ruflo agent spawn -t reviewer --name review-agent
+ruflo agent spawn -t tester --name test-agent
+
+# Orchestrate tasks
+ruflo task create "Implement authentication module" --assign code-agent
+ruflo task create "Review PR for security" --assign review-agent
+```
+
+Each agent runs as a WeftOS kernel process with full governance and provenance.
+
+### Memory coordination
+
+RuFlo provides shared memory across agents:
+
+```bash
+ruflo memory store --key "auth-pattern" --value "JWT with refresh tokens"
+ruflo memory search --query "authentication"
+```
+
+This complements WeftOS's HNSW vector store — RuFlo handles the coordination layer while WeftOS provides the semantic search backend.
+
+### Hooks for automation
+
+RuFlo hooks trigger on agent events:
+
+```bash
+# Run security scan after every code change
+ruflo hooks add --event post-task --command "weft security scan"
+
+# Log to ExoChain after task completion
+ruflo hooks add --event post-task --command "weaver chain log"
+```
+
+## Using WeftOS inside RuFlo
+
+### As the agent runtime
+
+Configure RuFlo to use WeftOS's agent pipeline instead of spawning raw Claude Code sessions:
+
+```json
+{
+  "agent": {
+    "runtime": "weftos",
+    "config": {
+      "kernel_url": "http://localhost:8080",
+      "model": "local/llama3.1",
+      "governance": true
+    }
+  }
+}
+```
+
+### Session management
+
+RuFlo manages sessions, WeftOS manages processes:
+
+```bash
+# RuFlo creates a session
+ruflo session start --name "sprint-13"
+
+# WeftOS boots the kernel for this session
+weaver kernel start
+
+# Agents coordinate through both systems
+ruflo agent spawn -t coder  # RuFlo tracks the session
+# WeftOS assigns PID, capabilities, governance
+```
+
+## Build & Deploy Automation
+
+RuFlo is used in WeftOS's own development workflow:
+
+```bash
+# The weftos-build-deploy skill uses RuFlo patterns:
+ruflo swarm init --topology hierarchical
+ruflo task create "Build and test" --parallel
+ruflo task create "Publish to crates.io" --sequential
+ruflo task create "Tag and release" --sequential
+```
+
+The `weftos-build-deploy` skill captures this workflow. See `.claude/skills/weftos-build-deploy/SKILL.md`.
+
+## When to Use Which
+
+| Scenario | Use RuFlo | Use WeftOS | Use Both |
+|----------|----------|-----------|----------|
+| Single agent, simple task | | x | |
+| Multi-agent swarm | x | | x |
+| Need audit trail | | x | x |
+| CI/CD automation | x | | |
+| Air-gapped deployment | | x | |
+| Production security | | x | x |
+| Rapid prototyping | x | | |
+| Enterprise governance | | x | x |
+
+**Simple rule**: If you need one agent, use WeftOS directly. If you need a swarm, use RuFlo to coordinate and WeftOS to execute.

@@ -1,0 +1,100 @@
+---
+title: OpenClaw
+description: Run OpenClaw and other AI coding agents as managed processes inside the WeftOS kernel.
+---
+
+# OpenClaw Integration
+
+[OpenClaw](https://github.com/openclawai/openclaw) is an open-source AI coding agent. WeftOS can host OpenClaw (and similar agents like NanoClaw, Codex, Cursor) as managed kernel processes with governance, sandboxing, and provenance.
+
+## How It Works
+
+OpenClaw runs as a **supervised process** inside the WeftOS kernel:
+
+```
+WeftOS kernel
+├── PID 1: OpenClaw agent (coding tasks)
+├── PID 2: clawft agent (research tasks)
+├── PID 3: NanoClaw agent (lightweight ops)
+└── Services: governance, ExoChain, mesh, IPC
+```
+
+Each agent gets:
+- A **PID** in the process table with lifecycle tracking
+- **Capabilities** — what tools/operations it's allowed to use
+- **IPC** — typed message passing to other agents
+- **Governance** — every privileged action checked against the policy kernel
+- **ExoChain logging** — cryptographic audit trail of all actions
+
+## Running OpenClaw on WeftOS
+
+### 1. Start the kernel
+
+```bash
+weaver kernel start
+```
+
+### 2. Spawn OpenClaw as a managed process
+
+```bash
+weaver agent spawn --runtime openclaw --name code-reviewer
+```
+
+Or via the HTTP API:
+
+```json
+POST /api/v1/execute
+{
+    "agent_id": "code-reviewer",
+    "task": "Review the authentication module for security issues",
+    "context": {
+        "runtime": "openclaw",
+        "workspace": "/path/to/project"
+    }
+}
+```
+
+### 3. Monitor
+
+```bash
+weaver kernel ps          # See running agents
+weaver kernel attach      # Stream logs
+weaver chain status       # Audit trail
+```
+
+## Agent Runtime Adapters
+
+WeftOS doesn't require agents to use the clawft pipeline. Any process that:
+
+1. Accepts a task via stdin/IPC/HTTP
+2. Executes using tools
+3. Reports results
+
+...can run as a WeftOS process. The kernel wraps it with governance and provenance regardless of the internal architecture.
+
+### Supported Runtimes
+
+| Runtime | Type | Notes |
+|---------|------|-------|
+| **clawft** | Built-in | 7-stage pipeline, GEPA learning, 11 providers |
+| **OpenClaw** | External | AI coding agent, spawned as child process |
+| **NanoClaw** | External | Lightweight agent for simple tasks |
+| **Codex** | External | OpenAI's coding agent |
+| **Custom** | Any | Any process that speaks the task protocol |
+
+## What Agents Get from WeftOS
+
+### Governance
+Every tool call passes through the policy kernel. An OpenClaw agent trying to `rm -rf /` gets blocked by the governance engine before the command executes.
+
+### Provenance
+Every action is logged to ExoChain with SHAKE-256 hash linking. You can cryptographically verify what any agent did, when, and why.
+
+### Isolation
+Agents run in separate process contexts. WASM-sandboxed tools can't access the host filesystem. Capability tokens restrict what operations each agent can perform.
+
+### Memory
+Agents can read/write to the shared HNSW vector store for persistent semantic memory that survives across sessions.
+
+### Mesh
+In a multi-node deployment, agents on different machines communicate through the encrypted mesh. An OpenClaw agent on your laptop can delegate to a GPU-accelerated agent on a server.

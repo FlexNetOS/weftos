@@ -1,0 +1,229 @@
+---
+title: Local Inference
+description: Run Ollama, vLLM, llama.cpp, and LM Studio as local LLM backends for WeftOS agents.
+---
+
+# Local Inference
+
+WeftOS agents can use any OpenAI-compatible inference server for local, private LLM execution. No cloud API keys. No data leaving your network.
+
+## Quick Start
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama pull llama3.1
+
+# Run an agent with local inference
+weft agent --model local/llama3.1
+```
+
+## Supported Servers
+
+| Server | Default URL | Install | Best For |
+|--------|-------------|---------|----------|
+| **Ollama** | `localhost:11434/v1` | `curl -fsSL https://ollama.ai/install.sh \| sh` | Getting started, Mac/Linux, single GPU |
+| **vLLM** | `localhost:8000/v1` | `pip install vllm` | Production serving, multi-GPU, high throughput |
+| **llama.cpp** | `localhost:8080/v1` | Build from source or `brew install llama.cpp` | CPU inference, GGUF models, low memory |
+| **LM Studio** | `localhost:1234/v1` | Download from [lmstudio.ai](https://lmstudio.ai) | GUI model management, Mac/Windows |
+
+## Configuration
+
+### Per-command
+
+```bash
+weft agent --model local/llama3.1
+weft agent --model local/deepseek-coder-v2
+```
+
+### In config file
+
+```toml
+[routing]
+mode = "static"
+model = "local/llama3.1"
+```
+
+### Custom server URL
+
+```toml
+[providers.my-server]
+type = "local"
+base_url = "http://gpu-box.local:8000/v1"
+model = "meta-llama/Llama-3.1-70B-Instruct"
+```
+
+## LocalProvider API
+
+clawft-llm provides factory methods for each server:
+
+```rust
+use clawft_llm::LocalProvider;
+
+// Ollama (default: localhost:11434)
+let provider = LocalProvider::ollama();
+
+// vLLM with specific model
+let provider = LocalProvider::vllm("meta-llama/Llama-3.1-8B-Instruct");
+
+// llama.cpp (default: localhost:8080)
+let provider = LocalProvider::llamacpp();
+
+// LM Studio with specific model
+let provider = LocalProvider::lmstudio("deepseek-coder-v2");
+
+// Custom endpoint
+let provider = LocalProvider::new(
+    "http://my-server:9000/v1",
+    "my-model",
+    None, // no API key needed
+);
+```
+
+### Key-optional auth
+
+Local servers typically run without authentication. The `LocalProvider` sends requests without an `Authorization` header when no key is configured — unlike cloud providers which require API keys.
+
+### Model listing
+
+```rust
+let models = provider.list_models().await?;
+// Handles both OpenAI format (data[].id) and Ollama format (models[].name)
+```
+
+## Ollama Setup
+
+Ollama is the easiest way to run local models:
+
+```bash
+# Install
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull models
+ollama pull llama3.1          # General purpose (8B)
+ollama pull deepseek-coder-v2 # Code-focused (16B)
+ollama pull mistral            # Fast, good quality (7B)
+ollama pull phi3               # Small, efficient (3.8B)
+
+# Verify
+curl http://localhost:11434/api/tags
+```
+
+### Recommended models by task
+
+| Task | Model | Size | Notes |
+|------|-------|------|-------|
+| General agent | `llama3.1` | 8B | Good all-around |
+| Code review | `deepseek-coder-v2` | 16B | Strong code understanding |
+| Fast responses | `phi3` | 3.8B | Low latency, smaller context |
+| Complex reasoning | `llama3.1:70b` | 70B | Needs 40GB+ VRAM |
+
+## vLLM Setup
+
+vLLM is best for production serving with high throughput:
+
+```bash
+pip install vllm
+
+# Serve a model
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --port 8000 \
+  --max-model-len 8192
+
+# Use with WeftOS
+weft agent --model local/meta-llama/Llama-3.1-8B-Instruct
+```
+
+### Multi-GPU
+
+```bash
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --tensor-parallel-size 4 \
+  --port 8000
+```
+
+### Continuous batching
+
+vLLM automatically batches concurrent requests for maximum GPU utilization. Multiple WeftOS agents can share a single vLLM server.
+
+## llama.cpp Setup
+
+llama.cpp is best for CPU inference and GGUF quantized models:
+
+```bash
+# Build from source
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp && make -j
+
+# Or install via Homebrew (macOS)
+brew install llama.cpp
+
+# Download a GGUF model
+wget https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_K_M.gguf
+
+# Start the server
+llama-server -m llama-2-7b.Q4_K_M.gguf \
+  --port 8080 \
+  --ctx-size 4096 \
+  --threads 8
+
+# Use with WeftOS
+weft agent --model local/llama-2-7b
+```
+
+### Quantization levels
+
+| Quantization | Size (7B) | Quality | Speed |
+|-------------|-----------|---------|-------|
+| Q8_0 | ~7 GB | Near-original | Slower |
+| Q5_K_M | ~5 GB | Good | Moderate |
+| Q4_K_M | ~4 GB | Acceptable | Fast |
+| Q3_K_M | ~3 GB | Noticeable loss | Fastest |
+
+## LM Studio Setup
+
+LM Studio provides a GUI for model management:
+
+1. Download from [lmstudio.ai](https://lmstudio.ai)
+2. Search and download models from the built-in model browser
+3. Click "Start Server" (defaults to port 1234)
+4. Use with WeftOS:
+
+```bash
+weft agent --model local/loaded-model-name
+```
+
+## Air-Gapped Deployment
+
+For environments with no internet access:
+
+1. Download models on a connected machine
+2. Transfer model files to the air-gapped machine
+3. Run Ollama/llama.cpp with the local model files
+4. WeftOS connects to `localhost` — no external network needed
+
+```bash
+# On connected machine
+ollama pull llama3.1
+# Copy ~/.ollama/models to USB drive
+
+# On air-gapped machine
+# Copy models to ~/.ollama/models
+ollama serve
+weft agent --model local/llama3.1
+```
+
+All data stays local. ExoChain audit trail is self-contained. Mesh networking works over local TCP.
+
+## Streaming
+
+All local providers support streaming responses via Server-Sent Events (SSE):
+
+```rust
+let stream = provider.stream_chat(messages).await?;
+while let Some(chunk) = stream.next().await {
+    print!("{}", chunk.content);
+}
+```
+
+The agent pipeline handles streaming automatically — no special configuration needed.
