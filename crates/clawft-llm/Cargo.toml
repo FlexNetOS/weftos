@@ -10,6 +10,10 @@ description = "LLM provider abstraction for clawft (OpenAI-compatible + native p
 keywords = ["llm", "openai", "anthropic", "ai", "provider"]
 categories = ["development-tools::testing"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native"]
 native = ["reqwest/rustls-tls", "dep:tokio", "clawft-types/native"]

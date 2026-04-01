@@ -10,6 +10,10 @@ description = "Core types for the clawft AI assistant framework"
 keywords = ["ai", "assistant", "types", "agent", "llm"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native"]
 native = ["dep:dirs"]

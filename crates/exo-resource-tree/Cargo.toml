@@ -10,6 +10,10 @@ description = "WeftOS exo-resource-tree: hierarchical resource namespace with Me
 keywords = ["resource", "tree", "merkle", "permission", "namespace"]
 categories = ["data-structures"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

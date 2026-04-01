@@ -17,6 +17,10 @@ path = "src/main.rs"
 [package.metadata.dist]
 dist = true
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native"]
 native = ["clawft-kernel/native"]

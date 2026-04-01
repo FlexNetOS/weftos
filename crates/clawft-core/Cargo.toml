@@ -10,6 +10,10 @@ description = "Core engine for clawft (agent loop, message bus, context manageme
 keywords = ["ai", "agent", "pipeline", "tools", "llm"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["full", "native"]
 full = ["rvf", "signing", "vector-memory"]

@@ -10,6 +10,10 @@ description = "WeftOS kernel: boot sequence, process table, service registry, an
 keywords = ["kernel", "os", "process", "service", "health"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native", "exochain", "cluster", "tilezero", "ecc"]
 native = [

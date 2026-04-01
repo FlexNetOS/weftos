@@ -10,6 +10,10 @@ description = "Platform abstraction layer for clawft"
 keywords = ["platform", "abstraction", "wasm", "http", "filesystem"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native"]
 native = ["dep:tokio", "dep:reqwest", "dep:dirs", "clawft-types/native"]

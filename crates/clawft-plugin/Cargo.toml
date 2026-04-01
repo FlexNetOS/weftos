@@ -10,6 +10,10 @@ description = "Plugin trait definitions for clawft"
 keywords = ["plugin", "traits", "ai", "agent", "extensibility"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["native"]
 native = ["dep:tokio-util"]

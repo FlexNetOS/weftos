@@ -27,6 +27,23 @@
 //! let response = provider.complete(&request).await?;
 //! println!("{}", response.choices[0].message.content);
 //! ```
+//!
+//! ## Crate Ecosystem
+//!
+//! WeftOS is built from these crates:
+//!
+//! | Crate | Role |
+//! |-------|------|
+//! | [`weftos`](https://crates.io/crates/weftos) | Product facade -- re-exports kernel, core, types |
+//! | [`clawft-kernel`](https://crates.io/crates/clawft-kernel) | Kernel: processes, services, governance, mesh, ExoChain |
+//! | [`clawft-core`](https://crates.io/crates/clawft-core) | Agent framework: pipeline, context, tools, skills |
+//! | [`clawft-types`](https://crates.io/crates/clawft-types) | Shared type definitions |
+//! | [`clawft-platform`](https://crates.io/crates/clawft-platform) | Platform abstraction (native/WASM/browser) |
+//! | [`clawft-plugin`](https://crates.io/crates/clawft-plugin) | Plugin SDK for tools, channels, and extensions |
+//! | [`clawft-llm`](https://crates.io/crates/clawft-llm) | LLM provider abstraction (11 providers + local) |
+//! | [`exo-resource-tree`](https://crates.io/crates/exo-resource-tree) | Hierarchical resource namespace with Merkle integrity |
+//!
+//! Source: <https://github.com/weave-logic-ai/weftos>
 
 pub mod config;
 pub mod error;
