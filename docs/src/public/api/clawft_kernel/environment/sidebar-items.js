@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuditLevel","EnvironmentClass","EnvironmentError","LearningMode"],"struct":["Environment","EnvironmentManager","GovernanceBranches","GovernanceScope"],"type":["EnvironmentId"]};

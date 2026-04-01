@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PipelineStageType"],"struct":["CancellationToken"],"trait":["ChannelAdapter","ChannelAdapterHost","KeyValueStore","MemoryBackend","PipelineStage","Skill","Tool","ToolContext","VoiceHandler"]};

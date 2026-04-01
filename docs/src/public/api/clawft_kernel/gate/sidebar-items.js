@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GateDecision"],"struct":["CapabilityGate","GovernanceGate","TileZeroGate"],"trait":["GateBackend"]};

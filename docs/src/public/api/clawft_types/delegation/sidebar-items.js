@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DelegationTarget"],"struct":["DelegationConfig","DelegationRule"]};

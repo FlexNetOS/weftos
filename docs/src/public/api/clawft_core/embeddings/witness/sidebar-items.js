@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["GENESIS_HASH"],"enum":["WitnessError","WitnessOperation"],"fn":["sha256_hash"],"struct":["WitnessChain","WitnessSegment"]};

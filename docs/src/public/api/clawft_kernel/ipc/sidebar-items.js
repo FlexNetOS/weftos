@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ExitReason","KernelSignal","MessagePayload","MessageTarget"],"struct":["GlobalPid","KernelIpc","KernelMessage","ProcessDown"]};

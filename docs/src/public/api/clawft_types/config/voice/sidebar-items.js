@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AudioConfig","CloudFallbackConfig","SttConfig","TtsConfig","VadConfig","VoiceConfig","WakeConfig"]};

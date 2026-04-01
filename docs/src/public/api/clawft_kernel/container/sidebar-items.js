@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ContainerError","ContainerState","RestartPolicy"],"struct":["ContainerConfig","ContainerHealth","ContainerManager","ContainerService","ManagedContainer","PortMapping","VolumeMount"]};

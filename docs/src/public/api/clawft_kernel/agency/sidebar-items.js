@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AgentPriority","AgentRestartPolicy","AgentRole","InterfaceProtocol","ResponseMode"],"struct":["Agency","AgentDependencies","AgentHealth","AgentInterface","AgentManifest","AgentResources"]};

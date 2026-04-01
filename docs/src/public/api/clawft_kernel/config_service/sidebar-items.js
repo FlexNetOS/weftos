@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConfigValue"],"struct":["ConfigChange","ConfigEntry","ConfigService","SecretRef"]};

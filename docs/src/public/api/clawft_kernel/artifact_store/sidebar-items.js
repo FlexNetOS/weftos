@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArtifactBackend","ArtifactType"],"struct":["ArtifactStore","StoredArtifact"]};

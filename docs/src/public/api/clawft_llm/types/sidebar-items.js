@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["StreamChunk"],"struct":["ChatMessage","ChatRequest","ChatResponse","Choice","FunctionCall","ToolCall","Usage"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Action","ResourceKind","Role"],"struct":["ResourceId","ResourceNode"]};

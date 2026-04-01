@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["config","error","failover","openai_compat","provider","retry","router","sse","types"],"struct":["Usage"],"type":["ProviderConfig"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BootPhase","LogLevel"],"fn":["boot_banner"],"struct":["BootEvent","BootLog","KernelEventLog"]};

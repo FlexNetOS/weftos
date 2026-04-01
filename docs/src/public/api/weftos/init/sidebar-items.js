@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InitError"],"fn":["init_project"],"struct":["InitResult"]};
