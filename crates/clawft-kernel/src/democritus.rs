@@ -760,8 +760,8 @@ mod tests {
         // Embedding failed → empty vectors, but tick still completes.
         assert_eq!(result.impulses_sensed, 1);
         assert_eq!(result.embeddings_produced, 1); // fallback produces empty vecs
-        // Search with empty vector returns nothing, so 0 searches (no-op).
-        assert_eq!(result.searches_performed, 1);
+        // Search with empty vector is skipped (non_empty_queries filter).
+        assert_eq!(result.searches_performed, 0);
         // Node still added to causal graph.
         assert_eq!(cg.node_count(), 1);
         // But no HNSW insertion (empty embedding skipped).

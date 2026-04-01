@@ -147,6 +147,10 @@ expression: json
     "health_check_interval_secs": 30,
     "max_processes": 64
   },
+  "pipeline": {
+    "learner": "noop",
+    "scorer": "noop"
+  },
   "providers": {
     "aihubmix": {
       "api_base": null,
