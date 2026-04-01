@@ -16,7 +16,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   TARGET: wasm32-wasip2
-  PROFILE: release-wasm
+  PROFILE: release
 
 jobs:
   build-wasi:
@@ -27,8 +27,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip2
+
+      - name: Add wasip2 target
+        run: rustup target add wasm32-wasip2
 
       - name: Cache cargo
         uses: actions/cache@v4
