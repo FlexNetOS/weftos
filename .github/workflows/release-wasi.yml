@@ -1,0 +1,110 @@
+# Build clawft-wasm for wasm32-wasip2 and attach to GitHub Releases.
+#
+# cargo-dist v0.31.0 does not support wasip2 in its target matrix (HP-16),
+# so this workflow runs independently alongside release.yml.
+
+name: Release WASI
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: wasm32-wasip2
+  PROFILE: release-wasm
+
+jobs:
+  build-wasi:
+    name: Build & upload WASI binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasi-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasi-release-
+
+      - name: Install binaryen
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binaryen bc
+
+      - name: Build WASM binary
+        run: |
+          cargo build \
+            --target ${{ env.TARGET }} \
+            --profile ${{ env.PROFILE }} \
+            -p clawft-wasm \
+            --no-default-features
+
+      - name: Verify and measure binary
+        id: wasm
+        run: |
+          WASM="target/${{ env.TARGET }}/${{ env.PROFILE }}/clawft_wasm.wasm"
+          if [ ! -f "$WASM" ]; then
+            echo "::error::WASM binary not found at $WASM"
+            exit 1
+          fi
+
+          SIZE_BYTES=$(wc -c < "$WASM")
+          SIZE_KB=$(echo "scale=1; $SIZE_BYTES / 1024" | bc)
+          GZIP_SIZE=$(gzip -9 -c "$WASM" | wc -c)
+          GZIP_KB=$(echo "scale=1; $GZIP_SIZE / 1024" | bc)
+
+          echo "wasm_path=$WASM" >> "$GITHUB_OUTPUT"
+          echo "size_kb=$SIZE_KB" >> "$GITHUB_OUTPUT"
+          echo "gzip_kb=$GZIP_KB" >> "$GITHUB_OUTPUT"
+          echo "## WASI Binary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Raw | ${SIZE_KB} KB |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Gzipped | ${GZIP_KB} KB |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rename for release
+        id: rename
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          DEST="clawft-wasm-wasip2-${TAG}.wasm"
+          cp "${{ steps.wasm.outputs.wasm_path }}" "$DEST"
+          echo "asset=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ASSET="${{ steps.rename.outputs.asset }}"
+
+          # Wait for the release to exist (created by release.yml)
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for release $TAG to be created... ($i/30)"
+            sleep 10
+          done
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::warning::Release $TAG not found after 5 minutes; creating it"
+            gh release create "$TAG" --title "$TAG" --notes "WASI release" --draft
+          fi
+
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "Uploaded $ASSET to release $TAG"
