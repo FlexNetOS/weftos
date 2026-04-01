@@ -7,12 +7,19 @@ export default function HomePage() {
         <h1 className="mb-4 text-5xl font-bold tracking-tight text-fd-foreground sm:text-6xl">
           WeftOS
         </h1>
-        <p className="mb-6 text-xl text-fd-foreground/80 sm:text-2xl">
+        <p className="mb-4 text-xl text-fd-foreground/80 sm:text-2xl">
           Full-stack AI operating system built in Rust
         </p>
+        <div className="mb-6 flex flex-wrap justify-center gap-2">
+          <img src="https://img.shields.io/github/v/release/weave-logic-ai/weftos?label=release&color=blue" alt="Release" />
+          <img src="https://img.shields.io/crates/v/weftos?color=orange" alt="crates.io" />
+          <img src="https://img.shields.io/npm/v/@weftos/core?color=red" alt="npm" />
+          <img src="https://img.shields.io/badge/targets-9_platforms-green" alt="Platforms" />
+          <img src="https://img.shields.io/badge/tests-3,300+-brightgreen" alt="Tests" />
+        </div>
         <p className="mb-12 text-base text-fd-muted-foreground sm:text-lg max-w-2xl mx-auto">
           A complete AI framework from agent runtime to distributed kernel. 22 crates,
-          181K lines of Rust, 3,300+ tests. Agents get persistent memory, verifiable
+          181K+ lines of Rust. Agents get persistent memory, verifiable
           reasoning, constitutional governance, and encrypted mesh networking.
         </p>
 
