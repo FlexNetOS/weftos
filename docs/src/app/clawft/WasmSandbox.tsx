@@ -13,8 +13,44 @@ interface Message {
   content: string;
 }
 
+interface ChainEntry {
+  ts: number;
+  op: string;
+  detail: string;
+  hash?: string;
+}
+
 type SandboxStatus = 'loading' | 'ready' | 'error' | 'needs-key';
 type SandboxMode = 'local' | 'llm';
+
+// ---------------------------------------------------------------------------
+// Chain log (ExoChain-style audit trail)
+// ---------------------------------------------------------------------------
+
+let chainSeq = 0;
+let prevHash = '0000000000000000';
+
+/** Simple hash for chain linking (not cryptographic, just visual). */
+function miniHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function chainAppend(
+  entries: ChainEntry[],
+  op: string,
+  detail: string,
+): ChainEntry[] {
+  const seq = chainSeq++;
+  const payload = `${seq}:${prevHash}:${op}:${detail}`;
+  const hash = miniHash(payload);
+  prevHash = hash;
+  return [...entries, { ts: Date.now(), op, detail, hash }];
+}
 
 // ---------------------------------------------------------------------------
 // WASM loader
@@ -280,17 +316,28 @@ export default function WasmSandbox() {
   const [kbStats, setKbStats] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [showLlmSetup, setShowLlmSetup] = useState(false);
+  const [chain, setChain] = useState<ChainEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const chainScrollRef = useRef<HTMLDivElement>(null);
   const wasmRef = useRef<any>(null);
 
-  // Scroll to bottom on new messages
+  const log = useCallback((op: string, detail: string) => {
+    setChain((prev) => chainAppend(prev, op, detail));
+  }, []);
+
+  // Scroll to bottom on new messages / chain entries
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+  useEffect(() => {
+    chainScrollRef.current?.scrollTo({ top: chainScrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [chain]);
 
   const initWasm = async (key: string, mdl: string) => {
+    log('WASM_LOAD', 'Fetching clawft_wasm.js + .wasm binary');
     const wasm = await loadWasm();
     wasmRef.current = wasm;
+    log('WASM_INIT', `Configuring runtime: model=${mdl}`);
 
     const config = {
       agents: {
@@ -316,6 +363,7 @@ export default function WasmSandbox() {
     };
 
     await wasm.init(JSON.stringify(config));
+    log('WASM_READY', `Runtime initialized, provider=${mdl.split('/')[0]}`);
   };
 
   const handleReset = useCallback(() => {
@@ -338,10 +386,12 @@ export default function WasmSandbox() {
 
     (async () => {
       try {
+        log('KB_FETCH', 'Loading RVF knowledge base...');
         const kb = await loadKB();
         if (cancelled) return;
         setKbLoaded(true);
         setKbStats(`${kb.entries.length} segments, ${kb.manifest.dimension}-dim`);
+        log('KB_READY', `${kb.entries.length} segments, dim=${kb.manifest.dimension}, embedder=${kb.manifest.embedder_name}`);
 
         // Check for stored key — if present, upgrade to LLM mode
         const stored = localStorage.getItem('clawft-api-key');
@@ -349,9 +399,12 @@ export default function WasmSandbox() {
         if (storedModel) setModel(storedModel);
 
         if (stored) {
+          log('KEY_FOUND', 'Cached API key found, upgrading to LLM mode');
           setApiKey(stored);
           setMode('llm');
           await initWasm(stored, storedModel || model);
+        } else {
+          log('MODE_SET', 'Local retrieval mode (no API key)');
         }
 
         if (!cancelled) setStatus('ready');
@@ -420,10 +473,13 @@ export default function WasmSandbox() {
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
 
     try {
+      log('QUERY', `"${text.slice(0, 80)}${text.length > 80 ? '...' : ''}"`);
       const introspecting = isIntrospectionQuery(text);
+      if (introspecting) log('INTROSPECT', 'Runtime introspection triggered');
 
       // RAG: search KB for relevant context
       const hits = kbCache ? keywordSearch(text, kbCache.entries, 8) : [];
+      log('KB_SEARCH', `${hits.length} results from ${kbCache?.entries.length ?? 0} segments`);
       const context = hits.length > 0
         ? hits
             .map((h) => {
@@ -440,6 +496,7 @@ export default function WasmSandbox() {
 
       if (mode === 'local') {
         // ── Local mode: pure retrieval, no LLM ──────────────────
+        log('RETRIEVE', `Formatting ${hits.length} KB results (local mode)`);
         let reply: string;
 
         if (introspecting && runtimeInfo) {
@@ -462,9 +519,11 @@ export default function WasmSandbox() {
             "No matching documentation found. Try different keywords, or browse the full docs at [/docs](/docs).";
         }
 
+        log('RESPOND', `Local: ${reply.length} chars`);
         setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
       } else {
         // ── LLM mode: RAG + send through WASM pipeline ──────────
+        log('LLM_SEND', `Sending to ${model} with ${context.length} chars context`);
         const ragPrompt = context || runtimeInfo
           ? [
               'ROLE: You are the WeftOS documentation assistant running in a clawft WASM sandbox in the user\'s browser.',
@@ -492,9 +551,11 @@ export default function WasmSandbox() {
             ].join('\n');
 
         const reply = await wasmRef.current.send_message(ragPrompt);
+        log('LLM_RECV', `Response: ${reply.length} chars`);
         setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
       }
     } catch (e: any) {
+      log('ERROR', String(e));
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: `Error: ${e.message || e}` },
@@ -646,77 +707,99 @@ export default function WasmSandbox() {
         </div>
       )}
 
-      {/* Chat area */}
+      {/* Two-column layout: Chat + Chain Log */}
       {status === 'ready' && (
-        <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
-            <div className="mx-auto max-w-2xl space-y-4">
-              {messages.length === 0 && (
-                <div className="py-12 text-center">
-                  <h2 className="mb-2 text-xl font-semibold text-fd-foreground">
-                    WeftOS WASM Sandbox
-                  </h2>
-                  <p className="mb-6 text-sm text-fd-muted-foreground">
-                    {mode === 'local'
-                      ? `Searching ${kbStats} of WeftOS documentation locally — no API key needed.`
-                      : `Running clawft-wasm with ${model.split('/').pop()}, backed by ${kbStats}.`}
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {[
-                      'What is WeftOS?',
-                      'How does the ECC work?',
-                      'Show me the boot sequence',
-                      'What LLM providers are supported?',
-                    ].map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => {
-                          setInput(q);
-                        }}
-                        className="rounded-lg border border-fd-border px-3 py-1.5 text-xs text-fd-muted-foreground hover:border-fd-primary hover:text-fd-foreground transition-colors"
-                      >
-                        {q}
-                      </button>
-                    ))}
+        <div className="flex flex-1 min-h-0">
+          {/* Left: Chat */}
+          <div className="flex flex-1 flex-col min-w-0">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+              <div className="mx-auto max-w-2xl space-y-4">
+                {messages.length === 0 && (
+                  <div className="py-12 text-center">
+                    <h2 className="mb-2 text-xl font-semibold text-fd-foreground">
+                      WeftOS WASM Sandbox
+                    </h2>
+                    <p className="mb-6 text-sm text-fd-muted-foreground">
+                      {mode === 'local'
+                        ? `Searching ${kbStats} of WeftOS documentation locally — no API key needed.`
+                        : `Running clawft-wasm with ${model.split('/').pop()}, backed by ${kbStats}.`}
+                    </p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {[
+                        'What is WeftOS?',
+                        'How does the ECC work?',
+                        'Show me the boot sequence',
+                        'What LLM providers are supported?',
+                      ].map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => {
+                            setInput(q);
+                          }}
+                          className="rounded-lg border border-fd-border px-3 py-1.5 text-xs text-fd-muted-foreground hover:border-fd-primary hover:text-fd-foreground transition-colors"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {messages.map((msg, i) => (
-                <ChatBubble key={i} message={msg} />
+                {messages.map((msg, i) => (
+                  <ChatBubble key={i} message={msg} />
+                ))}
+
+                {sending && (
+                  <div className="flex gap-2 text-fd-muted-foreground">
+                    <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-fd-primary" />
+                    <span className="text-sm">Thinking...</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-fd-border px-4 py-3">
+              <div className="mx-auto flex max-w-2xl gap-2">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask about WeftOS..."
+                  rows={1}
+                  className="flex-1 resize-none rounded-lg border border-fd-border bg-fd-background px-3 py-2 text-sm text-fd-foreground placeholder:text-fd-muted-foreground focus:border-fd-primary focus:outline-none"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim() || sending}
+                  className="rounded-lg bg-fd-primary px-4 py-2 text-sm font-medium text-fd-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Chain Log */}
+          <div className="hidden w-80 flex-shrink-0 border-l border-fd-border lg:flex lg:flex-col">
+            <div className="flex items-center justify-between border-b border-fd-border px-3 py-2">
+              <span className="text-xs font-semibold text-fd-foreground">ExoChain Log</span>
+              <span className="text-[10px] text-fd-muted-foreground font-mono">
+                {chain.length} entries
+              </span>
+            </div>
+            <div ref={chainScrollRef} className="flex-1 overflow-y-auto">
+              {chain.map((entry, i) => (
+                <ChainRow key={i} entry={entry} index={i} />
               ))}
-
-              {sending && (
-                <div className="flex gap-2 text-fd-muted-foreground">
-                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-fd-primary" />
-                  <span className="text-sm">Thinking...</span>
+              {chain.length === 0 && (
+                <div className="p-3 text-xs text-fd-muted-foreground text-center">
+                  Chain events will appear here as the sandbox operates.
                 </div>
               )}
             </div>
-
           </div>
-
-          {/* Input */}
-          <div className="border-t border-fd-border px-4 py-3">
-            <div className="mx-auto flex max-w-2xl gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about WeftOS..."
-                rows={1}
-                className="flex-1 resize-none rounded-lg border border-fd-border bg-fd-background px-3 py-2 text-sm text-fd-foreground placeholder:text-fd-muted-foreground focus:border-fd-primary focus:outline-none"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || sending}
-                className="rounded-lg bg-fd-primary px-4 py-2 text-sm font-medium text-fd-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        </>
+        </div>
       )}
     </main>
   );
@@ -772,6 +855,44 @@ function ChatBubble({ message }: { message: Message }) {
       >
         <div className="whitespace-pre-wrap">{message.content}</div>
       </div>
+    </div>
+  );
+}
+
+const OP_COLORS: Record<string, string> = {
+  KB_FETCH: 'text-blue-400',
+  KB_READY: 'text-blue-400',
+  KB_SEARCH: 'text-cyan-400',
+  QUERY: 'text-yellow-400',
+  RETRIEVE: 'text-green-400',
+  RESPOND: 'text-green-400',
+  LLM_SEND: 'text-purple-400',
+  LLM_RECV: 'text-purple-400',
+  WASM_LOAD: 'text-orange-400',
+  WASM_INIT: 'text-orange-400',
+  WASM_READY: 'text-orange-400',
+  INTROSPECT: 'text-pink-400',
+  MODE_SET: 'text-fd-muted-foreground',
+  KEY_FOUND: 'text-fd-muted-foreground',
+  ERROR: 'text-red-400',
+};
+
+function ChainRow({ entry, index }: { entry: ChainEntry; index: number }) {
+  const time = new Date(entry.ts);
+  const ts = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}.${time.getMilliseconds().toString().padStart(3, '0')}`;
+  const color = OP_COLORS[entry.op] ?? 'text-fd-muted-foreground';
+
+  return (
+    <div className="border-b border-fd-border/50 px-3 py-1.5 font-mono text-[11px] leading-tight hover:bg-fd-accent/30 transition-colors">
+      <div className="flex items-baseline gap-2">
+        <span className="text-fd-muted-foreground/50 select-none">{index.toString().padStart(3, '0')}</span>
+        <span className="text-fd-muted-foreground/70">{ts}</span>
+        <span className={`font-semibold ${color}`}>{entry.op}</span>
+      </div>
+      <div className="ml-10 text-fd-muted-foreground break-all">{entry.detail}</div>
+      {entry.hash && (
+        <div className="ml-10 text-fd-muted-foreground/40 select-none">#{entry.hash}</div>
+      )}
     </div>
   );
 }
