@@ -16,26 +16,11 @@ interface Message {
 type SandboxStatus = 'loading' | 'ready' | 'error' | 'needs-key';
 
 // ---------------------------------------------------------------------------
-// CDN / asset URL resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Base URL for binary assets (WASM, KB).
- *
- * In production, set NEXT_PUBLIC_CDN_URL to the CDN origin that hosts
- * the release artifacts (e.g. GitHub Releases, R2, CloudFront).
- * In local dev, leave unset — assets are served from public/.
- */
-const CDN_BASE = process.env.NEXT_PUBLIC_CDN_URL ?? '';
-
-function assetUrl(path: string): string {
-  if (CDN_BASE) return `${CDN_BASE}/${path}`;
-  return `/${path}`;
-}
-
-// ---------------------------------------------------------------------------
 // WASM loader
 // ---------------------------------------------------------------------------
+
+// Paths are same-origin: in local dev served from public/, in production
+// proxied to GitHub Releases via Vercel rewrites in next.config.mjs.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let wasmModule: any = null;
@@ -45,12 +30,12 @@ async function loadWasm() {
 
   // The wasm-bindgen --target web output is an ES module.
   // Use dynamic import() with an absolute URL to load it at runtime.
-  const jsUrl = assetUrl('wasm/clawft_wasm.js');
-  const wasmUrl = assetUrl('wasm/clawft_wasm_bg.wasm');
-
-  const mod = await Function('url', 'return import(url)')(jsUrl);
+  const origin = window.location.origin;
+  const mod = await Function('url', 'return import(url)')(
+    `${origin}/wasm/clawft_wasm.js`,
+  );
   // mod.default is __wbg_init — call it with the .wasm URL to instantiate.
-  await mod.default(wasmUrl);
+  await mod.default(`${origin}/wasm/clawft_wasm_bg.wasm`);
   wasmModule = mod;
   return wasmModule;
 }
@@ -69,7 +54,7 @@ async function loadKB(): Promise<{ manifest: KBManifest; entries: KBEntry[] }> {
     import('cbor-x'),
   ]);
 
-  const resp = await fetch(assetUrl('kb/weftos-docs.rvf'));
+  const resp = await fetch('/kb/weftos-docs.rvf');
   const buf = await resp.arrayBuffer();
   kbCache = parseKnowledgeBase(buf, decode);
   return kbCache;
