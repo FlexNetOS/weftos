@@ -60,7 +60,11 @@ export async function GET(
     status: 200,
     headers: {
       'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=604800, immutable',
+      // s-maxage: Vercel CDN caches at the edge for 7 days.
+      // stale-while-revalidate: serve stale for 1 day while refreshing.
+      // max-age: browser caches for 1 hour (short so CDN invalidation works).
+      'Cache-Control':
+        'public, s-maxage=604800, stale-while-revalidate=86400, max-age=3600',
       'Access-Control-Allow-Origin': '*',
     },
   });
