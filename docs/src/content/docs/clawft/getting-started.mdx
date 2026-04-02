@@ -166,6 +166,85 @@ Sessions track conversation history per channel and chat ID. They are persisted 
 
 The agent maintains persistent memory in `MEMORY.md` and `HISTORY.md` files. Tools can read from and write to memory, and you can search it via `weft memory search`.
 
+## Troubleshooting
+
+### `weft: command not found`
+
+The binary is not on your `PATH`. Either:
+- Move it: `cp target/release/weft ~/.local/bin/`
+- Or run directly: `./target/release/weft agent`
+
+Verify your PATH includes the install directory:
+
+```bash
+echo $PATH | tr ':' '\n' | grep -E 'local/bin|cargo/bin'
+```
+
+### `error: no API key configured`
+
+clawft checks environment variables at request time. Make sure the variable is set in your current shell:
+
+```bash
+echo $ANTHROPIC_API_KEY   # should not be empty
+```
+
+If you're using a `.env` file, clawft does not auto-load it. Export the variable or use `source .env` before running.
+
+### `LLM error: 401 Unauthorized`
+
+The API key is set but invalid or expired. Verify it works directly:
+
+```bash
+curl -s https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-20250514","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+### `LLM error: 429 Too Many Requests`
+
+You've hit the provider's rate limit. Options:
+- Wait and retry (clawft has built-in backoff)
+- Switch to a different provider: `weft agent --model openai/gpt-4o`
+- Use a free model via OpenRouter: `weft agent --model openrouter/google/gemini-2.0-flash-001`
+
+### Build fails with `error[E0658]: edition 2024`
+
+You need Rust 1.93+. Check your version and update:
+
+```bash
+rustc --version       # must be >= 1.93.0
+rustup update stable
+```
+
+### Docker: `exec format error`
+
+You're running an image built for a different architecture. Pull the correct platform:
+
+```bash
+docker pull --platform linux/amd64 ghcr.io/weave-logic-ai/weftos:latest
+```
+
+### Config file not found
+
+Check the discovery chain:
+
+```bash
+ls ~/.clawft/config.json          # primary
+echo $CLAWFT_CONFIG               # override path
+weft config show                  # show resolved config
+```
+
+### WASM sandbox: "Failed to fetch clawft_wasm.js"
+
+The CDN assets may not be deployed yet. For local development, pull them:
+
+```bash
+scripts/pull-assets.sh --local    # copy from local build
+scripts/pull-assets.sh            # download from GitHub Releases
+```
+
 ## Next Steps
 
 - [Architecture](/docs/clawft/architecture) -- Understand the crate structure and data flow
