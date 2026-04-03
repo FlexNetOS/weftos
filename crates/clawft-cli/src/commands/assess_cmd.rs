@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::{Args, Subcommand, ValueEnum};
+use clawft_rpc::{DaemonClient, Request};
 
 /// Arguments for `weft assess`.
 #[derive(Args)]
@@ -155,24 +156,147 @@ impl std::fmt::Display for AssessFormat {
 }
 
 /// Run the assess command.
-pub fn run(args: AssessArgs) -> anyhow::Result<()> {
+///
+/// For `run`, `link`, and `compare` subcommands, tries daemon RPC first
+/// (ADR-021). Falls back to local execution with a warning if no daemon
+/// is available. `init` and `status` always run locally (bootstrap
+/// exception and pure display).
+pub async fn run(args: AssessArgs) -> anyhow::Result<()> {
     match args.action {
         Some(AssessAction::Run {
             scope,
             format,
             dir,
             pr_number,
-        }) => run_assessment(&scope, &format, dir.as_deref(), pr_number),
+        }) => run_assessment_with_daemon(&scope, &format, dir.as_deref(), pr_number).await,
         Some(AssessAction::Status { dir }) => run_status(dir.as_deref()),
         Some(AssessAction::Init { dir, force }) => run_init(dir.as_deref(), force),
         Some(AssessAction::Link { name, path, dir }) => {
-            run_link(&name, &path, dir.as_deref())
+            run_link_with_daemon(&name, &path, dir.as_deref()).await
         }
         Some(AssessAction::Peers { dir }) => run_peers(dir.as_deref()),
-        Some(AssessAction::Compare { peer, dir }) => run_compare(&peer, dir.as_deref()),
+        Some(AssessAction::Compare { peer, dir }) => {
+            run_compare_with_daemon(&peer, dir.as_deref()).await
+        }
         // No subcommand — run assessment with top-level args.
-        None => run_assessment(&args.scope, &args.format, args.dir.as_deref(), None),
+        None => run_assessment_with_daemon(&args.scope, &args.format, args.dir.as_deref(), None).await,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon-first wrappers (ADR-021)
+// ---------------------------------------------------------------------------
+
+const NO_DAEMON_WARNING: &str =
+    "Warning: running without kernel daemon. Assessment not logged to ExoChain. \
+     Start daemon with: weaver kernel start";
+
+/// Try daemon RPC for `assess.run`; fall back to local execution.
+async fn run_assessment_with_daemon(
+    scope: &AssessScope,
+    format: &AssessFormat,
+    dir: Option<&str>,
+    pr_number: Option<u64>,
+) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let mut params = serde_json::json!({
+            "scope": scope.to_string(),
+            "format": format.to_string(),
+        });
+        if let Some(d) = dir {
+            params["dir"] = serde_json::json!(d);
+        }
+        if let Some(pr) = pr_number {
+            params["pr_number"] = serde_json::json!(pr);
+        }
+        let resp = client
+            .call(Request::with_params("assess.run", params))
+            .await?;
+        if resp.ok {
+            if let Some(data) = resp.result {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            }
+            return Ok(());
+        }
+        // If daemon doesn't support the method yet, fall through.
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+    } else {
+        eprintln!("{NO_DAEMON_WARNING}");
+    }
+
+    run_assessment(scope, format, dir, pr_number)
+}
+
+/// Try daemon RPC for `assess.link`; fall back to local execution.
+async fn run_link_with_daemon(
+    name: &str,
+    location: &str,
+    dir: Option<&str>,
+) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let mut params = serde_json::json!({
+            "name": name,
+            "location": location,
+        });
+        if let Some(d) = dir {
+            params["dir"] = serde_json::json!(d);
+        }
+        let resp = client
+            .call(Request::with_params("assess.link", params))
+            .await?;
+        if resp.ok {
+            if let Some(data) = resp.result {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            }
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+    } else {
+        eprintln!("{NO_DAEMON_WARNING}");
+    }
+
+    run_link(name, location, dir)
+}
+
+/// Try daemon RPC for `assess.compare`; fall back to local execution.
+async fn run_compare_with_daemon(
+    peer_name: &str,
+    dir: Option<&str>,
+) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let mut params = serde_json::json!({
+            "peer": peer_name,
+        });
+        if let Some(d) = dir {
+            params["dir"] = serde_json::json!(d);
+        }
+        let resp = client
+            .call(Request::with_params("assess.compare", params))
+            .await?;
+        if resp.ok {
+            if let Some(data) = resp.result {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            }
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+    } else {
+        eprintln!("{NO_DAEMON_WARNING}");
+    }
+
+    run_compare(peer_name, dir)
 }
 
 // ---------------------------------------------------------------------------

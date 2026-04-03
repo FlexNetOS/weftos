@@ -8,6 +8,9 @@
 //!   skills, system prompt preview).
 //! - `weft agents use <name>` -- set the active agent for the next
 //!   `weft agent` session.
+//!
+//! Per ADR-021, commands attempt RPC to the kernel daemon first and fall
+//! back to local file I/O when the daemon is unavailable.
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +18,7 @@ use clap::{Args, Subcommand};
 use comfy_table::{Table, presets};
 
 use clawft_core::agent::agents::{AgentDefinition, AgentRegistry};
+use clawft_rpc::{DaemonClient, Request};
 
 /// Arguments for the `weft agents` subcommand.
 #[derive(Args)]
@@ -42,17 +46,170 @@ pub enum AgentsAction {
     },
 }
 
+/// Warning printed when no daemon is available.
+const NO_DAEMON_WARNING: &str =
+    "Warning: running without kernel daemon. Start daemon with: weaver kernel start";
+
 /// Run the agents subcommand.
-pub fn run(args: AgentsArgs) -> anyhow::Result<()> {
+pub async fn run(args: AgentsArgs) -> anyhow::Result<()> {
+    match args.action {
+        AgentsAction::List => agents_list_rpc().await,
+        AgentsAction::Show { ref name } => agents_show_rpc(name).await,
+        AgentsAction::Use { ref name } => agents_use_rpc(name).await,
+    }
+}
+
+/// Try `agents.list` via RPC, fall back to local registry.
+async fn agents_list_rpc() -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let resp = client.simple_call("agents.list").await?;
+        let data = resp.into_result()?;
+        // Daemon returns a JSON array of agent objects; render as a table.
+        if let Some(agents) = data.as_array() {
+            if agents.is_empty() {
+                println!("No agents found.");
+                return Ok(());
+            }
+            let mut table = Table::new();
+            table.load_preset(presets::UTF8_FULL_CONDENSED);
+            table.set_header(["NAME", "SOURCE", "MODEL", "DESCRIPTION"]);
+            for a in agents {
+                let name = a["name"].as_str().unwrap_or("?");
+                let source = a["source"].as_str().unwrap_or("builtin");
+                let model = a["model"].as_str().unwrap_or("(default)");
+                let desc = truncate(a["description"].as_str().unwrap_or(""), 50);
+                table.add_row([name, source, model, &desc]);
+            }
+            println!("{table}");
+            println!();
+            println!("Total: {} agent(s)", agents.len());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+
+    eprintln!("{NO_DAEMON_WARNING}");
+    agents_list_local()
+}
+
+/// Try `agents.show` via RPC, fall back to local registry.
+async fn agents_show_rpc(name: &str) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let req = Request::with_params("agents.show", serde_json::json!({ "name": name }));
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        print_agent_detail_json(&data);
+        return Ok(());
+    }
+
+    eprintln!("{NO_DAEMON_WARNING}");
+    agents_show_local(name)
+}
+
+/// Try `agents.use` via RPC, fall back to local registry.
+async fn agents_use_rpc(name: &str) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let req = Request::with_params("agents.use", serde_json::json!({ "name": name }));
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        // The daemon acknowledges the selection; print its reply.
+        if let Some(msg) = data.as_str() {
+            println!("{msg}");
+        } else {
+            println!("Agent '{name}' selected via daemon.");
+            if let Some(obj) = data.as_object() {
+                if let Some(model) = obj.get("model").and_then(|v| v.as_str()) {
+                    println!("Model: {model}");
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    eprintln!("{NO_DAEMON_WARNING}");
+    agents_use_local(name)
+}
+
+/// Print agent detail from a JSON value returned by the daemon.
+fn print_agent_detail_json(data: &serde_json::Value) {
+    if let Some(name) = data["name"].as_str() {
+        println!("Agent: {name}");
+    }
+    if let Some(desc) = data["description"].as_str() {
+        println!("Description: {desc}");
+    }
+    if let Some(model) = data["model"].as_str() {
+        println!("Model: {model}");
+    } else {
+        println!("Model: (default)");
+    }
+    if let Some(source) = data["source_path"].as_str() {
+        println!("Source: {source}");
+    }
+    if let Some(turns) = data["max_turns"].as_u64() {
+        println!("Max turns: {turns}");
+    }
+    if let Some(skills) = data["skills"].as_array() {
+        let names: Vec<&str> = skills.iter().filter_map(|v| v.as_str()).collect();
+        if !names.is_empty() {
+            println!("Skills: {}", names.join(", "));
+        }
+    }
+    if let Some(tools) = data["allowed_tools"].as_array() {
+        let names: Vec<&str> = tools.iter().filter_map(|v| v.as_str()).collect();
+        if !names.is_empty() {
+            println!("Allowed tools: {}", names.join(", "));
+        }
+    }
+    if let Some(vars) = data["variables"].as_object() {
+        if !vars.is_empty() {
+            println!("Variables:");
+            let mut items: Vec<_> = vars.iter().collect();
+            items.sort_by_key(|(k, _)| k.as_str());
+            for (k, v) in items {
+                let val = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+                println!("  {k}: {val}");
+            }
+        }
+    }
+    if let Some(prompt) = data["system_prompt"].as_str() {
+        println!();
+        println!("System prompt (preview):");
+        println!("---");
+        let preview = truncate(prompt, 500);
+        println!("{preview}");
+        if prompt.len() > 500 {
+            println!("... ({} chars total)", prompt.len());
+        }
+        println!("---");
+    }
+}
+
+// ── Local fallback helpers (unchanged logic, renamed) ──────────
+
+/// Local fallback for `agents list`.
+fn agents_list_local() -> anyhow::Result<()> {
     let (ws_dir, user_dir) = discover_agent_dirs();
     let registry = AgentRegistry::discover(ws_dir.as_deref(), user_dir.as_deref(), Vec::new())
         .map_err(|e| anyhow::anyhow!("failed to discover agents: {e}"))?;
+    agents_list(&registry, ws_dir.as_deref(), user_dir.as_deref())
+}
 
-    match args.action {
-        AgentsAction::List => agents_list(&registry, ws_dir.as_deref(), user_dir.as_deref()),
-        AgentsAction::Show { name } => agents_show(&registry, &name),
-        AgentsAction::Use { name } => agents_use(&registry, &name),
-    }
+/// Local fallback for `agents show`.
+fn agents_show_local(name: &str) -> anyhow::Result<()> {
+    let (ws_dir, user_dir) = discover_agent_dirs();
+    let registry = AgentRegistry::discover(ws_dir.as_deref(), user_dir.as_deref(), Vec::new())
+        .map_err(|e| anyhow::anyhow!("failed to discover agents: {e}"))?;
+    agents_show(&registry, name)
+}
+
+/// Local fallback for `agents use`.
+fn agents_use_local(name: &str) -> anyhow::Result<()> {
+    let (ws_dir, user_dir) = discover_agent_dirs();
+    let registry = AgentRegistry::discover(ws_dir.as_deref(), user_dir.as_deref(), Vec::new())
+        .map_err(|e| anyhow::anyhow!("failed to discover agents: {e}"))?;
+    agents_use(&registry, name)
 }
 
 /// Discover workspace and user agent directories.

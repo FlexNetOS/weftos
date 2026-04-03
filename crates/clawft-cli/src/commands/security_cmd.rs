@@ -9,6 +9,7 @@
 //! - `weft security checks` -- List all available audit checks.
 
 use clap::{Args, Subcommand};
+use clawft_rpc::{DaemonClient, Request};
 use clawft_security::{AuditSeverity, SecurityScanner};
 
 /// Arguments for `weft security`.
@@ -39,14 +40,19 @@ pub enum SecurityAction {
     Checks,
 }
 
+/// Warning printed when falling back to local execution without daemon.
+const DAEMON_FALLBACK_WARNING: &str =
+    "Warning: running without kernel daemon — results may not reflect live kernel state. \
+     Start daemon with: weaver kernel start";
+
 /// Run the security command.
-pub fn run(args: SecurityArgs) -> anyhow::Result<()> {
+pub async fn run(args: SecurityArgs) -> anyhow::Result<()> {
     match args.action {
         SecurityAction::Scan {
             path,
             format,
             min_severity,
-        } => run_scan(&path, &format, &min_severity),
+        } => run_scan(&path, &format, &min_severity).await,
         SecurityAction::Checks => run_checks(),
     }
 }
@@ -62,7 +68,40 @@ fn parse_min_severity(s: &str) -> AuditSeverity {
     }
 }
 
-fn run_scan(path: &str, format: &str, min_severity: &str) -> anyhow::Result<()> {
+async fn run_scan(path: &str, format: &str, min_severity: &str) -> anyhow::Result<()> {
+    // Try daemon-first path (ADR-021).
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({
+            "path": path,
+            "format": format,
+            "min_severity": min_severity,
+        });
+        let request = Request::with_params("security.scan", params);
+        let response = client.call(request).await?;
+        let result = response.into_result()?;
+
+        // The daemon returns the formatted output directly.
+        if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+            print!("{output}");
+        } else {
+            // Fallback: dump JSON result.
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+
+        if result.get("passed").and_then(|v| v.as_bool()) == Some(false) {
+            std::process::exit(1);
+        }
+
+        return Ok(());
+    }
+
+    // No daemon — fall back to local scanner with warning.
+    eprintln!("{DAEMON_FALLBACK_WARNING}");
+
+    run_scan_local(path, format, min_severity)
+}
+
+fn run_scan_local(path: &str, format: &str, min_severity: &str) -> anyhow::Result<()> {
     let scanner = SecurityScanner::new();
     let min_sev = parse_min_severity(min_severity);
     let path = std::path::Path::new(path);

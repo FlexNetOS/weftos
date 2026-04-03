@@ -19,6 +19,7 @@ use clap::{Args, Subcommand};
 use comfy_table::{Table, presets};
 
 use clawft_core::agent::skills_v2::SkillRegistry;
+use clawft_rpc::{DaemonClient, Request};
 use clawft_types::skill::{SkillDefinition, SkillFormat};
 
 /// Arguments for the `weft skills` subcommand.
@@ -83,21 +84,58 @@ pub enum SkillsAction {
     Keygen,
 }
 
+/// Warning printed when falling back to local execution without daemon.
+const DAEMON_FALLBACK_WARNING: &str =
+    "Warning: running without kernel daemon — results may not reflect live kernel state. \
+     Start daemon with: weaver kernel start";
+
+/// Try to send an RPC to the daemon. Returns `Some(result_json)` on success,
+/// or `None` if no daemon is running (caller should fall back to local).
+async fn try_daemon_rpc(method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
+    let mut client = DaemonClient::connect().await?;
+    let request = Request::with_params(method, params);
+    match client.call(request).await {
+        Ok(resp) => match resp.into_result() {
+            Ok(val) => Some(val),
+            Err(e) => {
+                eprintln!("Daemon RPC error: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("Daemon RPC error: {e}");
+            None
+        }
+    }
+}
+
+/// Print the daemon fallback warning and return the result of the local
+/// fallback closure.
+fn with_fallback_warning<F: FnOnce() -> anyhow::Result<()>>(f: F) -> anyhow::Result<()> {
+    eprintln!("{DAEMON_FALLBACK_WARNING}");
+    f()
+}
+
 /// Run the skills subcommand.
 pub async fn run(args: SkillsArgs) -> anyhow::Result<()> {
-    match &args.action {
-        // These subcommands do not need the local registry.
-        SkillsAction::Search { .. }
-        | SkillsAction::Publish { .. }
-        | SkillsAction::RemoteInstall { .. }
-        | SkillsAction::Keygen => {}
-        _ => {}
+    // Keygen is pure local crypto — no daemon routing needed.
+    if matches!(args.action, SkillsAction::Keygen) {
+        return skills_keygen();
     }
 
     let (ws_dir, user_dir) = discover_skill_dirs();
 
     match args.action {
         SkillsAction::List => {
+            if let Some(result) = try_daemon_rpc("skills.list", serde_json::json!({})).await {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let registry =
                 SkillRegistry::discover(ws_dir.as_deref(), user_dir.as_deref(), Vec::new())
                     .await
@@ -105,26 +143,107 @@ pub async fn run(args: SkillsArgs) -> anyhow::Result<()> {
             skills_list(&registry, ws_dir.as_deref(), user_dir.as_deref())
         }
         SkillsAction::Show { name } => {
+            if let Some(result) =
+                try_daemon_rpc("skills.show", serde_json::json!({ "name": name })).await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let registry =
                 SkillRegistry::discover(ws_dir.as_deref(), user_dir.as_deref(), Vec::new())
                     .await
                     .map_err(|e| anyhow::anyhow!("failed to discover skills: {e}"))?;
             skills_show(&registry, &name)
         }
-        SkillsAction::Install { path } => skills_install(&path, user_dir.as_deref()),
-        SkillsAction::Remove { name } => skills_remove(&name, user_dir.as_deref()),
-        SkillsAction::Search { query, limit } => skills_search(&query, limit).await,
+        SkillsAction::Install { path } => {
+            if let Some(result) =
+                try_daemon_rpc("skills.install", serde_json::json!({ "path": path })).await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            with_fallback_warning(|| skills_install(&path, user_dir.as_deref()))
+        }
+        SkillsAction::Remove { name } => {
+            if let Some(result) =
+                try_daemon_rpc("skills.remove", serde_json::json!({ "name": name })).await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            with_fallback_warning(|| skills_remove(&name, user_dir.as_deref()))
+        }
+        SkillsAction::Search { query, limit } => {
+            if let Some(result) = try_daemon_rpc(
+                "skills.search",
+                serde_json::json!({ "query": query, "limit": limit }),
+            )
+            .await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
+            skills_search(&query, limit).await
+        }
         SkillsAction::Publish {
             path,
             allow_unsigned,
-        } => skills_publish(&path, allow_unsigned).await,
+        } => {
+            if let Some(result) = try_daemon_rpc(
+                "skills.publish",
+                serde_json::json!({ "path": path, "allow_unsigned": allow_unsigned }),
+            )
+            .await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
+            skills_publish(&path, allow_unsigned).await
+        }
         SkillsAction::RemoteInstall {
             name,
             allow_unsigned,
         } => {
+            if let Some(result) = try_daemon_rpc(
+                "skills.remote-install",
+                serde_json::json!({ "name": name, "allow_unsigned": allow_unsigned }),
+            )
+            .await
+            {
+                if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+                    print!("{output}");
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                return Ok(());
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             skills_remote_install(&name, allow_unsigned, user_dir.as_deref()).await
         }
-        SkillsAction::Keygen => skills_keygen(),
+        SkillsAction::Keygen => unreachable!(),
     }
 }
 

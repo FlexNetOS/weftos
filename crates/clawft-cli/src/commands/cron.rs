@@ -1,8 +1,8 @@
 //! `weft cron` -- manage scheduled jobs.
 //!
-//! Provides subcommands for listing, creating, removing, enabling/disabling,
-//! and manually running cron jobs. Jobs are stored in JSONL event-sourced
-//! format, shared with the [`CronService`] in `clawft-services`.
+//! Routes cron operations through the kernel daemon via RPC (ADR-021).
+//! Falls back to direct JSONL file I/O when the daemon is not running,
+//! with a deprecation warning.
 //!
 //! The storage file is located at `~/.clawft/cron.jsonl` (or
 //! `~/.nanobot/cron.jsonl` as fallback).
@@ -24,6 +24,7 @@ use std::str::FromStr;
 use chrono::{TimeZone, Utc};
 use comfy_table::{Table, presets::UTF8_FULL};
 
+use clawft_rpc::{DaemonClient, Request};
 use clawft_types::config::Config;
 use clawft_types::cron::{
     CronJob, CronJobState, CronPayload, CronSchedule, ScheduleKind,
@@ -110,7 +111,32 @@ fn format_ts(dt: Option<chrono::DateTime<Utc>>) -> String {
 }
 
 /// List all cron jobs in a table.
-pub fn cron_list(_config: &Config) -> anyhow::Result<()> {
+///
+/// Tries daemon RPC first; falls back to direct file I/O.
+pub async fn cron_list(_config: &Config) -> anyhow::Result<()> {
+    if let Ok(mut client) = DaemonClient::connect().await.ok_or(()) {
+        let resp = client.simple_call("cron.list").await?;
+        if resp.ok {
+            let data = resp.result.unwrap_or_default();
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            return Ok(());
+        }
+        // If the daemon returned an error (e.g. unknown method), fall through.
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+        eprintln!("warning: daemon does not support cron.list yet, falling back to local store (deprecated)");
+    }
+
+    // ── Direct file fallback (deprecated) ──
+    cron_list_local()
+}
+
+/// Direct-file implementation of cron list (will be removed once daemon
+/// fully supports cron).
+fn cron_list_local() -> anyhow::Result<()> {
     let path = cron_store_path();
     migrate_legacy_store(&path);
     let jobs = load_jobs(&path)?;
@@ -182,19 +208,51 @@ fn normalize_cron_expr(expr: &str) -> String {
 }
 
 /// Add a new cron job.
-pub fn cron_add(
+///
+/// Tries daemon RPC first; falls back to direct file I/O.
+pub async fn cron_add(
     name: String,
     schedule: String,
     prompt: String,
     _config: &Config,
 ) -> anyhow::Result<()> {
-    // Normalize to 7-field format required by the cron crate.
+    // Validate locally regardless of daemon path.
     let normalized = normalize_cron_expr(&schedule);
-
-    // Validate the cron expression.
     cron::Schedule::from_str(&normalized)
         .map_err(|e| anyhow::anyhow!("Invalid cron expression: {e}"))?;
 
+    if let Ok(mut client) = DaemonClient::connect().await.ok_or(()) {
+        let params = serde_json::json!({
+            "name": name,
+            "schedule": normalized,
+            "prompt": prompt,
+        });
+        let resp = client
+            .call(Request::with_params("cron.add", params))
+            .await?;
+        if resp.ok {
+            let data = resp.result.unwrap_or_default();
+            let job_id = data
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown)");
+            println!("Cron job '{name}' created with ID: {job_id}");
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+        eprintln!("warning: daemon does not support cron.add yet, falling back to local store (deprecated)");
+    }
+
+    // ── Direct file fallback (deprecated) ──
+    cron_add_local(name, normalized, prompt)
+}
+
+/// Direct-file implementation of cron add.
+fn cron_add_local(name: String, normalized: String, prompt: String) -> anyhow::Result<()> {
     let path = cron_store_path();
     migrate_legacy_store(&path);
 
@@ -230,7 +288,32 @@ pub fn cron_add(
 }
 
 /// Remove a cron job by ID.
-pub fn cron_remove(job_id: String, _config: &Config) -> anyhow::Result<()> {
+///
+/// Tries daemon RPC first; falls back to direct file I/O.
+pub async fn cron_remove(job_id: String, _config: &Config) -> anyhow::Result<()> {
+    if let Ok(mut client) = DaemonClient::connect().await.ok_or(()) {
+        let params = serde_json::json!({ "id": job_id });
+        let resp = client
+            .call(Request::with_params("cron.remove", params))
+            .await?;
+        if resp.ok {
+            println!("Cron job '{job_id}' removed.");
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+        eprintln!("warning: daemon does not support cron.remove yet, falling back to local store (deprecated)");
+    }
+
+    // ── Direct file fallback (deprecated) ──
+    cron_remove_local(job_id)
+}
+
+/// Direct-file implementation of cron remove.
+fn cron_remove_local(job_id: String) -> anyhow::Result<()> {
     let path = cron_store_path();
     migrate_legacy_store(&path);
     let jobs = load_jobs(&path)?;
@@ -247,7 +330,38 @@ pub fn cron_remove(job_id: String, _config: &Config) -> anyhow::Result<()> {
 }
 
 /// Enable or disable a cron job.
-pub fn cron_enable(job_id: String, enabled: bool, _config: &Config) -> anyhow::Result<()> {
+///
+/// Tries daemon RPC first; falls back to direct file I/O with a
+/// deprecation warning if the daemon does not support the method yet.
+pub async fn cron_enable(job_id: String, enabled: bool, _config: &Config) -> anyhow::Result<()> {
+    let method = if enabled { "cron.enable" } else { "cron.disable" };
+
+    if let Ok(mut client) = DaemonClient::connect().await.ok_or(()) {
+        let params = serde_json::json!({ "id": job_id });
+        let resp = client
+            .call(Request::with_params(method, params))
+            .await?;
+        if resp.ok {
+            let state = if enabled { "enabled" } else { "disabled" };
+            println!("Cron job '{job_id}' {state}.");
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+        eprintln!(
+            "warning: daemon does not support {method} yet, falling back to local store (deprecated)"
+        );
+    }
+
+    // ── Direct file fallback (deprecated) ──
+    cron_enable_local(job_id, enabled)
+}
+
+/// Direct-file implementation of cron enable/disable.
+fn cron_enable_local(job_id: String, enabled: bool) -> anyhow::Result<()> {
     let path = cron_store_path();
     migrate_legacy_store(&path);
     let jobs = load_jobs(&path)?;
@@ -270,7 +384,38 @@ pub fn cron_enable(job_id: String, enabled: bool, _config: &Config) -> anyhow::R
 }
 
 /// Manually trigger a cron job.
-pub fn cron_run(job_id: String, _config: &Config) -> anyhow::Result<()> {
+///
+/// Tries daemon RPC first; falls back to direct file I/O with a
+/// deprecation warning if the daemon does not support the method yet.
+pub async fn cron_run(job_id: String, _config: &Config) -> anyhow::Result<()> {
+    if let Ok(mut client) = DaemonClient::connect().await.ok_or(()) {
+        let params = serde_json::json!({ "id": job_id });
+        let resp = client
+            .call(Request::with_params("cron.run", params))
+            .await?;
+        if resp.ok {
+            println!("Cron job '{job_id}' triggered via daemon.");
+            if let Some(data) = resp.result {
+                println!("{}", serde_json::to_string_pretty(&data)?);
+            }
+            return Ok(());
+        }
+        if let Some(ref err) = resp.error {
+            if !err.contains("unknown method") {
+                anyhow::bail!("{err}");
+            }
+        }
+        eprintln!(
+            "warning: daemon does not support cron.run yet, falling back to local store (deprecated)"
+        );
+    }
+
+    // ── Direct file fallback (deprecated) ──
+    cron_run_local(job_id)
+}
+
+/// Direct-file implementation of cron run.
+fn cron_run_local(job_id: String) -> anyhow::Result<()> {
     let path = cron_store_path();
     migrate_legacy_store(&path);
     let jobs = load_jobs(&path)?;
@@ -287,7 +432,6 @@ pub fn cron_run(job_id: String, _config: &Config) -> anyhow::Result<()> {
     }
     println!("  Prompt: {}", job.payload.message);
     println!();
-    // Placeholder: actual job execution is wired in the integration phase.
     println!("[Cron job execution not yet wired -- see integration task]");
     Ok(())
 }

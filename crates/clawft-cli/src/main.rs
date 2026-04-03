@@ -355,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
             match action {
                 CronAction::List { config } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_list(&cfg)?;
+                    commands::cron::cron_list(&cfg).await?;
                 }
                 CronAction::Add {
                     name,
@@ -364,23 +364,23 @@ async fn main() -> anyhow::Result<()> {
                     config,
                 } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_add(name, schedule, prompt, &cfg)?;
+                    commands::cron::cron_add(name, schedule, prompt, &cfg).await?;
                 }
                 CronAction::Remove { job_id, config } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_remove(job_id, &cfg)?;
+                    commands::cron::cron_remove(job_id, &cfg).await?;
                 }
                 CronAction::Enable { job_id, config } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_enable(job_id, true, &cfg)?;
+                    commands::cron::cron_enable(job_id, true, &cfg).await?;
                 }
                 CronAction::Disable { job_id, config } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_enable(job_id, false, &cfg)?;
+                    commands::cron::cron_enable(job_id, false, &cfg).await?;
                 }
                 CronAction::Run { job_id, config } => {
                     let cfg = commands::load_config(&platform, config.as_deref()).await?;
-                    commands::cron::cron_run(job_id, &cfg)?;
+                    commands::cron::cron_run(job_id, &cfg).await?;
                 }
             }
         }
@@ -455,11 +455,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Skills(args) => commands::skills_cmd::run(args).await?,
         Commands::Tools(args) => commands::tools_cmd::run(args).await?,
-        Commands::Agents(args) => commands::agents_cmd::run(args)?,
-        Commands::Workspace(args) => commands::workspace_cmd::run(args)?,
+        Commands::Agents(args) => commands::agents_cmd::run(args).await?,
+        Commands::Workspace(args) => commands::workspace_cmd::run(args).await?,
         Commands::Onboard(args) => commands::onboard::run(args).await?,
-        Commands::Assess(args) => commands::assess_cmd::run(args)?,
-        Commands::Security(args) => commands::security_cmd::run(args)?,
+        Commands::Assess(args) => commands::assess_cmd::run(args).await?,
+        Commands::Security(args) => commands::security_cmd::run(args).await?,
         #[cfg(feature = "api")]
         Commands::Ui(args) => commands::ui_cmd::run(args).await?,
         #[cfg(feature = "voice")]

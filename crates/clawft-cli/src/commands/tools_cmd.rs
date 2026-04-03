@@ -15,6 +15,7 @@ use clap::{Args, Subcommand};
 use comfy_table::{Table, presets};
 
 use clawft_core::tools::registry::ToolRegistry;
+use clawft_rpc::{DaemonClient, Request};
 use clawft_types::config::Config;
 
 /// Arguments for the `weft tools` subcommand.
@@ -82,31 +83,103 @@ pub enum ToolsAction {
     },
 }
 
+/// Warning printed when falling back to local execution without daemon.
+const DAEMON_FALLBACK_WARNING: &str =
+    "Warning: running without kernel daemon — results may not reflect live kernel state. \
+     Start daemon with: weaver kernel start";
+
+/// Try to send an RPC to the daemon. Returns `Some(result_json)` on success,
+/// or `None` if no daemon is running (caller should fall back to local).
+async fn try_daemon_rpc(method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
+    let mut client = DaemonClient::connect().await?;
+    let request = Request::with_params(method, params);
+    match client.call(request).await {
+        Ok(resp) => match resp.into_result() {
+            Ok(val) => Some(val),
+            Err(e) => {
+                eprintln!("Daemon RPC error: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("Daemon RPC error: {e}");
+            None
+        }
+    }
+}
+
+/// Print daemon RPC result to stdout. If the result has an `output` string
+/// field it is printed verbatim; otherwise the full JSON value is pretty-printed.
+fn print_daemon_result(result: &serde_json::Value) -> anyhow::Result<()> {
+    if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+        print!("{output}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(result)?);
+    }
+    Ok(())
+}
+
 /// Run the tools subcommand.
 pub async fn run(args: ToolsArgs) -> anyhow::Result<()> {
     match args.action {
         ToolsAction::List { config } => {
+            if let Some(result) = try_daemon_rpc("tools.list", serde_json::json!({})).await {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let (cfg, platform) = load_platform_config(config.as_deref()).await?;
             let registry = build_registry(&cfg, platform).await;
             tools_list(&registry)
         }
         ToolsAction::Show { name, config } => {
+            if let Some(result) =
+                try_daemon_rpc("tools.show", serde_json::json!({ "name": name })).await
+            {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let (cfg, platform) = load_platform_config(config.as_deref()).await?;
             let registry = build_registry(&cfg, platform).await;
             tools_show(&name, &registry)
         }
         ToolsAction::Mcp { config } => {
+            if let Some(result) = try_daemon_rpc("tools.mcp", serde_json::json!({})).await {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let (cfg, platform) = load_platform_config(config.as_deref()).await?;
             let registry = build_registry(&cfg, platform).await;
             tools_mcp(&cfg, &registry)
         }
         ToolsAction::Search { query, config } => {
+            if let Some(result) =
+                try_daemon_rpc("tools.search", serde_json::json!({ "query": query })).await
+            {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
             let (cfg, platform) = load_platform_config(config.as_deref()).await?;
             let registry = build_registry(&cfg, platform).await;
             tools_search(&query, &registry)
         }
-        ToolsAction::Deny { pattern, config } => tools_deny(&pattern, config.as_deref()),
-        ToolsAction::Allow { pattern, config } => tools_allow(&pattern, config.as_deref()),
+        ToolsAction::Deny { pattern, config } => {
+            if let Some(result) =
+                try_daemon_rpc("tools.deny", serde_json::json!({ "pattern": pattern })).await
+            {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
+            tools_deny(&pattern, config.as_deref())
+        }
+        ToolsAction::Allow { pattern, config } => {
+            if let Some(result) =
+                try_daemon_rpc("tools.allow", serde_json::json!({ "pattern": pattern })).await
+            {
+                return print_daemon_result(&result);
+            }
+            eprintln!("{DAEMON_FALLBACK_WARNING}");
+            tools_allow(&pattern, config.as_deref())
+        }
     }
 }
 

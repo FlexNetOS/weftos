@@ -3,6 +3,9 @@
 //! Provides subcommands for creating, listing, loading, inspecting,
 //! deleting, and configuring workspaces.
 //!
+//! Per ADR-021, commands attempt RPC to the kernel daemon first and fall
+//! back to local file I/O when the daemon is unavailable.
+//!
 //! # Examples
 //!
 //! ```text
@@ -22,6 +25,7 @@ use clap::{Args, Subcommand};
 use comfy_table::{Table, presets::UTF8_FULL};
 
 use clawft_core::workspace::{WorkspaceManager, WorkspaceStatus};
+use clawft_rpc::{DaemonClient, Request};
 
 /// Arguments for the `weft workspace` subcommand.
 #[derive(Args)]
@@ -98,20 +102,192 @@ pub enum WorkspaceConfigAction {
     Reset,
 }
 
+/// Warning printed when no daemon is available.
+const NO_DAEMON_WARNING: &str =
+    "Warning: running without kernel daemon. Start daemon with: weaver kernel start";
+
 /// Run the workspace command.
-pub fn run(args: WorkspaceArgs) -> anyhow::Result<()> {
+pub async fn run(args: WorkspaceArgs) -> anyhow::Result<()> {
     match args.action {
-        WorkspaceAction::Create { name, dir } => workspace_create(&name, dir.as_deref()),
-        WorkspaceAction::List { all } => workspace_list(all),
-        WorkspaceAction::Load { name_or_path } => workspace_load(&name_or_path),
-        WorkspaceAction::Status => workspace_status(),
-        WorkspaceAction::Delete { name, yes } => workspace_delete(&name, yes),
+        WorkspaceAction::Create { name, dir } => ws_create_rpc(&name, dir.as_deref()).await,
+        WorkspaceAction::List { all } => ws_list_rpc(all).await,
+        WorkspaceAction::Load { name_or_path } => ws_load_rpc(&name_or_path).await,
+        WorkspaceAction::Status => ws_status_rpc().await,
+        WorkspaceAction::Delete { name, yes } => ws_delete_rpc(&name, yes).await,
         WorkspaceAction::Config { action } => match action {
-            WorkspaceConfigAction::Set { key, value } => workspace_config_set(&key, &value),
-            WorkspaceConfigAction::Get { key } => workspace_config_get(&key),
-            WorkspaceConfigAction::Reset => workspace_config_reset(),
+            WorkspaceConfigAction::Set { key, value } => ws_config_set_rpc(&key, &value).await,
+            WorkspaceConfigAction::Get { key } => ws_config_get_rpc(&key).await,
+            WorkspaceConfigAction::Reset => ws_config_reset_rpc().await,
         },
     }
+}
+
+// ── RPC-first wrappers ─────────────────────────────────────────
+
+async fn ws_create_rpc(name: &str, dir: Option<&str>) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "name": name, "dir": dir });
+        let req = Request::with_params("workspace.create", params);
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        if let Some(path) = data["path"].as_str() {
+            println!("Workspace '{name}' created at {path}");
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_create(name, dir)
+}
+
+async fn ws_list_rpc(show_all: bool) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "all": show_all });
+        let req = Request::with_params("workspace.list", params);
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        if let Some(entries) = data.as_array() {
+            if entries.is_empty() {
+                println!("No workspaces registered.");
+                println!("  Use `weft workspace create <name>` to create one.");
+                return Ok(());
+            }
+            let mut table = Table::new();
+            table.load_preset(UTF8_FULL);
+            table.set_header(["NAME", "PATH", "STATUS", "LAST ACCESSED"]);
+            for e in entries {
+                let name = e["name"].as_str().unwrap_or("?");
+                let path = e["path"].as_str().unwrap_or("?");
+                let status = e["status"].as_str().unwrap_or("?");
+                let accessed = e["last_accessed"].as_str().unwrap_or("-");
+                table.add_row([name, path, status, accessed]);
+            }
+            println!("{table}");
+            println!("  {} workspace(s)", entries.len());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_list(show_all)
+}
+
+async fn ws_load_rpc(name_or_path: &str) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "name_or_path": name_or_path });
+        let req = Request::with_params("workspace.load", params);
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        if let Some(path) = data["path"].as_str() {
+            println!("Workspace loaded: {path}");
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_load(name_or_path)
+}
+
+async fn ws_status_rpc() -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let resp = client.simple_call("workspace.status").await?;
+        let data = resp.into_result()?;
+        if let Some(name) = data["name"].as_str() {
+            println!("Workspace: {name}");
+            if let Some(path) = data["path"].as_str() {
+                println!("  Path:       {path}");
+            }
+            if let Some(sessions) = data["session_count"].as_u64() {
+                println!("  Sessions:   {sessions}");
+            }
+            if let Some(has_cfg) = data["has_config"].as_bool() {
+                println!("  Has config: {}", if has_cfg { "yes" } else { "no" });
+            }
+            if let Some(has_md) = data["has_clawft_md"].as_bool() {
+                println!("  CLAWFT.md:  {}", if has_md { "yes" } else { "no" });
+            }
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_status()
+}
+
+async fn ws_delete_rpc(name: &str, skip_confirm: bool) -> anyhow::Result<()> {
+    if !skip_confirm {
+        eprint!(
+            "Delete workspace '{name}' from registry? \
+             (files on disk will NOT be removed) [y/N] "
+        );
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "name": name });
+        let req = Request::with_params("workspace.delete", params);
+        let resp = client.call(req).await?;
+        resp.into_result()?;
+        println!("Workspace '{name}' removed from registry.");
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_delete_local(name)
+}
+
+async fn ws_config_set_rpc(key: &str, value: &str) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "key": key, "value": value });
+        let req = Request::with_params("workspace.config.set", params);
+        let resp = client.call(req).await?;
+        resp.into_result()?;
+        println!("Set {key} = {value}");
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_config_set(key, value)
+}
+
+async fn ws_config_get_rpc(key: &str) -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let params = serde_json::json!({ "key": key });
+        let req = Request::with_params("workspace.config.get", params);
+        let resp = client.call(req).await?;
+        let data = resp.into_result()?;
+        if data.is_string() {
+            println!("{}", data.as_str().unwrap());
+        } else if data.is_null() {
+            println!("(not set)");
+        } else {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_config_get(key)
+}
+
+async fn ws_config_reset_rpc() -> anyhow::Result<()> {
+    if let Some(mut client) = DaemonClient::connect().await {
+        let resp = client.simple_call("workspace.config.reset").await?;
+        resp.into_result()?;
+        println!("Workspace configuration reset to defaults.");
+        return Ok(());
+    }
+    eprintln!("{NO_DAEMON_WARNING}");
+    workspace_config_reset()
 }
 
 /// Create a new workspace.
@@ -239,24 +415,9 @@ fn print_workspace_status(status: &WorkspaceStatus) {
     println!("  Skills:   {}", dot_clawft.join("skills").display());
 }
 
-/// Delete a workspace from the registry.
-fn workspace_delete(name: &str, skip_confirm: bool) -> anyhow::Result<()> {
-    if !skip_confirm {
-        eprint!(
-            "Delete workspace '{name}' from registry? \
-             (files on disk will NOT be removed) [y/N] "
-        );
-        use std::io::Write;
-        std::io::stderr().flush().ok();
-
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Aborted.");
-            return Ok(());
-        }
-    }
-
+/// Delete a workspace from the registry (local fallback, no confirmation —
+/// the caller has already handled the prompt).
+fn workspace_delete_local(name: &str) -> anyhow::Result<()> {
     let mut mgr = WorkspaceManager::new()
         .map_err(|e| anyhow::anyhow!("failed to initialize workspace manager: {e}"))?;
 
