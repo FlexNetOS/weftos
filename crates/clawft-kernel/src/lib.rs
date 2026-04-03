@@ -234,7 +234,8 @@ pub use cluster::ClusterService;
 pub use config::KernelConfigExt;
 pub use console::{BootEvent, BootLog, BootPhase, KernelEventLog, LogLevel};
 pub use assessment::{
-    AssessmentReport, AssessmentService, AssessmentSummary, ComparisonReport, Finding,
+    AnalysisContext, Analyzer, AnalyzerRegistry, AssessmentDiff, AssessmentReport,
+    AssessmentService, AssessmentSummary, ComparisonReport, Finding,
     PeerInfo as AssessmentPeerInfo,
 };
 pub use cron::CronService;

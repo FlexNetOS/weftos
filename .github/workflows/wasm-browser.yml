@@ -56,7 +56,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.108
 
       - name: Build browser WASM
         run: |
@@ -75,8 +75,7 @@ jobs:
 
           wasm-bindgen "$WASM_FILE" \
             --out-dir "$PKG_DIR" \
-            --target web \
-            --no-typescript
+            --target web
 
           echo "## Browser WASM" >> "$GITHUB_STEP_SUMMARY"
           echo "| File | Size |" >> "$GITHUB_STEP_SUMMARY"

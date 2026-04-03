@@ -724,22 +724,31 @@ export default function WasmSandbox() {
                         ? `Searching ${kbStats} of WeftOS documentation locally — no API key needed.`
                         : `Running clawft-wasm with ${model.split('/').pop()}, backed by ${kbStats}.`}
                     </p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {[
-                        'What is WeftOS?',
-                        'How does the ECC work?',
-                        'Show me the boot sequence',
-                        'What LLM providers are supported?',
-                      ].map((q) => (
-                        <button
-                          key={q}
-                          onClick={() => {
-                            setInput(q);
-                          }}
-                          className="rounded-lg border border-fd-border px-3 py-1.5 text-xs text-fd-muted-foreground hover:border-fd-primary hover:text-fd-foreground transition-colors"
-                        >
-                          {q}
-                        </button>
+                    <div className="space-y-3 max-w-lg mx-auto text-left">
+                      {([
+                        { label: 'Getting Started', items: ['What is WeftOS?', 'How do I install it?'] },
+                        { label: 'Architecture', items: ['Show me the boot sequence', 'How does the ECC work?'] },
+                        { label: 'Assessment', items: ['What does weft assess do?', 'How do cross-project assessments work?'] },
+                        { label: 'Security', items: ['How does governance work?', 'What is the ExoChain?'] },
+                      ] as const).map((group) => (
+                        <div key={group.label}>
+                          <span className="block mb-1 text-[10px] font-semibold uppercase tracking-wider text-fd-muted-foreground/60">
+                            {group.label}
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {group.items.map((q) => (
+                              <button
+                                key={q}
+                                onClick={() => {
+                                  setInput(q);
+                                }}
+                                className="rounded-lg border border-fd-border px-3 py-1.5 text-xs text-fd-muted-foreground hover:border-fd-primary hover:text-fd-foreground transition-colors"
+                              >
+                                {q}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -798,6 +807,16 @@ export default function WasmSandbox() {
                 </div>
               )}
             </div>
+            {chain.length > 0 && (
+              <div className="border-t border-fd-border px-3 py-2 bg-fd-accent/20">
+                <div className="font-mono text-[10px] text-fd-muted-foreground leading-relaxed">
+                  <span className="text-fd-muted-foreground/60">WITNESS</span>{' '}
+                  Chain: {chain.length} {chain.length === 1 ? 'entry' : 'entries'}, hash:{' '}
+                  <span className="text-fd-foreground/70">{chain[chain.length - 1].hash}</span>{' '}
+                  <span className="text-green-400">(verified)</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

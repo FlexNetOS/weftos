@@ -3,7 +3,11 @@
 //! Provides automated codebase analysis: file scanning, complexity
 //! detection, >500-line warnings, TODO tracking, and optional
 //! tree-sitter symbol extraction. Supports peer linking for
-//! cross-project comparison.
+//! cross-project comparison and a pluggable analyzer registry
+//! (ADR-023) with 5 built-in analyzers.
+
+pub mod analyzer;
+pub mod analyzers;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +20,8 @@ use tracing::debug;
 
 use crate::health::HealthStatus;
 use crate::service::{ServiceType, SystemService};
+
+pub use analyzer::{AnalysisContext, Analyzer, AnalyzerRegistry, AssessmentDiff};
 
 // ── Report types ────────────────────────────────────────────────
 
@@ -34,6 +40,8 @@ pub struct AssessmentReport {
     pub summary: AssessmentSummary,
     /// Individual findings (warnings, issues).
     pub findings: Vec<Finding>,
+    /// Which analyzers were executed.
+    pub analyzers_run: Vec<String>,
 }
 
 /// Aggregate metrics from an assessment.
@@ -85,12 +93,15 @@ pub struct ComparisonReport {
 /// Project assessment service.
 ///
 /// Scans a project directory for code quality signals, complexity
-/// warnings, and structural issues. Optionally uses tree-sitter for
-/// Rust symbol extraction and complexity analysis.
+/// warnings, and structural issues. Uses a pluggable `AnalyzerRegistry`
+/// so that external crates can register custom analyzers. Optionally
+/// uses tree-sitter for Rust symbol extraction and complexity analysis.
 pub struct AssessmentService {
     started: AtomicBool,
     latest: Mutex<Option<AssessmentReport>>,
     peers: Mutex<Vec<PeerInfo>>,
+    /// Path to the previous report JSON for diff computation.
+    previous_report_path: Mutex<Option<PathBuf>>,
 }
 
 impl AssessmentService {
@@ -99,7 +110,32 @@ impl AssessmentService {
             started: AtomicBool::new(false),
             latest: Mutex::new(None),
             peers: Mutex::new(Vec::new()),
+            previous_report_path: Mutex::new(None),
         }
+    }
+
+    /// Set the path to a previous assessment report JSON file.
+    ///
+    /// When set, `run_assessment` will load it and pass it to analyzers
+    /// via `AnalysisContext`, and `diff_latest` will use it to compute
+    /// an `AssessmentDiff`.
+    pub fn set_previous_report_path(&self, path: PathBuf) {
+        *self.previous_report_path.lock().unwrap() = Some(path);
+    }
+
+    /// Load the previous report from the configured path, if any.
+    fn load_previous_report(&self) -> Option<AssessmentReport> {
+        let guard = self.previous_report_path.lock().unwrap();
+        let path = guard.as_ref()?;
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    /// Compute a diff between the latest report and the previous one.
+    pub fn diff_latest(&self) -> Option<AssessmentDiff> {
+        let current = self.get_latest()?;
+        let previous = self.load_previous_report()?;
+        Some(analyzer::diff_reports(&current, &previous))
     }
 
     /// Run the full assessment pipeline on `project_dir`.
@@ -117,6 +153,22 @@ impl AssessmentService {
         scope: &str,
         _format: &str,
     ) -> Result<AssessmentReport, String> {
+        self.run_assessment_with_registry(
+            project_dir,
+            scope,
+            _format,
+            AnalyzerRegistry::with_defaults(),
+        )
+    }
+
+    /// Run assessment with a custom analyzer registry.
+    pub fn run_assessment_with_registry(
+        &self,
+        project_dir: &Path,
+        scope: &str,
+        _format: &str,
+        registry: AnalyzerRegistry,
+    ) -> Result<AssessmentReport, String> {
         let files = match scope {
             "commit" => collect_git_changed_files(project_dir)?,
             "ci" => collect_files_filtered(project_dir, |p| is_ci_file(p)),
@@ -125,17 +177,17 @@ impl AssessmentService {
         };
 
         let mut summary = AssessmentSummary::default();
-        let mut findings = Vec::new();
         #[allow(unused_mut)]
         let mut total_complexity_sum: f64 = 0.0;
         #[allow(unused_mut)]
         let mut complexity_count: usize = 0;
 
+        // Classify files and compute line counts + tree-sitter metrics
+        let mut ts_findings = Vec::new();
         for path in &files {
             let rel = path.strip_prefix(project_dir).unwrap_or(path);
-            let rel_str = rel.display().to_string();
+            let _rel_str = rel.display().to_string();
 
-            // Classify file
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             match ext {
                 "rs" => summary.rust_files += 1,
@@ -150,39 +202,13 @@ impl AssessmentService {
                 summary.dependency_files += 1;
             }
 
-            // Read content
             let content = match std::fs::read_to_string(path) {
                 Ok(c) => c,
-                Err(_) => continue, // skip binary / unreadable files
+                Err(_) => continue,
             };
 
             let line_count = content.lines().count();
             summary.lines_of_code += line_count;
-
-            // >500 line warning
-            if line_count > 500 {
-                summary.complexity_warnings += 1;
-                findings.push(Finding {
-                    severity: "warning".into(),
-                    category: "size".into(),
-                    file: rel_str.clone(),
-                    line: None,
-                    message: format!("File has {line_count} lines (>500 limit)"),
-                });
-            }
-
-            // TODO detection
-            for (i, line) in content.lines().enumerate() {
-                if line.contains("TODO") || line.contains("FIXME") || line.contains("HACK") {
-                    findings.push(Finding {
-                        severity: "info".into(),
-                        category: "todo".into(),
-                        file: rel_str.clone(),
-                        line: Some(i + 1),
-                        message: line.trim().to_string(),
-                    });
-                }
-            }
 
             // Tree-sitter analysis for Rust files
             #[cfg(feature = "treesitter")]
@@ -208,10 +234,10 @@ impl AssessmentService {
                         complexity_count += 1;
                         if func.complexity > 10 {
                             summary.complexity_warnings += 1;
-                            findings.push(Finding {
+                            ts_findings.push(Finding {
                                 severity: "warning".into(),
                                 category: "complexity".into(),
-                                file: rel_str.clone(),
+                                file: _rel_str.clone(),
                                 line: Some(func.start_line),
                                 message: format!(
                                     "Function '{}' has cyclomatic complexity {}",
@@ -224,6 +250,26 @@ impl AssessmentService {
             }
         }
 
+        // Run pluggable analyzers
+        let previous_report = self.load_previous_report();
+        let context = AnalysisContext {
+            scope: scope.to_string(),
+            previous_report,
+        };
+        let analyzer_ids = registry.analyzer_ids();
+        let mut findings = registry.run_all(project_dir, &files, &context);
+
+        // Append tree-sitter findings
+        findings.append(&mut ts_findings);
+
+        // Update summary with analyzer-produced complexity warnings
+        let warning_count = findings.iter().filter(|f| f.severity == "warning").count();
+        // Add complexity warnings from the size category produced by ComplexityAnalyzer
+        summary.complexity_warnings += findings
+            .iter()
+            .filter(|f| f.category == "size" && f.severity == "warning")
+            .count();
+
         summary.total_files = files.len();
         summary.avg_complexity = if complexity_count > 0 {
             total_complexity_sum / complexity_count as f64
@@ -231,7 +277,6 @@ impl AssessmentService {
             0.0
         };
         // Simple coherence score: ratio of files without warnings
-        let warning_count = findings.iter().filter(|f| f.severity == "warning").count();
         summary.coherence_score = if summary.total_files > 0 {
             1.0 - (warning_count as f64 / summary.total_files as f64).min(1.0)
         } else {
@@ -245,6 +290,7 @@ impl AssessmentService {
             files_scanned: files.len(),
             summary,
             findings,
+            analyzers_run: analyzer_ids,
         };
 
         *self.latest.lock().unwrap() = Some(report.clone());
@@ -502,7 +548,7 @@ mod tests {
         // Create a dep file
         fs::write(
             dir.path().join("Cargo.toml"),
-            "[package]\nname = \"test\"\n",
+            "[package]\nname = \"test\"\n[dependencies]\nserde = \"1.0\"\n",
         )
         .unwrap();
 
@@ -595,5 +641,106 @@ mod tests {
 
         assert!(report.summary.coherence_score >= 0.0);
         assert!(report.summary.coherence_score <= 1.0);
+    }
+
+    #[test]
+    fn report_includes_analyzers_run() {
+        let dir = setup_test_dir();
+        let svc = AssessmentService::new();
+        let report = svc.run_assessment(dir.path(), "full", "json").unwrap();
+
+        assert!(!report.analyzers_run.is_empty());
+        assert!(report.analyzers_run.contains(&"complexity".to_string()));
+        assert!(report.analyzers_run.contains(&"dependency".to_string()));
+        assert!(report.analyzers_run.contains(&"security".to_string()));
+        assert!(report.analyzers_run.contains(&"topology".to_string()));
+        assert!(report.analyzers_run.contains(&"data_source".to_string()));
+    }
+
+    #[test]
+    fn dependency_analyzer_finds_deps() {
+        let dir = setup_test_dir();
+        let svc = AssessmentService::new();
+        let report = svc.run_assessment(dir.path(), "full", "json").unwrap();
+
+        let dep_findings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.category == "dependency")
+            .collect();
+        assert!(
+            !dep_findings.is_empty(),
+            "should detect dependencies in Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn diff_reports_computes_deltas() {
+        let prev = AssessmentReport {
+            timestamp: Utc::now(),
+            scope: "full".into(),
+            project: "/test".into(),
+            files_scanned: 2,
+            summary: AssessmentSummary {
+                complexity_warnings: 1,
+                coherence_score: 0.8,
+                ..Default::default()
+            },
+            findings: vec![
+                Finding {
+                    severity: "warning".into(),
+                    category: "size".into(),
+                    file: "old.rs".into(),
+                    line: None,
+                    message: "File has 600 lines (>500 limit)".into(),
+                },
+            ],
+            analyzers_run: vec!["complexity".into()],
+        };
+
+        let curr = AssessmentReport {
+            timestamp: Utc::now(),
+            scope: "full".into(),
+            project: "/test".into(),
+            files_scanned: 3,
+            summary: AssessmentSummary {
+                complexity_warnings: 2,
+                coherence_score: 0.7,
+                ..Default::default()
+            },
+            findings: vec![
+                Finding {
+                    severity: "warning".into(),
+                    category: "size".into(),
+                    file: "new.rs".into(),
+                    line: None,
+                    message: "File has 700 lines (>500 limit)".into(),
+                },
+            ],
+            analyzers_run: vec!["complexity".into()],
+        };
+
+        let diff = analyzer::diff_reports(&curr, &prev);
+        assert!(diff.files_added.contains(&"new.rs".to_string()));
+        assert!(diff.files_removed.contains(&"old.rs".to_string()));
+        assert_eq!(diff.findings_new.len(), 1);
+        assert_eq!(diff.findings_resolved.len(), 1);
+        assert_eq!(diff.complexity_delta, 1);
+        assert!((diff.coherence_delta - (-0.1)).abs() < 0.001);
+    }
+
+    #[test]
+    fn custom_registry_runs_only_registered() {
+        let dir = setup_test_dir();
+        let svc = AssessmentService::new();
+
+        // Empty registry — no analyzer findings
+        let registry = AnalyzerRegistry::new();
+        let report = svc
+            .run_assessment_with_registry(dir.path(), "full", "json", registry)
+            .unwrap();
+
+        assert!(report.analyzers_run.is_empty());
+        assert!(report.findings.is_empty());
     }
 }

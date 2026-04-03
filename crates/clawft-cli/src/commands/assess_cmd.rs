@@ -108,6 +108,21 @@ pub enum AssessAction {
         #[arg(short, long)]
         dir: Option<String>,
     },
+
+    /// Install git hooks for automatic assessment on commit.
+    Hooks {
+        /// Hook type: "post-commit" or "pre-push".
+        #[arg(long, default_value = "post-commit")]
+        hook_type: String,
+
+        /// Project directory.
+        #[arg(short, long)]
+        dir: Option<String>,
+
+        /// Remove installed hooks.
+        #[arg(long)]
+        uninstall: bool,
+    },
 }
 
 /// Assessment scope — what to scan.
@@ -178,6 +193,11 @@ pub async fn run(args: AssessArgs) -> anyhow::Result<()> {
         Some(AssessAction::Compare { peer, dir }) => {
             run_compare_with_daemon(&peer, dir.as_deref()).await
         }
+        Some(AssessAction::Hooks {
+            hook_type,
+            dir,
+            uninstall,
+        }) => run_hooks(&hook_type, dir.as_deref(), uninstall),
         // No subcommand — run assessment with top-level args.
         None => run_assessment_with_daemon(&args.scope, &args.format, args.dir.as_deref(), None).await,
     }
@@ -667,6 +687,67 @@ fn print_github_annotations(report: &AssessmentReport) {
 }
 
 // ---------------------------------------------------------------------------
+// Git hooks
+// ---------------------------------------------------------------------------
+
+fn run_hooks(hook_type: &str, dir: Option<&str>, uninstall: bool) -> anyhow::Result<()> {
+    let valid_hooks = ["post-commit", "pre-push"];
+    if !valid_hooks.contains(&hook_type) {
+        anyhow::bail!(
+            "unsupported hook type '{hook_type}' — use one of: {}",
+            valid_hooks.join(", ")
+        );
+    }
+
+    let project = resolve_project_dir(dir);
+    let hooks_dir = project.join(".git/hooks");
+
+    if !hooks_dir.exists() {
+        anyhow::bail!(
+            "No .git/hooks/ directory at {} — is this a git repository?",
+            project.display()
+        );
+    }
+
+    let hook_path = hooks_dir.join(hook_type);
+
+    if uninstall {
+        if hook_path.exists() {
+            std::fs::remove_file(&hook_path)?;
+            println!("Removed git hook: {}", hook_path.display());
+        } else {
+            println!("No {hook_type} hook installed.");
+        }
+        return Ok(());
+    }
+
+    let hook_script = format!(
+        r#"#!/bin/sh
+# WeftOS assessment hook — installed by `weft assess hooks`
+# Runs assessment scoped to the latest commit.
+weft assess run --scope commit 2>&1 || true
+"#
+    );
+
+    std::fs::write(&hook_path, hook_script)?;
+
+    // Make executable (Unix)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)?;
+    }
+
+    println!("Installed {hook_type} hook at {}", hook_path.display());
+    println!("  Assessment will run automatically on each {hook_type}.");
+    println!("  To remove: weft assess hooks --hook-type {hook_type} --uninstall");
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Status + Init
 // ---------------------------------------------------------------------------
 
@@ -726,8 +807,20 @@ fn run_init(dir: Option<&str>, force: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(weftos_dir.join("artifacts"))?;
     std::fs::create_dir_all(weftos_dir.join("memory"))?;
 
-    let config = r#"# WeftOS Assessment Configuration
+    // Derive a default project name from the directory basename.
+    let project_name = project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("my-project");
+
+    let config = format!(
+        r#"# WeftOS Assessment Configuration
 # See: https://weftos.weavelogic.ai/docs/weftos/guides/assessment
+
+[project]
+name = "{project_name}"
+org = "weavelogic"
+environment = "development"
 
 [assessment]
 version = 1
@@ -739,6 +832,8 @@ exclude = ["node_modules/**", "target/**", ".weftos/**", ".git/**"]
 [assessment.triggers.filesystem]
 enabled = false
 debounce_ms = 2000
+patterns = ["**/*.rs", "**/*.ts", "**/*.json"]
+exclude = ["node_modules/**", "target/**"]
 
 [assessment.triggers.scheduled]
 enabled = false
@@ -748,7 +843,8 @@ scope = "full"
 [assessment.reporting]
 default_format = "table"
 save_artifacts = true
-"#;
+"#
+    );
 
     std::fs::write(&config_path, config)?;
 

@@ -13,6 +13,11 @@ on:
     types: [completed]
     branches: [master]
   workflow_dispatch:
+    inputs:
+      skip_wasm:
+        description: 'Skip WASM download (use existing cdn-assets)'
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,8 +42,15 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build browser WASM (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Download WASM from release (manual trigger)
+        if: github.event_name == 'workflow_dispatch' && !inputs.skip_wasm
+        run: |
+          mkdir -p browser-pkg
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/cdn-assets/clawft_wasm_bg.wasm" -o browser-pkg/clawft_wasm_bg.wasm
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/cdn-assets/clawft_wasm.js" -o browser-pkg/clawft_wasm.js
+
+      - name: Build browser WASM (manual trigger, no existing release)
+        if: github.event_name == 'workflow_dispatch' && !inputs.skip_wasm && hashFiles('browser-pkg/clawft_wasm_bg.wasm') == ''
         run: |
           rustup target add wasm32-unknown-unknown
           cargo install wasm-bindgen-cli
@@ -72,6 +84,7 @@ jobs:
 
       # ── Package assets ──────────────────────────────────────────
       - name: Package WASM bundle
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_wasm) }}
         run: |
           tar -czf browser-wasm-pkg.tar.gz -C browser-pkg .
 
@@ -87,7 +100,8 @@ jobs:
               --prerelease
           fi
 
-      - name: Upload assets to CDN release
+      - name: Upload all assets to CDN release
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_wasm) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,20 +112,32 @@ jobs:
             weftos-docs.rvf \
             --clobber
 
+      - name: Upload KB only to CDN release (WASM skipped)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_wasm }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$CDN_TAG" \
+            weftos-docs.rvf \
+            --clobber
+
       # ── Summary ─────────────────────────────────────────────────
       - name: Summary
         run: |
-          WASM_SIZE=$(du -h browser-pkg/clawft_wasm_bg.wasm | cut -f1)
-          JS_SIZE=$(du -h browser-pkg/clawft_wasm.js | cut -f1)
-          KB_SIZE=$(du -h weftos-docs.rvf | cut -f1)
-
           echo "## CDN Assets Published" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Asset | Size |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| clawft_wasm_bg.wasm | $WASM_SIZE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| clawft_wasm.js | $JS_SIZE |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f browser-pkg/clawft_wasm_bg.wasm ]; then
+            WASM_SIZE=$(du -h browser-pkg/clawft_wasm_bg.wasm | cut -f1)
+            JS_SIZE=$(du -h browser-pkg/clawft_wasm.js | cut -f1)
+            echo "| clawft_wasm_bg.wasm | $WASM_SIZE |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| clawft_wasm.js | $JS_SIZE |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| browser-wasm-pkg.tar.gz | $(du -h browser-wasm-pkg.tar.gz | cut -f1) |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| WASM | skipped |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          KB_SIZE=$(du -h weftos-docs.rvf | cut -f1)
           echo "| weftos-docs.rvf | $KB_SIZE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| browser-wasm-pkg.tar.gz | $(du -h browser-wasm-pkg.tar.gz | cut -f1) |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Release: [\`$CDN_TAG\`](../../releases/tag/$CDN_TAG)" >> "$GITHUB_STEP_SUMMARY"
