@@ -1,4 +1,4 @@
 {
   "title": "Guides",
-  "pages": ["configuration", "feature-flags", "integration-patterns", "kernel-modules", "deployment-docker", "gui"]
+  "pages": ["configuration", "feature-flags", "integration-patterns", "kernel-modules", "deployment-docker", "deployment-sops", "assessment", "gui"]
 }

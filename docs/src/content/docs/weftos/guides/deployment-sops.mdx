@@ -1,0 +1,149 @@
+---
+title: Deployment SOPs
+description: "Standard operating procedures for deploying WeftOS — from initial project setup to continuous assessment."
+---
+
+These SOPs define the standard workflow for deploying WeftOS as a cross-project coordination layer. Each SOP is self-contained with prerequisites, procedures, expected outputs, and quality gates.
+
+## Overview
+
+| SOP | Purpose | Entry Point |
+|-----|---------|-------------|
+| **SOP 1** | Add WeftOS to an existing project | `weft init` |
+| **SOP 2** | Build the knowledge graph | `weft assess init` + tree-sitter + git mining |
+| **SOP 3** | Cross-project coordination | ExoChain linking across `.weftos/` instances |
+| **SOP 4** | Continuous assessment | `weft assess` with triggers and CI |
+
+## SOP 1: Adding WeftOS to an Existing Project
+
+Initialize WeftOS in any git repository:
+
+```bash
+cd /path/to/project
+weft init
+```
+
+This creates the `.weftos/` directory structure:
+
+```
+.weftos/
+  chain/          # ExoChain append-only event ledger
+  tree/           # Resource tree snapshots
+  logs/           # Kernel and agent runtime logs
+  artifacts/      # Generated reports, exported graphs
+  models/         # ONNX embedding models (~86 MB)
+  sessions/       # Agent session state
+  memory/         # Persistent agent memory
+```
+
+And generates `weave.toml` with auto-detected settings for language, framework, and directory structure.
+
+### Quality Gate
+
+SOP 1 is complete when:
+
+- `.weftos/` directory exists with all subdirectories
+- `weave.toml` is present at project root
+- `weft assess init` succeeds
+- `.gitignore` includes `.weftos/chain/`, `.weftos/models/`, `.weftos/sessions/`
+
+## SOP 2: Building the Knowledge Graph
+
+### Phase 1: Static Analysis (tree-sitter)
+
+Parse the codebase to extract symbols, dependencies, and structure:
+
+- Function/method definitions and call sites
+- Import/export relationships
+- Type definitions and references
+- Configuration schema
+
+### Phase 2: Git Mining
+
+Extract temporal relationships from git history:
+
+- File co-change correlations (files that change together)
+- Authorship patterns (who knows what)
+- Churn rates (frequently changed files)
+- Commit message patterns
+
+### Phase 3: Embedding Generation
+
+Generate vector embeddings for semantic search:
+
+- All-MiniLM-L6-v2 (384-dim, ONNX Runtime)
+- Stored in RVF segment files for tamper-evident provenance
+- Indexed via HNSW for sub-millisecond nearest-neighbor search
+
+### Phase 4: AI-Powered Analysis
+
+Use LLM agents to discover higher-order relationships:
+
+- Architectural patterns and anti-patterns
+- Implicit dependencies not visible in code
+- Documentation gaps
+- Security implications
+
+## SOP 3: Cross-Project Coordination
+
+When multiple projects run WeftOS, their ExoChain audit trails can be linked to enable:
+
+- **Dependency tracking** — Know when upstream changes affect downstream projects
+- **Shared knowledge** — Agent learnings from one project benefit others
+- **Coordinated releases** — Assess cross-project impact before shipping
+
+Configuration in `weave.toml`:
+
+```toml
+[coordination]
+peers = [
+  { name = "frontend", path = "../frontend/.weftos" },
+  { name = "backend", path = "../backend/.weftos" },
+]
+```
+
+## SOP 4: Continuous Assessment
+
+Keep the knowledge graph current with automated triggers. See the [Assessment Workflow](/docs/weftos/guides/assessment) guide for full CLI reference.
+
+### Trigger Types
+
+| Trigger | When | Scope |
+|---------|------|-------|
+| File watcher | Real-time (debounced) | Changed files |
+| Git hook | On commit | `--scope commit` |
+| CI pipeline | On push/PR | `--scope ci` |
+| Scheduled | Cron (e.g., daily 2 AM) | `--scope full` |
+
+### CI Integration
+
+```yaml
+# .github/workflows/assess.yml
+- name: WeftOS Assessment
+  run: weft assess run --scope ci --format github-annotations
+```
+
+### Assessment Pipeline
+
+Every assessment follows this pipeline:
+
+```
+TRIGGER → SCOPE → SCAN → ANALYZE → REPORT → COMMIT (to ExoChain)
+```
+
+Results are saved to `.weftos/artifacts/assessment-latest.json` and logged to the ExoChain audit trail.
+
+## SOP 5: Iterative Improvement
+
+The SOPs themselves improve through operational feedback:
+
+1. **Track SOP execution** — Each SOP run is logged to ExoChain with timing and outcomes
+2. **Identify friction** — Steps that fail or take too long are flagged
+3. **Propose amendments** — Agents suggest SOP improvements based on accumulated data
+4. **Review and merge** — Human-approved changes are versioned in the SOP document
+
+## Next Steps
+
+- [Assessment Workflow](/docs/weftos/guides/assessment) — `weft assess` CLI reference
+- [ExoChain](/docs/weftos/exochain) — Cryptographic audit trail details
+- [Getting Started](/docs/weftos/getting-started) — Install and first project setup

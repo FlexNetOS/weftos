@@ -96,6 +96,9 @@ enum Commands {
     /// Initialize clawft config and workspace.
     Onboard(commands::onboard::OnboardArgs),
 
+    /// Run SOP assessment workflow (analyze codebase, report findings).
+    Assess(commands::assess_cmd::AssessArgs),
+
     /// Security scanning, auditing, and hardening.
     Security(commands::security_cmd::SecurityArgs),
 
@@ -455,6 +458,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Agents(args) => commands::agents_cmd::run(args)?,
         Commands::Workspace(args) => commands::workspace_cmd::run(args)?,
         Commands::Onboard(args) => commands::onboard::run(args).await?,
+        Commands::Assess(args) => commands::assess_cmd::run(args)?,
         Commands::Security(args) => commands::security_cmd::run(args)?,
         #[cfg(feature = "api")]
         Commands::Ui(args) => commands::ui_cmd::run(args).await?,
@@ -511,6 +515,7 @@ mod tests {
         assert!(sub_names.contains(&"tools"));
         assert!(sub_names.contains(&"agents"));
         assert!(sub_names.contains(&"workspace"));
+        assert!(sub_names.contains(&"assess"));
         assert!(sub_names.contains(&"onboard"));
         assert!(sub_names.contains(&"ui"));
         // kernel commands moved to `weaver` binary (clawft-weave crate)

@@ -1,0 +1,217 @@
+---
+title: Assessment Workflow
+description: "Run continuous SOP assessment against your codebase with weft assess — scoped scans, multiple output formats, and CI integration."
+---
+
+The WeftOS assessment workflow (`weft assess`) maintains a continuously updated picture of your codebase by scanning files, counting complexity, tracking dependencies, and surfacing findings. It's the entry point for SOP 4 (Continuous Assessment) from the deployment SOPs.
+
+## Quick Start
+
+```bash
+# Initialize assessment config
+weft assess init
+
+# Run a full assessment
+weft assess
+
+# Assess only last commit
+weft assess run --scope commit
+
+# CI mode with GitHub annotations
+weft assess run --scope ci --format github-annotations
+```
+
+## Commands
+
+### `weft assess`
+
+Run an assessment with default scope (full) and format (table):
+
+```bash
+weft assess
+```
+
+```
+WeftOS Assessment Report
+========================
+  Timestamp:    2026-04-03T12:00:00Z
+  Scope:        full
+  Project:      /home/user/my-project
+
+Summary
+-------
+  Files scanned:      142
+  Lines of code:      28,341
+  Rust files:         89
+  TypeScript files:   31
+  Config files:       12
+  Doc files:          10
+  Dependency files:   4
+  Coherence score:    11.2%
+  Complexity warns:   3
+
+Findings (7 total)
+---------
+  [  medium] src/engine.rs — 623 lines — consider splitting (target: <500)
+  [  medium] src/pipeline.rs — 518 lines — consider splitting (target: <500)
+  [    info] src/config.rs:42 — // TODO: validate provider config
+```
+
+### `weft assess run`
+
+Full form with all options:
+
+```bash
+weft assess run --scope <SCOPE> --format <FORMAT> [--dir <PATH>]
+```
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `--scope` | `full`, `commit`, `ci`, `dependency` | `full` | What to scan |
+| `--format` | `table`, `json`, `github-annotations` | `table` | Output format |
+| `--dir` | path | `.` | Project directory |
+| `--pr-number` | number | — | PR number for future github-pr format |
+
+### `weft assess status`
+
+Show the results of the last assessment:
+
+```bash
+weft assess status
+```
+
+### `weft assess init`
+
+Create `.weftos/` directory structure and `weave.toml` config:
+
+```bash
+weft assess init
+weft assess init --force    # overwrite existing
+```
+
+## Scopes
+
+### `full`
+
+Scans all files matching configured patterns (default: `*.rs`, `*.ts`, `*.tsx`, `*.json`). Excludes `node_modules/`, `target/`, `.weftos/`, `.git/`.
+
+### `commit`
+
+Only files changed in the last git commit. Uses `git diff --name-only HEAD~1 HEAD`.
+
+### `ci`
+
+All files changed relative to the main branch. Uses `git diff --name-only origin/main...HEAD`. Ideal for PR pipelines.
+
+### `dependency`
+
+Only dependency manifests: `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`.
+
+## Output Formats
+
+### `table`
+
+Human-readable summary with file counts, LOC, coherence score, and a list of findings. Default for terminal use.
+
+### `json`
+
+Machine-readable report saved to stdout. Also always saved to `.weftos/artifacts/assessment-latest.json`.
+
+### `github-annotations`
+
+GitHub Actions annotation format. Each finding becomes a `::warning` or `::error` annotation that appears inline in PR diffs:
+
+```yaml
+# .github/workflows/assess.yml
+- name: WeftOS Assessment
+  run: weft assess run --scope ci --format github-annotations
+```
+
+## Configuration
+
+Assessment configuration lives in `.weftos/weave.toml`:
+
+```toml
+[assessment]
+version = 1
+
+[assessment.sources.files]
+patterns = ["**/*.rs", "**/*.ts", "**/*.tsx", "**/*.json"]
+exclude = ["node_modules/**", "target/**", ".weftos/**", ".git/**"]
+
+[assessment.triggers.filesystem]
+enabled = false
+debounce_ms = 2000
+
+[assessment.triggers.scheduled]
+enabled = false
+cron = "0 2 * * *"
+scope = "full"
+
+[assessment.reporting]
+default_format = "table"
+save_artifacts = true
+```
+
+## Findings
+
+The assessment produces findings in these categories:
+
+| Category | Severity | What it checks |
+|----------|----------|----------------|
+| `complexity` | medium | Files exceeding 500 lines |
+| `technical-debt` | info | TODO/FIXME comments in code |
+
+Future categories (planned):
+- `coupling` — unexpected file co-changes
+- `coverage` — percentage of code indexed in knowledge graph
+- `dependency` — new, removed, or upgraded dependencies
+- `regression` — complexity increases vs. previous assessment
+
+## CI Integration
+
+### GitHub Actions
+
+```yaml
+name: Assessment
+on: [push, pull_request]
+
+jobs:
+  assess:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for scope=ci
+
+      - name: Install WeftOS
+        run: |
+          curl -fsSL https://github.com/weave-logic-ai/weftos/releases/latest/download/clawft-cli-installer.sh | sh
+
+      - name: Run assessment
+        run: weft assess run --scope ci --format github-annotations
+```
+
+### Git Hook
+
+Install a post-commit hook for automatic assessment on every commit:
+
+```bash
+weft hooks install --type post-commit
+```
+
+This creates `.git/hooks/post-commit` that runs `weft assess --scope commit`.
+
+## Artifacts
+
+Every assessment writes results to `.weftos/artifacts/assessment-latest.json`. This file is overwritten on each run. To keep a history, use the JSON format and redirect to timestamped files:
+
+```bash
+weft assess run --format json > ".weftos/artifacts/assessment-$(date +%Y%m%d-%H%M%S).json"
+```
+
+## Next Steps
+
+- [Deployment SOPs](/docs/weftos/guides/deployment-sops) — Full SOP 1-4 reference
+- [ExoChain](/docs/weftos/exochain) — How assessments are logged to the audit trail
+- [ECC](/docs/weftos/ecc) — How the cognitive substrate uses assessment data

@@ -9,6 +9,7 @@
 
 pub mod agent;
 pub mod agents_cmd;
+pub mod assess_cmd;
 pub mod channels;
 pub mod config_cmd;
 pub mod cron;
