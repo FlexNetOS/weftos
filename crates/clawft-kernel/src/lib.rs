@@ -88,6 +88,7 @@ pub mod agency;
 #[cfg(feature = "native")]
 pub mod agent_loop;
 pub mod app;
+pub mod assessment;
 pub mod boot;
 pub mod capability;
 pub mod cluster;
@@ -232,6 +233,10 @@ pub use cluster::{
 pub use cluster::ClusterService;
 pub use config::KernelConfigExt;
 pub use console::{BootEvent, BootLog, BootPhase, KernelEventLog, LogLevel};
+pub use assessment::{
+    AssessmentReport, AssessmentService, AssessmentSummary, ComparisonReport, Finding,
+    PeerInfo as AssessmentPeerInfo,
+};
 pub use cron::CronService;
 pub use container::{
     ContainerConfig, ContainerError, ContainerManager, ContainerService, ContainerState,

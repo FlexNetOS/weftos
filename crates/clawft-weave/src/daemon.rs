@@ -1641,6 +1641,136 @@ async fn dispatch(
             #[cfg(not(feature = "exochain"))]
             Response::error("exochain feature not enabled")
         }
+        // ── Assessment endpoints ──────────────────────────────
+        "assess.run" => {
+            let run_params: crate::protocol::AssessRunParams =
+                match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+            let dir = run_params.dir.as_deref().unwrap_or(".");
+            let k = kernel.read().await;
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append(
+                    "assessment",
+                    "assess.run",
+                    Some(serde_json::json!({
+                        "scope": run_params.scope,
+                        "format": run_params.format,
+                        "dir": dir,
+                    })),
+                );
+            }
+
+            k.event_log().info(
+                "assessment",
+                format!("assess.run scope={} format={} dir={}", run_params.scope, run_params.format, dir),
+            );
+
+            Response::success(serde_json::json!({
+                "status": "accepted",
+                "scope": run_params.scope,
+                "format": run_params.format,
+                "dir": dir,
+                "message": "Assessment queued. Results will be available via assess.status."
+            }))
+        }
+        "assess.status" => {
+            let k = kernel.read().await;
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append("assessment", "assess.status", None);
+            }
+
+            k.event_log().info("assessment", "assess.status queried".to_string());
+
+            // Return stub until AssessmentService is fully wired
+            Response::success(serde_json::json!({
+                "status": "idle",
+                "last_run": null,
+                "findings": [],
+                "message": "No assessment report available yet."
+            }))
+        }
+        "assess.link" => {
+            let link_params: crate::protocol::AssessLinkParams =
+                match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+            let k = kernel.read().await;
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append(
+                    "assessment",
+                    "assess.link",
+                    Some(serde_json::json!({
+                        "name": link_params.name,
+                        "location": link_params.location,
+                    })),
+                );
+            }
+
+            k.event_log().info(
+                "assessment",
+                format!("peer linked: {} -> {}", link_params.name, link_params.location),
+            );
+
+            Response::success(serde_json::json!({
+                "linked": true,
+                "name": link_params.name,
+                "location": link_params.location
+            }))
+        }
+        "assess.peers" => {
+            let k = kernel.read().await;
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append("assessment", "assess.peers", None);
+            }
+
+            k.event_log().info("assessment", "assess.peers queried".to_string());
+
+            // Return empty list until AssessmentService manages peers
+            Response::success(serde_json::json!({
+                "peers": []
+            }))
+        }
+        "assess.compare" => {
+            let cmp_params: crate::protocol::AssessCompareParams =
+                match serde_json::from_value(params) {
+                    Ok(p) => p,
+                    Err(e) => return Response::error(format!("invalid params: {e}")),
+                };
+            let k = kernel.read().await;
+
+            #[cfg(feature = "exochain")]
+            if let Some(cm) = k.chain_manager() {
+                cm.append(
+                    "assessment",
+                    "assess.compare",
+                    Some(serde_json::json!({
+                        "peer": cmp_params.peer,
+                    })),
+                );
+            }
+
+            k.event_log().info(
+                "assessment",
+                format!("assess.compare peer={}", cmp_params.peer),
+            );
+
+            Response::success(serde_json::json!({
+                "status": "accepted",
+                "peer": cmp_params.peer,
+                "message": "Comparison queued. Results will be available via assess.status."
+            }))
+        }
         "ping" => Response::success(serde_json::json!("pong")),
         other => Response::error(format!("unknown method: {other}")),
     }

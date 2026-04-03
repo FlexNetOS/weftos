@@ -118,6 +118,8 @@ pub struct Kernel<P: Platform> {
     a2a_router: Arc<A2ARouter>,
     #[cfg(feature = "native")]
     cron_service: Arc<crate::cron::CronService>,
+    #[cfg(feature = "native")]
+    assessment_service: Arc<crate::assessment::AssessmentService>,
     health: HealthSystem,
     supervisor: AgentSupervisor<P>,
     boot_log: BootLog,
@@ -228,6 +230,16 @@ impl<P: Platform> Kernel<P> {
             error!(error = %e, "failed to register cron service");
         } else {
             boot_log.push(BootEvent::info(BootPhase::Services, "Cron service registered"));
+        }
+
+        // 5b½. Register assessment service
+        #[cfg(feature = "native")]
+        let assessment_svc = Arc::new(crate::assessment::AssessmentService::new());
+        #[cfg(feature = "native")]
+        if let Err(e) = service_registry.register(assessment_svc.clone()) {
+            error!(error = %e, "failed to register assessment service");
+        } else {
+            boot_log.push(BootEvent::info(BootPhase::Services, "Assessment service registered"));
         }
 
         // 5c. Register container service (K4)
@@ -1259,6 +1271,8 @@ impl<P: Platform> Kernel<P> {
             a2a_router,
             #[cfg(feature = "native")]
             cron_service: cron_svc,
+            #[cfg(feature = "native")]
+            assessment_service: assessment_svc,
             health,
             supervisor,
             boot_log,
@@ -1438,6 +1452,12 @@ impl<P: Platform> Kernel<P> {
     #[cfg(feature = "native")]
     pub fn cron_service(&self) -> &Arc<crate::cron::CronService> {
         &self.cron_service
+    }
+
+    /// Get the assessment service.
+    #[cfg(feature = "native")]
+    pub fn assessment_service(&self) -> &Arc<crate::assessment::AssessmentService> {
+        &self.assessment_service
     }
 
     /// Get the health system.

@@ -389,6 +389,45 @@ pub struct ResourceRankEntry {
     pub score: f32,
 }
 
+// ── Assessment result types ──────────────────────────────
+
+/// Parameters for `assess.run`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssessRunParams {
+    /// Assessment scope: "full", "commit", "ci", or "dependency".
+    #[serde(default = "default_assess_scope")]
+    pub scope: String,
+    /// Output format: "table", "json", or "github-annotations".
+    #[serde(default = "default_assess_format")]
+    pub format: String,
+    /// Working directory to assess (defaults to ".").
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+fn default_assess_scope() -> String {
+    "full".into()
+}
+fn default_assess_format() -> String {
+    "table".into()
+}
+
+/// Parameters for `assess.link`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssessLinkParams {
+    /// Peer name / alias.
+    pub name: String,
+    /// Peer location (URL, path, or address).
+    pub location: String,
+}
+
+/// Parameters for `assess.compare`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssessCompareParams {
+    /// Peer name to compare against.
+    pub peer: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

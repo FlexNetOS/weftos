@@ -55,6 +55,7 @@ ecc = ["clawft-core/vector-memory", "dep:blake3"]
 onnx-embeddings = ["dep:ort", "dep:ndarray"]
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
 os-patterns = ["exochain"]
+treesitter = ["dep:clawft-plugin-treesitter"]
 containers = []
 http-api = []
 
@@ -63,6 +64,7 @@ clawft-core = { workspace = true, default-features = false }
 clawft-types = { workspace = true, default-features = false }
 clawft-platform = { workspace = true, default-features = false }
 clawft-plugin = { workspace = true, default-features = false }
+clawft-plugin-treesitter = { workspace = true, features = ["rust", "typescript"], optional = true }
 dashmap = { workspace = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
