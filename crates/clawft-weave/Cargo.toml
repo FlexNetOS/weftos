@@ -27,6 +27,7 @@ rvf-rpc = ["dep:weftos-rvf-wire", "dep:rvf-types"]
 [dependencies]
 clawft-kernel = { workspace = true, features = ["native"] }
 clawft-platform = { workspace = true }
+clawft-rpc = { workspace = true }
 clawft-types = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

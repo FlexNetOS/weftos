@@ -1,130 +1,13 @@
 //! Wire protocol for daemon <-> client communication.
 //!
-//! Uses line-delimited JSON over Unix domain socket.
-//! Each message is a single JSON object terminated by `\n`.
-//!
-//! This protocol is intentionally simple and transport-agnostic —
-//! the same types could be serialized over WebSocket, TCP, or
-//! `postMessage` for browser contexts.
+//! Core types (`Request`, `Response`, path helpers) are re-exported from
+//! `clawft-rpc`. This module adds the typed domain-specific result structs
+//! used by daemon dispatch and weaver commands.
 
 use serde::{Deserialize, Serialize};
 
-/// Default socket path (relative to config dir).
-pub const SOCKET_NAME: &str = "kernel.sock";
-
-/// PID file name.
-pub const PID_FILE_NAME: &str = "kernel.pid";
-
-/// Log file name.
-pub const LOG_FILE_NAME: &str = "kernel.log";
-
-/// Resolve the WeftOS runtime directory (`~/.clawft/`).
-pub fn runtime_dir() -> std::path::PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".clawft")
-}
-
-/// Resolve the full socket path (`~/.clawft/kernel.sock`).
-pub fn socket_path() -> std::path::PathBuf {
-    runtime_dir().join(SOCKET_NAME)
-}
-
-/// Resolve the PID file path (`~/.clawft/kernel.pid`).
-pub fn pid_path() -> std::path::PathBuf {
-    runtime_dir().join(PID_FILE_NAME)
-}
-
-/// Resolve the log file path (`~/.clawft/kernel.log`).
-pub fn log_path() -> std::path::PathBuf {
-    runtime_dir().join(LOG_FILE_NAME)
-}
-
-// ── Requests ───────────────────────────────────────────────
-
-/// A request from client to daemon.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Request {
-    /// Method name (e.g. "kernel.status", "agent.spawn").
-    pub method: String,
-
-    /// Method parameters (may be null/empty).
-    #[serde(default)]
-    pub params: serde_json::Value,
-
-    /// Optional request ID for correlation.
-    #[serde(default)]
-    pub id: Option<String>,
-}
-
-impl Request {
-    /// Create a request with no parameters.
-    pub fn new(method: &str) -> Self {
-        Self {
-            method: method.to_owned(),
-            params: serde_json::Value::Null,
-            id: None,
-        }
-    }
-
-    /// Create a request with parameters.
-    pub fn with_params(method: &str, params: serde_json::Value) -> Self {
-        Self {
-            method: method.to_owned(),
-            params,
-            id: None,
-        }
-    }
-}
-
-// ── Responses ──────────────────────────────────────────────
-
-/// A response from daemon to client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Response {
-    /// True if the request succeeded.
-    pub ok: bool,
-
-    /// Result payload (present on success).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-
-    /// Error message (present on failure).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-
-    /// Echoed request ID.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-}
-
-impl Response {
-    /// Create a success response.
-    pub fn success(result: serde_json::Value) -> Self {
-        Self {
-            ok: true,
-            result: Some(result),
-            error: None,
-            id: None,
-        }
-    }
-
-    /// Create an error response.
-    pub fn error(msg: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            result: None,
-            error: Some(msg.into()),
-            id: None,
-        }
-    }
-
-    /// Attach a request ID.
-    pub fn with_id(mut self, id: Option<String>) -> Self {
-        self.id = id;
-        self
-    }
-}
+// Re-export core protocol types from clawft-rpc.
+pub use clawft_rpc::{Request, Response, runtime_dir, socket_path, pid_path, log_path};
 
 // ── Typed result structs ───────────────────────────────────
 

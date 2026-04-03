@@ -20,6 +20,7 @@ members = [
     "crates/clawft-plugin-containers",
     "crates/clawft-security",
     "crates/clawft-kernel",
+    "crates/clawft-rpc",
     "crates/clawft-weave",
     "crates/exo-resource-tree",
     "crates/weftos",
@@ -152,6 +153,7 @@ parking_lot = "0.12"
 futures = "0.3"
 
 # Internal crates (version + path: version for crates.io, path for workspace)
+clawft-rpc = { version = "0.3.1", path = "crates/clawft-rpc" }
 clawft-types = { version = "0.3.1", path = "crates/clawft-types", default-features = false }
 clawft-platform = { version = "0.3.1", path = "crates/clawft-platform", default-features = false }
 clawft-core = { version = "0.3.1", path = "crates/clawft-core", default-features = false }

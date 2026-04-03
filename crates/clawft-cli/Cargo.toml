@@ -33,6 +33,7 @@ voice = ["clawft-tools/voice", "dep:clawft-plugin", "clawft-plugin/voice"]
 api = ["clawft-services/api"]
 
 [dependencies]
+clawft-rpc = { workspace = true }
 clawft-types = { workspace = true }
 clawft-platform = { workspace = true }
 clawft-core = { workspace = true, features = ["native", "full"] }

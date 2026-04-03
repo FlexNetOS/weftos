@@ -1,0 +1,18 @@
+[package]
+name = "clawft-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "RPC client and protocol types for communicating with the WeftOS kernel daemon"
+keywords = ["rpc", "daemon", "ipc", "weftos"]
+categories = ["network-programming"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net", "rt"] }
+anyhow = { workspace = true }
+dirs = { workspace = true }
