@@ -77,7 +77,7 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 - [x] **Multi-project namespace** — `[project]` section in weave.toml with org isolation
 - [x] **Assessment report dashboard** — `/assess` route with stats, findings, peer comparison
 - [x] **Cross-project demo** — clawft ↔ weavelogic.ai linked, assessed, compared bidirectionally
-- [ ] **RabbitMQ/message queue topology discovery** — analyzer for event-driven architectures
+- [x] **RabbitMQ analyzer** — analyzer for event-driven architectures
 - [x] **Terraform analyzer** — parse infrastructure-as-code for deployment topology
 
 ### WS5: Plugin Ecosystem (Priority: MEDIUM)
@@ -102,17 +102,34 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 
 ---
 
-## Deferred to Sprint 16+
+## Sprint 16 Plan
 
-- Block drag-and-drop layout editing (GUI)
-- Playground Phase 3-4 (governance panel, agent spawning UI)
-- Security audit (1.0 gate)
-- Post-quantum key exchange implementation (ADR-028 Phase 2)
-- BLAKE3 hash migration from SHAKE-256 (ADR-043)
-- ServiceApi trait implementation (ADR-035)
-- N-dimensional EffectVector refactor (ADR-034 C9)
-- wasip2 migration from wasip1 (ADR-044)
-- ChainAnchor blockchain integration (ADR-041)
+### Carried from Sprint 15
+- [ ] **SOP 3: Cross-project mesh** — real-time mesh coordination via K6 transport (WS4)
+- [ ] **clawft-plugin-npm** — Node.js dependency parsing via package.json/lock (WS5)
+- [ ] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing (WS5)
+- [ ] **Plugin marketplace scaffold** — create-weftos-plugin CLI, registry design (WS5)
+- [ ] **Rustdoc JSON-to-MDX** — converter for native Fumadocs API pages (WS5)
+- [ ] **Evaluate gui/ vs ui/** — consolidate or archive redundant web dashboard (ui/) vs Tauri desktop (gui/)
+
+### weavelogic.ai site (WS6)
+- [ ] /about, /contact with Calendly
+- [ ] ROI calculator
+- [ ] Sitemaps, PostHog analytics
+- [ ] Restructure /services as post-assessment flow
+- [ ] Consolidate CTAs to 2 variants
+
+### Architecture & Platform
+- [ ] Block drag-and-drop layout editing (GUI)
+- [ ] Playground Phase 3-4 (governance panel, agent spawning UI)
+- [ ] Security audit (1.0 gate)
+- [ ] Post-quantum key exchange implementation (ADR-028 Phase 2)
+- [ ] BLAKE3 hash migration from SHAKE-256 (ADR-043)
+- [ ] ServiceApi trait implementation (ADR-035)
+- [ ] N-dimensional EffectVector refactor (ADR-034 C9)
+- [ ] wasip2 migration from wasip1 (ADR-044)
+- [ ] ChainAnchor blockchain integration (ADR-041)
+- [ ] wasmtime upgrade to v33+ (closes remaining 10 Dependabot alerts)
 
 ---
 
