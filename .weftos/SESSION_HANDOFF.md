@@ -70,7 +70,7 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 
 ### WS4: Client Deployment Readiness (Priority: HIGH)
 
-- [ ] **SOP 3: Cross-project mesh** — implement real mesh coordination (not just artifact comparison)
+- [x] **SOP 3: Cross-project mesh** — MeshCoordinator, AssessmentMessage protocol, gossip, daemon RPC (not just artifact comparison)
 - [x] **SOP 4: Git hooks** — `weft assess hooks` installs post-commit/pre-push hooks
 - [x] **SOP 4: Config loading** — weave.toml trigger configuration with AssessmentConfig
 - [x] **SOP 5: SOP review** — `weft assess review` with trend analysis — agents propose SOP amendments from operational data
@@ -82,8 +82,8 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 
 ### WS5: Plugin Ecosystem (Priority: MEDIUM)
 
-- [ ] **clawft-plugin-npm** — Node.js dependency parsing via package.json/lock
-- [ ] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing
+- [x] **clawft-plugin-npm** — Node.js dependency parsing via package.json/lock
+- [x] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing
 - [ ] **Plugin marketplace scaffold** — create-weftos-plugin CLI, registry design
 - [ ] **Rustdoc JSON-to-MDX** — converter for native Fumadocs API pages
 
@@ -106,8 +106,8 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 
 ### Carried from Sprint 15
 - [ ] **SOP 3: Cross-project mesh** — real-time mesh coordination via K6 transport (WS4)
-- [ ] **clawft-plugin-npm** — Node.js dependency parsing via package.json/lock (WS5)
-- [ ] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing (WS5)
+- [x] **clawft-plugin-npm** — Node.js dependency parsing via package.json/lock (WS5)
+- [x] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing (WS5)
 - [ ] **Plugin marketplace scaffold** — create-weftos-plugin CLI, registry design (WS5)
 - [ ] **Rustdoc JSON-to-MDX** — converter for native Fumadocs API pages (WS5)
 - [ ] **Evaluate gui/ vs ui/** — consolidate or archive redundant web dashboard (ui/) vs Tauri desktop (gui/)
