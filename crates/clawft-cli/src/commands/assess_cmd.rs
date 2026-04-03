@@ -77,6 +77,36 @@ pub enum AssessAction {
         #[arg(long)]
         force: bool,
     },
+
+    /// Link two projects for cross-project coordination.
+    Link {
+        /// Name for the peer project.
+        name: String,
+
+        /// Path to the peer project's .weftos/ directory.
+        path: String,
+
+        /// Project directory (this project).
+        #[arg(short, long)]
+        dir: Option<String>,
+    },
+
+    /// Show linked peers and cross-project status.
+    Peers {
+        /// Project directory.
+        #[arg(short, long)]
+        dir: Option<String>,
+    },
+
+    /// Compare assessment results across linked projects.
+    Compare {
+        /// Peer name to compare against.
+        peer: String,
+
+        /// Project directory.
+        #[arg(short, long)]
+        dir: Option<String>,
+    },
 }
 
 /// Assessment scope — what to scan.
@@ -135,6 +165,11 @@ pub fn run(args: AssessArgs) -> anyhow::Result<()> {
         }) => run_assessment(&scope, &format, dir.as_deref(), pr_number),
         Some(AssessAction::Status { dir }) => run_status(dir.as_deref()),
         Some(AssessAction::Init { dir, force }) => run_init(dir.as_deref(), force),
+        Some(AssessAction::Link { name, path, dir }) => {
+            run_link(&name, &path, dir.as_deref())
+        }
+        Some(AssessAction::Peers { dir }) => run_peers(dir.as_deref()),
+        Some(AssessAction::Compare { peer, dir }) => run_compare(&peer, dir.as_deref()),
         // No subcommand — run assessment with top-level args.
         None => run_assessment(&args.scope, &args.format, args.dir.as_deref(), None),
     }
@@ -598,9 +633,320 @@ save_artifacts = true
     println!("  Created: .weftos/artifacts/");
     println!("  Created: .weftos/memory/");
     println!();
+    // Create peers.json for cross-project coordination
+    let peers_path = weftos_dir.join("peers.json");
+    if !peers_path.exists() {
+        std::fs::write(&peers_path, "[]")?;
+        println!("  Created: .weftos/peers.json");
+    }
+
+    println!();
     println!("Next steps:");
     println!("  weft assess              # run your first assessment");
     println!("  weft assess status       # view results");
+    println!("  weft assess link <name> <path-or-url>  # link a peer project");
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cross-project coordination
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct Peer {
+    name: String,
+    /// Local filesystem path or HTTP(S) URL to the peer's .weftos/ artifacts.
+    ///
+    /// Local:  /path/to/project/.weftos
+    /// Remote: https://example.com/api/weftos/artifacts
+    location: String,
+    /// When this peer was linked.
+    linked_at: String,
+    /// Last known assessment timestamp from this peer.
+    last_assessment: Option<String>,
+}
+
+impl Peer {
+    fn is_remote(&self) -> bool {
+        self.location.starts_with("http://") || self.location.starts_with("https://")
+    }
+
+    /// Fetch the latest assessment report from this peer.
+    fn fetch_latest(&self) -> anyhow::Result<serde_json::Value> {
+        if self.is_remote() {
+            // HTTP fetch — works across servers
+            let url = format!(
+                "{}/assessment-latest.json",
+                self.location.trim_end_matches('/')
+            );
+            let output = Command::new("curl")
+                .args(["-fsSL", &url])
+                .output()
+                .map_err(|e| anyhow::anyhow!("failed to fetch {}: {}", url, e))?;
+            if !output.status.success() {
+                anyhow::bail!(
+                    "failed to fetch {}: {}",
+                    url,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            let report: serde_json::Value =
+                serde_json::from_slice(&output.stdout)?;
+            Ok(report)
+        } else {
+            // Local filesystem
+            let path = Path::new(&self.location).join("artifacts/assessment-latest.json");
+            if !path.exists() {
+                anyhow::bail!(
+                    "no assessment found at {} — run `weft assess` in that project",
+                    path.display()
+                );
+            }
+            let content = std::fs::read_to_string(&path)?;
+            let report: serde_json::Value = serde_json::from_str(&content)?;
+            Ok(report)
+        }
+    }
+}
+
+fn load_peers(project: &Path) -> anyhow::Result<Vec<Peer>> {
+    let peers_path = project.join(".weftos/peers.json");
+    if !peers_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&peers_path)?;
+    let peers: Vec<Peer> = serde_json::from_str(&content)?;
+    Ok(peers)
+}
+
+fn save_peers(project: &Path, peers: &[Peer]) -> anyhow::Result<()> {
+    let peers_path = project.join(".weftos/peers.json");
+    let json = serde_json::to_string_pretty(peers)?;
+    std::fs::write(&peers_path, json)?;
+    Ok(())
+}
+
+fn run_link(name: &str, location: &str, dir: Option<&str>) -> anyhow::Result<()> {
+    let project = resolve_project_dir(dir);
+    let weftos_dir = project.join(".weftos");
+
+    if !weftos_dir.exists() {
+        anyhow::bail!("No .weftos/ directory. Run `weft assess init` first.");
+    }
+
+    // Validate the peer is reachable
+    let is_remote = location.starts_with("http://") || location.starts_with("https://");
+    if !is_remote {
+        let peer_path = Path::new(location);
+        if !peer_path.exists() {
+            anyhow::bail!("Peer path does not exist: {location}");
+        }
+        if !peer_path.join("artifacts").exists() {
+            anyhow::bail!(
+                "No artifacts/ directory at {location} — is this a .weftos/ directory?"
+            );
+        }
+    }
+
+    let mut peers = load_peers(&project)?;
+
+    // Remove existing peer with same name
+    peers.retain(|p| p.name != name);
+
+    peers.push(Peer {
+        name: name.to_string(),
+        location: location.to_string(),
+        linked_at: chrono::Utc::now().to_rfc3339(),
+        last_assessment: None,
+    });
+
+    save_peers(&project, &peers)?;
+
+    if is_remote {
+        println!("Linked remote peer '{name}' at {location}");
+    } else {
+        println!("Linked local peer '{name}' at {location}");
+    }
+    println!("  Run `weft assess peers` to see all linked projects.");
+    println!("  Run `weft assess compare {name}` to compare assessments.");
+
+    Ok(())
+}
+
+fn run_peers(dir: Option<&str>) -> anyhow::Result<()> {
+    let project = resolve_project_dir(dir);
+    let peers = load_peers(&project)?;
+
+    if peers.is_empty() {
+        println!("No linked peers.");
+        println!();
+        println!("Link a project:");
+        println!("  weft assess link <name> <path>    # local project");
+        println!("  weft assess link <name> <url>     # remote server");
+        println!();
+        println!("Examples:");
+        println!("  weft assess link frontend /path/to/frontend/.weftos");
+        println!("  weft assess link api https://api.example.com/weftos/artifacts");
+        return Ok(());
+    }
+
+    println!("Linked Peers ({} total)", peers.len());
+    println!("=============");
+    for peer in &peers {
+        let kind = if peer.is_remote() { "remote" } else { "local " };
+        let last = peer
+            .last_assessment
+            .as_deref()
+            .unwrap_or("(none)");
+        println!("  [{kind}] {:<20} {}", peer.name, peer.location);
+        println!("           linked: {}  last assessment: {last}", peer.linked_at);
+    }
+
+    Ok(())
+}
+
+fn run_compare(peer_name: &str, dir: Option<&str>) -> anyhow::Result<()> {
+    let project = resolve_project_dir(dir);
+    let peers = load_peers(&project)?;
+
+    let peer = peers
+        .iter()
+        .find(|p| p.name == peer_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!("peer '{peer_name}' not found — run `weft assess link` first")
+        })?;
+
+    // Load local assessment
+    let local_path = project.join(".weftos/artifacts/assessment-latest.json");
+    if !local_path.exists() {
+        anyhow::bail!("No local assessment found. Run `weft assess` first.");
+    }
+    let local_content = std::fs::read_to_string(&local_path)?;
+    let local: serde_json::Value = serde_json::from_str(&local_content)?;
+
+    // Load peer assessment
+    println!("Fetching assessment from '{}'...", peer.name);
+    let remote = peer.fetch_latest()?;
+
+    // Update last_assessment timestamp
+    let mut peers_mut = peers.clone();
+    if let Some(p) = peers_mut.iter_mut().find(|p| p.name == peer_name) {
+        p.last_assessment = remote
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+    }
+    save_peers(&project, &peers_mut)?;
+
+    // Print comparison
+    println!();
+    println!("Cross-Project Comparison");
+    println!("========================");
+    println!();
+
+    let local_name = local
+        .get("project")
+        .and_then(|v| v.as_str())
+        .unwrap_or("this project");
+    let remote_name = remote
+        .get("project")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&peer.name);
+
+    println!("  {:<30} {:<15} {:<15}", "", "Local", &peer.name);
+    println!("  {:<30} {:<15} {:<15}", "", "-----", "-----");
+
+    // Compare summaries
+    let ls = local.get("summary").cloned().unwrap_or_default();
+    let rs = remote.get("summary").cloned().unwrap_or_default();
+
+    let fields = [
+        ("total_files", "Files"),
+        ("lines_of_code", "Lines of code"),
+        ("rust_files", "Rust files"),
+        ("typescript_files", "TypeScript files"),
+        ("doc_files", "Doc files"),
+        ("dependency_files", "Dependency files"),
+        ("complexity_warnings", "Complexity warnings"),
+    ];
+
+    for (key, label) in &fields {
+        let lv = ls.get(*key).and_then(|v| v.as_u64()).unwrap_or(0);
+        let rv = rs.get(*key).and_then(|v| v.as_u64()).unwrap_or(0);
+        println!("  {:<30} {:<15} {:<15}", label, lv, rv);
+    }
+
+    let lcs = ls
+        .get("coherence_score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let rcs = rs
+        .get("coherence_score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    println!(
+        "  {:<30} {:<15} {:<15}",
+        "Coherence score",
+        format!("{lcs:.1}%"),
+        format!("{rcs:.1}%")
+    );
+
+    let lf = local
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let rf = remote
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    println!("  {:<30} {:<15} {:<15}", "Findings", lf, rf);
+
+    // Shared dependency analysis
+    println!();
+    println!("Shared Dependencies");
+    println!("-------------------");
+
+    let local_deps = extract_dependency_names(&local);
+    let remote_deps = extract_dependency_names(&remote);
+    let shared: Vec<&str> = local_deps
+        .iter()
+        .filter(|d| remote_deps.contains(d))
+        .copied()
+        .collect();
+
+    if shared.is_empty() {
+        println!("  (no shared dependencies detected in assessment data)");
+    } else {
+        for dep in &shared {
+            println!("  - {dep}");
+        }
+    }
+
+    println!();
+    println!("Assessments compared: {} vs {}", local_name, remote_name);
+
+    Ok(())
+}
+
+fn extract_dependency_names(report: &serde_json::Value) -> Vec<&str> {
+    // Extract dependency file names from findings
+    report
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .map(|findings| {
+            findings
+                .iter()
+                .filter_map(|f| {
+                    if f.get("category").and_then(|c| c.as_str()) == Some("dependency") {
+                        f.get("file").and_then(|f| f.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
