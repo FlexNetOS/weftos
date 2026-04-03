@@ -158,11 +158,11 @@ Plan: `.planning/weftos.weavelogic.ai/06-interactive-playground-plan.md`
 Plan: `docs/guides/weftos-deployment-sops.md` (45KB, 1,226 lines)
 
 - [x] `weft assess` CLI command (run, status, init, link, peers, compare)
-- [ ] AI Assessor agent — move to kernel service (blocked by WS5)
+- [x] AI Assessor agent — AssessmentService kernel module (assessment.rs, 597 lines, SystemService impl)
 - [x] Validate SOP 1 against clawft project (2,986 files, 412K LOC assessed)
 - [x] Initialize WeftOS on weavelogic.ai project (2,549 files, 801K LOC assessed)
 - [x] Cross-project coordination — link/peers/compare with local + HTTP URL support
-- [ ] Run SOP 2 Phase 1-2 (tree-sitter + git mining) — needs kernel agent spawning
+- [x] Run SOP 2 Phase 1-2 — tree-sitter (Rust/TS symbol extraction + complexity) + git mining (commit/ci diff scopes)
 - [x] Assessment docs published: /docs/weftos/guides/assessment + deployment-sops
 
 #### WS5: CLI Kernel Compliance — All Commands Must Go Through Daemon
