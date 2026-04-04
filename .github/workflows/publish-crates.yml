@@ -102,15 +102,18 @@ jobs:
 
             for attempt in $(seq 1 $retries); do
               echo "::group::Publishing $crate (attempt $attempt/$retries)"
-              if cargo publish -p "$crate" --allow-dirty 2>&1; then
+              local output
+              output=$(cargo publish -p "$crate" --allow-dirty 2>&1) && {
+                echo "$output"
                 echo "::endgroup::"
                 echo "Successfully published $crate"
                 return 0
-              fi
+              }
+              echo "$output"
               echo "::endgroup::"
 
-              # Check if it failed because the version already exists
-              if cargo publish -p "$crate" --allow-dirty 2>&1 | grep -q "already uploaded"; then
+              # Skip if version already exists on crates.io
+              if echo "$output" | grep -qE "already (uploaded|exists)"; then
                 echo "::notice::$crate version already published, skipping"
                 return 0
               fi
