@@ -544,6 +544,7 @@ export default function WasmSandbox() {
   const [kbStats, setKbStats] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [showLlmSetup, setShowLlmSetup] = useState(false);
+  const [docPanelUrl, setDocPanelUrl] = useState<string | null>(null);
   const [streamingMessage, setStreamingMessage] = useState('');
   const [showKBGraph, setShowKBGraph] = useState(true);
   const [chain, setChain] = useState<ChainEntry[]>([]);
@@ -823,6 +824,10 @@ export default function WasmSandbox() {
     }
   }, [input, sending, mode, model, streamReply]);
 
+  const openDocPanel = useCallback((url: string) => {
+    setDocPanelUrl(url);
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1061,14 +1066,14 @@ export default function WasmSandbox() {
                 )}
 
                 {messages.map((msg, i) => (
-                  <ChatBubble key={i} message={msg} />
+                  <ChatBubble key={i} message={msg} onDocLink={openDocPanel} />
                 ))}
 
                 {/* Streaming message bubble */}
                 {streamingMessage && (
                   <div className="flex justify-start">
                     <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-sm border border-fd-border bg-fd-card text-fd-card-foreground">
-                      <div className="whitespace-pre-wrap">{streamingMessage}<span className="inline-block w-1.5 h-4 ml-0.5 bg-fd-foreground/60 animate-pulse" /></div>
+                      <MarkdownRenderer text={streamingMessage} /><span className="inline-block w-1.5 h-4 ml-0.5 bg-fd-foreground/60 animate-pulse" />
                     </div>
                   </div>
                 )}
@@ -1103,6 +1108,36 @@ export default function WasmSandbox() {
               </div>
             </div>
           </div>
+
+          {/* Doc Preview Panel (opens when clicking internal links) */}
+          {docPanelUrl && (
+            <div className="hidden w-[480px] flex-shrink-0 border-l border-fd-border lg:flex lg:flex-col">
+              <div className="flex items-center justify-between border-b border-fd-border px-3 py-2">
+                <span className="text-xs font-semibold text-fd-foreground truncate">{docPanelUrl}</span>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={docPanelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+                  >
+                    Open
+                  </a>
+                  <button
+                    onClick={() => setDocPanelUrl(null)}
+                    className="text-fd-muted-foreground hover:text-fd-foreground text-sm transition-colors"
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+              <iframe
+                src={docPanelUrl}
+                className="flex-1 w-full border-0"
+                title="Documentation"
+              />
+            </div>
+          )}
 
           {/* Right: Chain Log */}
           <div className="hidden w-80 flex-shrink-0 border-l border-fd-border lg:flex lg:flex-col">
@@ -1166,14 +1201,230 @@ function StatusIndicator({ status }: { status: SandboxStatus }) {
   );
 }
 
-function ChatBubble({ message }: { message: Message }) {
+/**
+ * Lightweight markdown renderer for chat bubbles.
+ *
+ * Handles: headings, bold, italic, code blocks, inline code, links,
+ * bullet lists, numbered lists, horizontal rules, and bare URLs.
+ * Internal doc links (/docs/...) open in the preview panel.
+ */
+function MarkdownRenderer({
+  text,
+  onDocLink,
+}: {
+  text: string;
+  onDocLink?: (url: string) => void;
+}) {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Code block (```)
+    if (line.startsWith('```')) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      elements.push(
+        <pre key={key++} className="my-2 overflow-x-auto rounded-lg bg-fd-background p-3 text-xs font-mono">
+          <code>{codeLines.join('\n')}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    // Heading
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const cls = level === 1 ? 'text-lg font-bold mt-3 mb-1' :
+                  level === 2 ? 'text-base font-semibold mt-2 mb-1' :
+                  'text-sm font-semibold mt-1.5 mb-0.5';
+      elements.push(
+        <div key={key++} className={cls}>
+          <InlineMarkdown text={headingMatch[2]} onDocLink={onDocLink} />
+        </div>,
+      );
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      elements.push(<hr key={key++} className="my-2 border-fd-border" />);
+      i++;
+      continue;
+    }
+
+    // Bullet list
+    if (/^[\s]*[-*]\s/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[\s]*[-*]\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^[\s]*[-*]\s+/, ''));
+        i++;
+      }
+      elements.push(
+        <ul key={key++} className="my-1 ml-4 list-disc space-y-0.5">
+          {items.map((item, j) => (
+            <li key={j}><InlineMarkdown text={item} onDocLink={onDocLink} /></li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    // Numbered list
+    if (/^[\s]*\d+[.)]\s/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[\s]*\d+[.)]\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^[\s]*\d+[.)]\s+/, ''));
+        i++;
+      }
+      elements.push(
+        <ol key={key++} className="my-1 ml-4 list-decimal space-y-0.5">
+          {items.map((item, j) => (
+            <li key={j}><InlineMarkdown text={item} onDocLink={onDocLink} /></li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    // Empty line
+    if (line.trim() === '') {
+      i++;
+      continue;
+    }
+
+    // Regular paragraph
+    elements.push(
+      <p key={key++} className="my-1">
+        <InlineMarkdown text={line} onDocLink={onDocLink} />
+      </p>,
+    );
+    i++;
+  }
+
+  return <div className="space-y-0">{elements}</div>;
+}
+
+/** Render inline markdown: bold, italic, code, links, bare URLs, doc paths. */
+function InlineMarkdown({
+  text,
+  onDocLink,
+}: {
+  text: string;
+  onDocLink?: (url: string) => void;
+}) {
+  // Process inline patterns in order of specificity
+  const pattern =
+    /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(`([^`]+?)`)|(\[([^\]]+)\]\(([^)]+)\))|(https?:\/\/[^\s"'`<>]+)|(\/docs\/[^\s"'`<>),]+)/g;
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let k = 0;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+
+    if (match[1]) {
+      // **bold**
+      parts.push(<strong key={k++}>{match[2]}</strong>);
+    } else if (match[3]) {
+      // *italic*
+      parts.push(<em key={k++}>{match[4]}</em>);
+    } else if (match[5]) {
+      // `inline code`
+      parts.push(
+        <code key={k++} className="rounded bg-fd-accent px-1 py-0.5 text-xs font-mono">
+          {match[6]}
+        </code>,
+      );
+    } else if (match[7]) {
+      // [text](url)
+      const label = match[8];
+      const url = match[9];
+      const isInternal = url.startsWith('/docs');
+      if (isInternal && onDocLink) {
+        parts.push(
+          <button
+            key={k++}
+            onClick={() => onDocLink(url)}
+            className="underline text-fd-primary hover:text-fd-primary/80 transition-colors cursor-pointer"
+          >
+            {label}
+          </button>,
+        );
+      } else {
+        parts.push(
+          <a key={k++} href={url} target="_blank" rel="noopener noreferrer"
+            className="underline text-fd-primary hover:text-fd-primary/80 transition-colors">
+            {label}
+          </a>,
+        );
+      }
+    } else if (match[10]) {
+      // bare URL
+      parts.push(
+        <a key={k++} href={match[10]} target="_blank" rel="noopener noreferrer"
+          className="underline text-fd-primary hover:text-fd-primary/80 transition-colors">
+          {match[10]}
+        </a>,
+      );
+    } else if (match[11]) {
+      // /docs/... path
+      const url = match[11];
+      if (onDocLink) {
+        parts.push(
+          <button key={k++} onClick={() => onDocLink(url)}
+            className="underline text-fd-primary hover:text-fd-primary/80 transition-colors cursor-pointer">
+            {url}
+          </button>,
+        );
+      } else {
+        parts.push(
+          <a key={k++} href={url} className="underline text-fd-primary hover:text-fd-primary/80 transition-colors">
+            {url}
+          </a>,
+        );
+      }
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return <>{parts}</>;
+}
+
+function ChatBubble({
+  message,
+  onDocLink,
+}: {
+  message: Message;
+  onDocLink?: (url: string) => void;
+}) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
   if (isSystem) {
     return (
       <div className="rounded-lg bg-fd-accent px-4 py-2 text-xs text-fd-muted-foreground">
-        {message.content}
+        <MarkdownRenderer text={message.content} onDocLink={onDocLink} />
       </div>
     );
   }
@@ -1187,7 +1438,7 @@ function ChatBubble({ message }: { message: Message }) {
             : 'border border-fd-border bg-fd-card text-fd-card-foreground'
         }`}
       >
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        <MarkdownRenderer text={message.content} onDocLink={onDocLink} />
       </div>
     </div>
   );
