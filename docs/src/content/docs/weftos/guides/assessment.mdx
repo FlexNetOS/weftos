@@ -153,9 +153,41 @@ default_format = "table"
 save_artifacts = true
 ```
 
+## Cross-Project Assessment
+
+Link projects for comparative analysis:
+
+```bash
+# Link a local project
+weft assess link /path/to/other-project
+
+# Link a remote project via HTTP
+weft assess link https://other-host:8080
+
+# List linked peers
+weft assess peers
+
+# Compare assessments across projects
+weft assess compare
+```
+
+The cross-project mesh uses `MeshCoordinator` with `AssessmentMessage` protocol for gossip-based peer discovery and bidirectional assessment exchange. Linked projects share assessment summaries (not raw source code) for trend analysis and organizational benchmarking.
+
+### Multi-Project Namespace
+
+Configure project identity in `weave.toml`:
+
+```toml
+[project]
+name = "my-service"
+org = "acme-corp"
+```
+
+The `org` field provides namespace isolation — projects within the same org can discover each other via mesh, while cross-org sharing requires explicit linking.
+
 ## Pluggable Analyzers
 
-The assessment runs a registry of pluggable analyzers. Five are built in:
+The assessment runs a registry of pluggable analyzers. Eight are built in:
 
 | Analyzer | Category | What it checks |
 |----------|----------|----------------|
@@ -164,8 +196,36 @@ The assessment runs a registry of pluggable analyzers. Five are built in:
 | **SecurityAnalyzer** | `security` | Hardcoded secrets, committed .env files, `unsafe` blocks in Rust |
 | **TopologyAnalyzer** | `topology` | docker-compose.yml services, Dockerfiles, Kubernetes manifests, .env files |
 | **DataSourceAnalyzer** | `data-source` | Database connection strings (postgres://, redis://, etc.), S3 refs, API base URLs |
+| **NetworkAnalyzer** | `network` | Maps egress URLs, API endpoints, webhook configs from code and config files |
+| **RabbitMQAnalyzer** | `rabbitmq` | Detects AMQP connection strings, queue/exchange declarations, event-driven patterns |
+| **TerraformAnalyzer** | `terraform` | Parses HCL files for infrastructure topology, provider configs, resource definitions |
 
 Custom analyzers implement the `Analyzer` trait and register via `AnalyzerRegistry`.
+
+## LLM Assessor Agent
+
+The assessment framework can optionally spawn an LLM-powered assessor agent that analyzes findings for higher-order insights:
+
+```bash
+weft assess run --with-llm-assessor
+```
+
+The assessor reads the structured findings from all analyzers and produces narrative analysis: architectural risks, dependency patterns, security posture assessment, and recommended remediation priorities. It runs via the kernel's AgentSupervisor with standard governance and chain logging.
+
+## Assessment Diff
+
+Compare the current assessment against a previous run to surface regressions and improvements:
+
+```bash
+weft assess diff
+weft assess diff --baseline .weftos/artifacts/assessment-2026-04-01.json
+```
+
+Output highlights:
+- **New findings** introduced since the baseline
+- **Resolved findings** that no longer appear
+- **Changed severity** — findings that got better or worse
+- **Metric deltas** — LOC changes, file count changes, coherence score trend
 
 ## Git Hooks
 
@@ -178,6 +238,18 @@ weft assess hooks --uninstall              # remove hook
 ```
 
 ## Findings
+
+Each finding has a severity level and category:
+
+| Severity | Meaning |
+|----------|---------|
+| `critical` | Security vulnerability or data leak — fix immediately |
+| `high` | Architectural issue or significant risk |
+| `medium` | Code quality concern — address in next sprint |
+| `low` | Informational or minor improvement suggestion |
+| `info` | Observation with no action required |
+
+Findings are stored in `.weftos/artifacts/assessment-latest.json` and logged to the ExoChain when the daemon is running.
 
 ## CI Integration
 

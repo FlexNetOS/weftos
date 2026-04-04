@@ -1,6 +1,6 @@
 ---
 title: "K8 GUI"
-description: "React 19 + TypeScript + Tailwind GUI layer: Dashboard, Admin Forms, Knowledge Graph visualization with WebSocket kernel bridge."
+description: "React 19 + TypeScript + Tailwind GUI layer shipped as a Tauri 2.0 desktop app: Dashboard, Admin Forms, Knowledge Graph visualization, Component Generator, and WebSocket kernel bridge."
 ---
 
 K8 is the human interface layer of WeftOS — a web-based GUI that provides real-time visibility into kernel state and interactive administration.
@@ -78,9 +78,28 @@ npm run build   # Production build (204KB JS, 17KB CSS)
 
 Production build: **204KB** JavaScript, **17KB** CSS. No external CDN dependencies.
 
-## Roadmap (Sprint 11)
+## Tauri 2.0 Desktop App
 
-- 5 additional views (Process Explorer, Chain Viewer, Governance Console, Service Map, Config Editor)
-- 3D ECC visualization (Three.js)
-- Real kernel bridge (replace mock WebSocket)
-- Tauri 2.0 desktop packaging
+The GUI ships as a native desktop application via Tauri 2.0. The Rust backend exposes four IPC commands:
+
+| Command | Description |
+|---------|-------------|
+| `kernel_status` | Returns kernel version, uptime, health, state |
+| `spawn_agent` | Spawns a new agent by name with capabilities |
+| `stop_agent` | Stops a running agent by PID |
+| `set_config` | Sets a kernel configuration key/value pair |
+
+**Source**: `gui/src-tauri/src/lib.rs`
+
+### Build
+
+```bash
+cd gui
+npm install
+npm run tauri dev     # Dev mode with hot reload
+npm run tauri build   # Production binary
+```
+
+## Component Generator
+
+The `ComponentGenerator` view (`gui/src/views/ComponentGenerator.tsx`) allows agents to dynamically generate React components at runtime. The Weaver or other authorized agents submit TSX source code, which is validated, rendered, and optionally persisted as a new block in the block registry.

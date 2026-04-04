@@ -5,8 +5,9 @@ description: Complete Docker deployment guide including image builds, configurat
 
 # Docker Deployment
 
-clawft ships as a minimal `FROM scratch` Docker image containing only the
-statically-linked `weft` binary. The resulting image is typically around 5 MB.
+clawft ships as a minimal Alpine 3.21 Docker image containing pre-built musl
+binaries downloaded from GitHub Releases. The resulting image is approximately
+15 MB compressed. Multi-arch support covers `linux/amd64` and `linux/arm64`.
 
 ## Prerequisites
 

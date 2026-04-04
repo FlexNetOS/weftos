@@ -216,6 +216,37 @@ The unified `PluginHost` manages all plugin types through a single lifecycle con
 - `start_all()` and `stop_all()` operate concurrently across all registered plugins
 - `SoulConfig` injects `SOUL.md` content into plugin contexts for personality propagation
 
+## Ecosystem Plugins
+
+WeftOS ships additional analyzer plugins as separate crates:
+
+### npm Plugin (`clawft-plugin-npm`)
+
+Parses Node.js dependency metadata from `package.json` and lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`):
+
+- Dependency count and categorization (production vs dev)
+- Version constraint analysis (exact, range, wildcard)
+- Outdated dependency detection
+- Workspace/monorepo detection
+
+### CI Plugin (`clawft-plugin-ci`)
+
+Parses CI/CD configuration files for pipeline topology analysis:
+
+- **GitHub Actions**: workflow YAML parsing, job/step extraction, action references, secret usage detection
+- **Vercel**: project configuration and deployment settings
+- **Generic**: detects CI provider from directory structure (`.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, etc.)
+
+### Creating Custom Plugins
+
+Scaffold a new plugin with the marketplace CLI:
+
+```bash
+npx create-weftos-plugin my-analyzer
+```
+
+This generates a Cargo project with the `Analyzer` trait implemented, test fixtures, and a manifest for the plugin marketplace.
+
 ## Autonomous Skill Creation
 
 The system can detect repeated task patterns and auto-generate skills. When a pattern repeats beyond a configurable threshold (default 3), the agent generates a `SKILL.md`, installs it in pending state, and prompts for user approval. This feature is disabled by default:

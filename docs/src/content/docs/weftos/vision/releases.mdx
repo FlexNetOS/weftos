@@ -1,9 +1,41 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.4.1.
+description: Complete version history for WeftOS from initial development through v0.4.2.
 ---
 
 # Release Notes
+
+## v0.4.2 — Sprint 15 Completion + Docker Optimization
+
+*2026-04-04*
+
+### Plugin Ecosystem (WS5)
+
+- **clawft-plugin-npm**: Node.js dependency parsing via package.json and lockfiles
+- **clawft-plugin-ci**: GitHub Actions and Vercel config parsing and analysis
+- **Plugin marketplace scaffold**: `create-weftos-plugin` CLI for authoring new plugins
+- **Rustdoc JSON-to-MDX converter**: Generates native Fumadocs API pages from Rust documentation
+
+### Cross-Project Mesh (WS4)
+
+- **MeshCoordinator**: Real mesh coordination with AssessmentMessage protocol and gossip discovery
+- **Bidirectional peer linking**: clawft and weavelogic.ai linked and compared across projects
+- **Multi-project namespace**: `[project]` section in weave.toml with org-based isolation
+
+### Browser Sandbox Improvements
+
+- **Full kernel boot sequence**: ExoChain log now shows INIT, CONFIG, SERVICES, NETWORK, READY phases
+- **Rich markdown rendering**: Headings, bold, italic, code blocks, links, lists in chat bubbles
+- **Document preview panel**: Click internal doc links to open in a side panel
+
+### Infrastructure
+
+- **Docker optimization**: Alpine + pre-built musl binaries — build time from ~30min to ~2min, image ~50MB to ~15MB
+- **crates.io pipeline fixed**: 12 crates now publish automatically on tag (was broken by missing deps)
+- **25 crates** in workspace (added clawft-plugin-npm, clawft-plugin-ci)
+- **48 ADRs** (unchanged)
+
+---
 
 ## v0.4.1 — Sprint 15: Assessment Depth, CI Hardening, Client Readiness
 
