@@ -625,7 +625,7 @@ export default function WasmSandbox() {
     (async () => {
       try {
         // Boot sequence — mirrors kernel BootPhase (INIT → CONFIG → SERVICES → READY)
-        log('BOOT_INIT', 'WeftOS v0.4.1 booting...');
+        log('BOOT_INIT', 'WeftOS v0.4.2 booting...');
         log('BOOT_INIT', 'PID 0 (kernel)');
         log('BOOT_CONFIG', 'Platform: wasm32-browser');
         log('BOOT_CONFIG', 'Max processes: 64');
