@@ -545,6 +545,20 @@ impl ChainManager {
         path: &Path,
     ) -> Result<SigningKey, Box<dyn std::error::Error + Send + Sync>> {
         if path.exists() {
+            // Warn if key file is world-readable on Unix.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(path)?.permissions().mode();
+                if mode & 0o077 != 0 {
+                    warn!(
+                        path = %path.display(),
+                        mode = format!("{mode:04o}"),
+                        "signing key file has overly permissive permissions, fixing to 0600"
+                    );
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+                }
+            }
             let bytes = std::fs::read(path)?;
             if bytes.len() != 32 {
                 return Err(format!(
@@ -566,6 +580,13 @@ impl ChainManager {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(path, key.to_bytes())?;
+            // Restrict key file to owner-only (0600) on Unix to prevent
+            // other users from reading the private signing key.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            }
             info!(path = %path.display(), "generated new Ed25519 signing key");
             Ok(key)
         }

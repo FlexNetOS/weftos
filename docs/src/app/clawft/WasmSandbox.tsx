@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { KBEntry, KBManifest } from '@/lib/rvf-reader';
+import {
+  loadPreferences,
+  savePreferences,
+  saveConversation,
+  loadConversation,
+  clearConversation,
+  saveAssessment,
+  type SessionMessage,
+  type UserPreferences,
+  type AssessmentResult,
+} from '@/lib/session-store';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +33,239 @@ interface ChainEntry {
 
 type SandboxStatus = 'loading' | 'ready' | 'error' | 'needs-key';
 type SandboxMode = 'local' | 'llm' | 'local-ai';
+
+// ---------------------------------------------------------------------------
+// GitHub repo fetcher (Feature 2 — public API, no auth, 60 req/hr)
+// ---------------------------------------------------------------------------
+
+const GITHUB_API = 'https://api.github.com';
+
+/** Max individual file fetches to stay within rate limits. */
+const MAX_FILE_FETCHES = 30;
+
+/** Max file size in bytes to fetch (skip large binaries). */
+const MAX_FILE_SIZE = 100_000;
+
+/** File extensions worth analyzing. */
+const ANALYZABLE_EXTS = new Set([
+  'rs', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'go', 'java',
+  'c', 'h', 'cpp', 'cc', 'hpp', 'rb', 'toml', 'json', 'yaml', 'yml',
+  'md', 'mdx', 'sh', 'bash', 'css', 'scss', 'html', 'sql',
+]);
+
+/** Filenames always worth fetching regardless of extension. */
+const PRIORITY_NAMES = new Set([
+  'Cargo.toml', 'package.json', 'Dockerfile', 'docker-compose.yml',
+  'docker-compose.yaml', '.env', '.env.example', 'Makefile', 'Justfile',
+  'tsconfig.json', 'pyproject.toml', 'go.mod', 'Gemfile',
+]);
+
+interface GitHubTreeEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+  size?: number;
+  url: string;
+}
+
+interface FetchedFile {
+  path: string;
+  content: string;
+}
+
+/** Parse a GitHub URL into owner/repo. */
+function parseGitHubUrl(input: string): { owner: string; repo: string } | null {
+  // Accept: github.com/owner/repo, https://github.com/owner/repo, owner/repo
+  const cleaned = input
+    .replace(/^https?:\/\//, '')
+    .replace(/^github\.com\//, '')
+    .replace(/\.git$/, '')
+    .replace(/\/$/, '');
+  const parts = cleaned.split('/');
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    return { owner: parts[0], repo: parts[1] };
+  }
+  return null;
+}
+
+/** Fetch the recursive file tree for a repo's default branch. */
+async function fetchRepoTree(
+  owner: string,
+  repo: string,
+): Promise<GitHubTreeEntry[]> {
+  // Get default branch SHA
+  const repoResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`);
+  if (!repoResp.ok) {
+    throw new Error(`GitHub API error ${repoResp.status}: ${await repoResp.text()}`);
+  }
+  const repoData = await repoResp.json();
+  const branch = repoData.default_branch ?? 'main';
+
+  const treeResp = await fetch(
+    `${GITHUB_API}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+  );
+  if (!treeResp.ok) {
+    throw new Error(`Tree fetch failed: ${treeResp.status}`);
+  }
+  const treeData = await treeResp.json();
+  return (treeData.tree ?? []) as GitHubTreeEntry[];
+}
+
+/** Prioritize and fetch file contents up to MAX_FILE_FETCHES. */
+async function fetchRepoFiles(
+  owner: string,
+  repo: string,
+  tree: GitHubTreeEntry[],
+  onProgress?: (fetched: number, total: number) => void,
+): Promise<FetchedFile[]> {
+  // Filter to blobs only
+  const blobs = tree.filter((e) => e.type === 'blob');
+
+  // Prioritize: config files first, then src/ files, then others
+  const prioritized = blobs
+    .filter((e) => {
+      const name = e.path.split('/').pop() ?? '';
+      const ext = name.split('.').pop() ?? '';
+      if (PRIORITY_NAMES.has(name)) return true;
+      if (ANALYZABLE_EXTS.has(ext)) return true;
+      if (name.startsWith('Dockerfile')) return true;
+      return false;
+    })
+    .filter((e) => !e.size || e.size <= MAX_FILE_SIZE)
+    .sort((a, b) => {
+      const aName = a.path.split('/').pop() ?? '';
+      const bName = b.path.split('/').pop() ?? '';
+      const aPriority = PRIORITY_NAMES.has(aName) ? 0 : 1;
+      const bPriority = PRIORITY_NAMES.has(bName) ? 0 : 1;
+      return aPriority - bPriority;
+    })
+    .slice(0, MAX_FILE_FETCHES);
+
+  const files: FetchedFile[] = [];
+  for (let i = 0; i < prioritized.length; i++) {
+    const entry = prioritized[i];
+    onProgress?.(i + 1, prioritized.length);
+    try {
+      const resp = await fetch(
+        `${GITHUB_API}/repos/${owner}/${repo}/contents/${entry.path}`,
+      );
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      if (data.encoding === 'base64' && data.content) {
+        const decoded = atob(data.content.replace(/\n/g, ''));
+        files.push({ path: entry.path, content: decoded });
+      }
+    } catch {
+      // Skip files that fail to fetch
+    }
+  }
+  return files;
+}
+type RightPanelTab = 'chain' | 'governance' | 'agents';
+
+// ---------------------------------------------------------------------------
+// Governance types (mirrors crates/clawft-kernel/src/governance.rs)
+// ---------------------------------------------------------------------------
+
+type GovernanceBranch = 'Legislative' | 'Executive' | 'Judicial';
+type RuleSeverity = 'Advisory' | 'Warning' | 'Blocking' | 'Critical';
+type GovernanceDecision = 'Permit' | 'PermitWithWarning' | 'EscalateToHuman' | 'Deny';
+
+interface GovernanceRule {
+  id: string;
+  description: string;
+  branch: GovernanceBranch;
+  severity: RuleSeverity;
+  active: boolean;
+  sop_category?: string;
+}
+
+interface GovernanceEvent {
+  ts: number;
+  agent_id: string;
+  action: string;
+  decision: GovernanceDecision;
+  rule_id: string;
+  effect_magnitude: number;
+  detail: string;
+}
+
+// ---------------------------------------------------------------------------
+// Agent types (mirrors kernel agent lifecycle)
+// ---------------------------------------------------------------------------
+
+type AgentType = 'coder' | 'reviewer' | 'researcher' | 'planner' | 'tester';
+type AgentState = 'spawning' | 'running' | 'stopped';
+
+interface MockAgent {
+  id: string;
+  name: string;
+  agent_type: AgentType;
+  state: AgentState;
+  pid: number;
+  spawned_at: number;
+}
+
+// ---------------------------------------------------------------------------
+// Mock governance rules — matches the 22 genesis rules from governance.rs
+// ---------------------------------------------------------------------------
+
+const GENESIS_RULES: GovernanceRule[] = [
+  { id: 'GOV-001', description: 'Chain integrity validation required', branch: 'Judicial', severity: 'Blocking', active: true },
+  { id: 'GOV-002', description: 'Agent capability boundary enforcement', branch: 'Judicial', severity: 'Blocking', active: true },
+  { id: 'GOV-003', description: 'Manifest schema compliance check', branch: 'Legislative', severity: 'Warning', active: true },
+  { id: 'GOV-004', description: 'Agent telemetry collection advisory', branch: 'Executive', severity: 'Advisory', active: true },
+  { id: 'GOV-005', description: 'Data retention policy compliance', branch: 'Legislative', severity: 'Warning', active: true },
+  { id: 'GOV-006', description: 'Agent spawn resource limit enforcement', branch: 'Executive', severity: 'Blocking', active: true },
+  { id: 'GOV-007', description: 'Audit trail completeness advisory', branch: 'Judicial', severity: 'Advisory', active: true },
+  { id: 'SOP-L001', description: 'AI-IRB approval required for new models', branch: 'Legislative', severity: 'Blocking', active: true, sop_category: 'governance' },
+  { id: 'SOP-L002', description: 'Governance scope declaration required', branch: 'Legislative', severity: 'Warning', active: true, sop_category: 'governance' },
+  { id: 'SOP-L003', description: 'Secure coding standards enforcement', branch: 'Legislative', severity: 'Warning', active: true, sop_category: 'engineering' },
+  { id: 'SOP-L004', description: 'Lifecycle phase gate documentation', branch: 'Legislative', severity: 'Advisory', active: true, sop_category: 'lifecycle' },
+  { id: 'SOP-L005', description: 'Bias assessment before deployment', branch: 'Legislative', severity: 'Blocking', active: true, sop_category: 'ethics' },
+  { id: 'SOP-L006', description: 'Data protection impact assessment', branch: 'Legislative', severity: 'Warning', active: true, sop_category: 'governance' },
+  { id: 'SOP-E001', description: 'Code review gate before merge', branch: 'Executive', severity: 'Warning', active: true, sop_category: 'engineering' },
+  { id: 'SOP-E002', description: 'Deployment approval chain required', branch: 'Executive', severity: 'Blocking', active: true, sop_category: 'lifecycle' },
+  { id: 'SOP-E003', description: 'Security scan before release', branch: 'Executive', severity: 'Warning', active: true, sop_category: 'security' },
+  { id: 'SOP-E004', description: 'Rollback plan documentation', branch: 'Executive', severity: 'Advisory', active: true, sop_category: 'lifecycle' },
+  { id: 'SOP-E005', description: 'Governance report archival', branch: 'Executive', severity: 'Advisory', active: true, sop_category: 'governance' },
+  { id: 'SOP-J001', description: 'Fairness validation on model outputs', branch: 'Judicial', severity: 'Blocking', active: true, sop_category: 'ethics' },
+  { id: 'SOP-J002', description: 'Bias metric threshold monitoring', branch: 'Judicial', severity: 'Warning', active: true, sop_category: 'ethics' },
+  { id: 'SOP-J003', description: 'Lifecycle compliance audit', branch: 'Judicial', severity: 'Warning', active: true, sop_category: 'lifecycle' },
+  { id: 'SOP-J004', description: 'CGR validation engine self-test', branch: 'Judicial', severity: 'Advisory', active: true, sop_category: 'lifecycle' },
+];
+
+const BRANCH_COLORS: Record<GovernanceBranch, string> = {
+  Legislative: 'text-blue-400',
+  Executive: 'text-amber-400',
+  Judicial: 'text-purple-400',
+};
+
+const SEVERITY_BADGES: Record<RuleSeverity, { bg: string; text: string }> = {
+  Advisory: { bg: 'bg-slate-500/20', text: 'text-slate-400' },
+  Warning: { bg: 'bg-yellow-500/20', text: 'text-yellow-400' },
+  Blocking: { bg: 'bg-red-500/20', text: 'text-red-400' },
+  Critical: { bg: 'bg-red-700/20', text: 'text-red-300' },
+};
+
+const DECISION_COLORS: Record<GovernanceDecision, string> = {
+  Permit: 'text-green-400',
+  PermitWithWarning: 'text-yellow-400',
+  EscalateToHuman: 'text-orange-400',
+  Deny: 'text-red-400',
+};
+
+const AGENT_TYPE_LABELS: Record<AgentType, string> = {
+  coder: 'Coder',
+  reviewer: 'Reviewer',
+  researcher: 'Researcher',
+  planner: 'Planner',
+  tester: 'Tester',
+};
+
+let nextPid = 100;
+let nextAgentSeq = 0;
 
 // ---------------------------------------------------------------------------
 // Chain log (ExoChain-style audit trail)
@@ -548,6 +792,12 @@ export default function WasmSandbox() {
   const [streamingMessage, setStreamingMessage] = useState('');
   const [showKBGraph, setShowKBGraph] = useState(true);
   const [chain, setChain] = useState<ChainEntry[]>([]);
+  const [rightTab, setRightTab] = useState<RightPanelTab>('chain');
+  const [govEvents, setGovEvents] = useState<GovernanceEvent[]>([]);
+  const [agents, setAgents] = useState<MockAgent[]>([]);
+  const [spawnType, setSpawnType] = useState<AgentType>('coder');
+  const [repoUrl, setRepoUrl] = useState('');
+  const [assessing, setAssessing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chainScrollRef = useRef<HTMLDivElement>(null);
   const wasmRef = useRef<any>(null);
@@ -556,6 +806,289 @@ export default function WasmSandbox() {
   const log = useCallback((op: string, detail: string) => {
     setChain((prev) => chainAppend(prev, op, detail));
   }, []);
+
+  // --- Feature 1: Persist conversation to IndexedDB on change ---
+  useEffect(() => {
+    if (messages.length > 0) {
+      const sessionMsgs: SessionMessage[] = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        ts: Date.now(),
+      }));
+      saveConversation(sessionMsgs).catch(() => {});
+    }
+  }, [messages]);
+
+  // --- Feature 1: Load preferences and conversation on mount ---
+  useEffect(() => {
+    const prefs = loadPreferences();
+    if (prefs.model) setModel(prefs.model);
+    if (prefs.kbGraphExpanded !== undefined) setShowKBGraph(prefs.kbGraphExpanded);
+
+    loadConversation().then((saved) => {
+      if (saved.length > 0) {
+        setMessages(saved.map((m) => ({ role: m.role, content: m.content })));
+      }
+    }).catch(() => {});
+  }, []);
+
+  // --- Feature 1: Save preferences when relevant state changes ---
+  const savePrefsDebounced = useCallback((partial: Partial<UserPreferences>) => {
+    savePreferences(partial);
+  }, []);
+
+  // --- Feature 2: Assess a GitHub repo ---
+  const handleAssessRepo = useCallback(async () => {
+    const url = repoUrl.trim();
+    if (!url || assessing) return;
+
+    const parsed = parseGitHubUrl(url);
+    if (!parsed) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'system', content: 'Invalid GitHub URL. Use format: github.com/owner/repo' },
+      ]);
+      return;
+    }
+
+    setAssessing(true);
+    const { owner, repo } = parsed;
+    log('GITHUB_FETCH', `Fetching repo tree for ${owner}/${repo}`);
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: `Assess repo: ${owner}/${repo}` },
+    ]);
+
+    try {
+      // Step 1: Fetch tree
+      const tree = await fetchRepoTree(owner, repo);
+      log('TREE_SCAN', `${tree.length} entries in tree`);
+
+      // Step 2: Fetch key files
+      const files = await fetchRepoFiles(owner, repo, tree, (fetched, total) => {
+        if (fetched % 5 === 0 || fetched === total) {
+          log('GITHUB_FETCH', `Fetched ${fetched}/${total} files`);
+        }
+      });
+      log('GITHUB_FETCH', `Fetched ${files.length} files for analysis`);
+
+      // Step 3: Run WASM analysis
+      log('ANALYZE', `Running analyze_files on ${files.length} files`);
+      let analysisResult: string;
+      if (wasmRef.current?.analyze_files) {
+        const input = JSON.stringify(files.map((f) => ({ path: f.path, content: f.content })));
+        analysisResult = wasmRef.current.analyze_files(input);
+      } else {
+        // Fallback: try loading WASM just for analysis
+        try {
+          const wasm = await loadWasm();
+          analysisResult = wasm.analyze_files(
+            JSON.stringify(files.map((f) => ({ path: f.path, content: f.content }))),
+          );
+        } catch {
+          analysisResult = JSON.stringify({
+            error: 'WASM not available. Load the WASM module first or connect an LLM.',
+          });
+        }
+      }
+
+      const result = JSON.parse(analysisResult);
+      log('FINDINGS', `Analysis complete: ${result.findings?.length ?? 0} findings`);
+
+      // Step 4: Format and display results
+      if (result.error) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `Assessment error: ${result.error}` },
+        ]);
+      } else {
+        const summary = result.summary;
+        const findings = result.findings ?? [];
+
+        // Build language breakdown
+        const langLines = (summary.languages ?? [])
+          .slice(0, 10)
+          .map((l: { language: string; files: number; lines: number }) =>
+            `  ${l.language}: ${l.files} files, ${l.lines.toLocaleString()} lines`,
+          )
+          .join('\n');
+
+        // Group findings by category
+        const byCat: Record<string, typeof findings> = {};
+        for (const f of findings) {
+          (byCat[f.category] ??= []).push(f);
+        }
+
+        const findingLines = Object.entries(byCat)
+          .map(([cat, items]) => {
+            const header = `### ${cat.charAt(0).toUpperCase() + cat.slice(1)} (${items.length})`;
+            const details = items
+              .slice(0, 15)
+              .map((f: { severity: string; file: string; line?: number; message: string }) => {
+                const loc = f.line ? `:${f.line}` : '';
+                const sev = f.severity === 'error' ? '**ERROR**' : f.severity === 'warning' ? '**WARN**' : 'info';
+                return `- [${sev}] \`${f.file}${loc}\`: ${f.message}`;
+              })
+              .join('\n');
+            const extra = items.length > 15 ? `\n- ... and ${items.length - 15} more` : '';
+            return `${header}\n${details}${extra}`;
+          })
+          .join('\n\n');
+
+        const report = [
+          `## Assessment: ${owner}/${repo}`,
+          '',
+          `**Files analyzed**: ${summary.file_count}`,
+          `**Total lines**: ${summary.total_lines.toLocaleString()}`,
+          `**Findings**: ${findings.length}`,
+          '',
+          '### Language Breakdown',
+          '```',
+          langLines,
+          '```',
+          '',
+          findingLines || '*No findings.*',
+        ].join('\n');
+
+        setMessages((prev) => [...prev, { role: 'assistant', content: report }]);
+
+        // Persist assessment to IndexedDB
+        const assessmentRecord: AssessmentResult = {
+          id: `${owner}-${repo}-${Date.now()}`,
+          repoUrl: `https://github.com/${owner}/${repo}`,
+          timestamp: Date.now(),
+          summary: summary,
+          findings: findings,
+        };
+        saveAssessment(assessmentRecord).catch(() => {});
+      }
+    } catch (e: any) {
+      log('ERROR', `Assessment failed: ${e.message || e}`);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `Assessment failed: ${e.message || e}` },
+      ]);
+    } finally {
+      setAssessing(false);
+      setRepoUrl('');
+    }
+  }, [repoUrl, assessing, log]);
+
+  /** Simulate a governance evaluation and log results to both panels. */
+  const evaluateGovernance = useCallback(
+    (agent_id: string, action: string): GovernanceDecision => {
+      // Simulate effect vector magnitude
+      const magnitude = Math.random() * 1.2;
+      const threshold = 0.7;
+
+      // Pick a relevant rule based on action
+      const relevantRules = GENESIS_RULES.filter((r) => r.active);
+      const rule = relevantRules[Math.floor(Math.random() * relevantRules.length)];
+
+      let decision: GovernanceDecision;
+      if (magnitude > threshold && (rule.severity === 'Blocking' || rule.severity === 'Critical')) {
+        decision = 'Deny';
+      } else if (magnitude > threshold && rule.severity === 'Warning') {
+        decision = 'PermitWithWarning';
+      } else if (magnitude > 0.9) {
+        decision = 'EscalateToHuman';
+      } else {
+        decision = 'Permit';
+      }
+
+      const detail =
+        decision === 'Permit'
+          ? `${action} by ${agent_id} — magnitude ${magnitude.toFixed(2)} < ${threshold}`
+          : decision === 'Deny'
+            ? `${action} by ${agent_id} — rule ${rule.id}: magnitude ${magnitude.toFixed(2)} > ${threshold}`
+            : `${action} by ${agent_id} — rule ${rule.id}: magnitude ${magnitude.toFixed(2)}`;
+
+      const evt: GovernanceEvent = {
+        ts: Date.now(),
+        agent_id,
+        action,
+        decision,
+        rule_id: rule.id,
+        effect_magnitude: magnitude,
+        detail,
+      };
+
+      setGovEvents((prev) => [...prev, evt]);
+
+      // Log to chain
+      const chainOp =
+        decision === 'Permit' ? 'GOV_PERMIT' :
+        decision === 'PermitWithWarning' ? 'GOV_WARN' :
+        decision === 'Deny' ? 'GOV_DENY' : 'GOV_DEFER';
+      log(chainOp, detail);
+
+      return decision;
+    },
+    [log],
+  );
+
+  /** Spawn a mock agent with governance check. */
+  const handleSpawnAgent = useCallback(() => {
+    const agentId = `agent-${nextAgentSeq++}`;
+    const pid = nextPid++;
+
+    log('AGENT_SPAWN', `Requesting spawn: ${spawnType} (${agentId})`);
+    log('GOV_EVAL', `Evaluating agent.spawn for ${agentId}`);
+
+    const decision = evaluateGovernance(agentId, 'agent.spawn');
+
+    if (decision === 'Deny') {
+      log('AGENT_LIFECYCLE', `Spawn denied for ${agentId}`);
+      return;
+    }
+
+    const agent: MockAgent = {
+      id: agentId,
+      name: `${AGENT_TYPE_LABELS[spawnType]} ${pid}`,
+      agent_type: spawnType,
+      state: 'spawning',
+      pid,
+      spawned_at: Date.now(),
+    };
+
+    setAgents((prev) => [...prev, agent]);
+    log('AGENT_LIFECYCLE', `${agentId} state: spawning (PID ${pid})`);
+
+    // Simulate spawn delay then transition to running
+    setTimeout(() => {
+      setAgents((prev) =>
+        prev.map((a) => (a.id === agentId ? { ...a, state: 'running' } : a)),
+      );
+      log('AGENT_READY', `${agentId} state: running (PID ${pid})`);
+
+      // Simulate periodic governance checks for running agents
+      const interval = setInterval(() => {
+        setAgents((prev) => {
+          const a = prev.find((x) => x.id === agentId);
+          if (!a || a.state !== 'running') {
+            clearInterval(interval);
+            return prev;
+          }
+          return prev;
+        });
+      }, 5000);
+    }, 1200 + Math.random() * 800);
+  }, [spawnType, evaluateGovernance, log]);
+
+  /** Stop a running agent. */
+  const handleStopAgent = useCallback(
+    (agentId: string) => {
+      log('AGENT_STOP', `Stopping ${agentId}`);
+      log('GOV_EVAL', `Evaluating agent.stop for ${agentId}`);
+      evaluateGovernance(agentId, 'agent.stop');
+
+      setAgents((prev) =>
+        prev.map((a) => (a.id === agentId ? { ...a, state: 'stopped' } : a)),
+      );
+      log('AGENT_LIFECYCLE', `${agentId} state: stopped`);
+    },
+    [evaluateGovernance, log],
+  );
 
   // Scroll to bottom on new messages / chain entries
   useEffect(() => {
@@ -608,6 +1141,7 @@ export default function WasmSandbox() {
     setMessages([]);
     setInput('');
     setSending(false);
+    clearConversation().catch(() => {});
     // Reset WASM conversation history — reinitialize
     wasmModule = null;
     wasmRef.current = null;
@@ -624,13 +1158,33 @@ export default function WasmSandbox() {
 
     (async () => {
       try {
-        // Boot sequence — mirrors kernel BootPhase (INIT → CONFIG → SERVICES → READY)
-        log('BOOT_INIT', 'WeftOS v0.4.3 booting...');
-        log('BOOT_INIT', 'PID 0 (kernel)');
-        log('BOOT_CONFIG', 'Platform: wasm32-browser');
-        log('BOOT_CONFIG', 'Max processes: 64');
-        log('BOOT_SERVICES', 'Service registry ready');
-        log('BOOT_SERVICES', 'IPC subsystem ready');
+        // Boot sequence — fetch real phases from WASM boot_info() when available,
+        // otherwise fall back to hardcoded entries.
+        let bootPhases: Array<{ phase: string; detail: string }> | null = null;
+        try {
+          const wasm = await loadWasm();
+          wasmRef.current = wasm;
+          if (typeof wasm.boot_info === 'function') {
+            bootPhases = JSON.parse(wasm.boot_info());
+          }
+        } catch {
+          // WASM may not be available yet — that is fine, we fall back
+        }
+
+        if (bootPhases && bootPhases.length > 0) {
+          for (const bp of bootPhases) {
+            log(`BOOT_${bp.phase}`, bp.detail);
+          }
+        } else {
+          log('BOOT_INIT', 'WeftOS booting...');
+          log('BOOT_INIT', 'PID 0 (kernel)');
+          log('BOOT_CONFIG', 'Platform: wasm32-browser');
+          log('BOOT_CONFIG', 'Max processes: 64');
+          log('BOOT_SERVICES', 'Service registry ready');
+          log('BOOT_SERVICES', 'IPC subsystem ready');
+        }
+        log('GOV_GENESIS', `Constitutional governance loaded: ${GENESIS_RULES.length} rules (3 branches)`);
+        log('GOV_GENESIS', `Risk threshold: 0.70, environment: Development`);
 
         log('KB_FETCH', 'Loading RVF knowledge base...');
         const kb = await loadKB();
@@ -683,6 +1237,7 @@ export default function WasmSandbox() {
     try {
       localStorage.setItem('clawft-api-key', apiKey);
       localStorage.setItem('clawft-model', model);
+      savePrefsDebounced({ model });
       await initWasm(apiKey, model);
       setMode('llm');
       setShowLlmSetup(false);
@@ -1119,6 +1674,24 @@ export default function WasmSandbox() {
                   Send
                 </button>
               </div>
+              {/* Assess Repo input row */}
+              <div className="mx-auto flex max-w-2xl gap-2 mt-2">
+                <input
+                  type="text"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAssessRepo()}
+                  placeholder="github.com/owner/repo"
+                  className="flex-1 rounded-lg border border-fd-border bg-fd-background px-3 py-1.5 text-xs text-fd-foreground placeholder:text-fd-muted-foreground focus:border-fd-primary focus:outline-none"
+                />
+                <button
+                  onClick={handleAssessRepo}
+                  disabled={!repoUrl.trim() || assessing}
+                  className="rounded-lg border border-fd-border bg-fd-accent px-3 py-1.5 text-xs font-medium text-fd-muted-foreground hover:text-fd-foreground hover:bg-fd-border transition-colors disabled:opacity-50"
+                >
+                  {assessing ? 'Assessing...' : 'Assess Repo'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1152,33 +1725,72 @@ export default function WasmSandbox() {
             </div>
           )}
 
-          {/* Right: Chain Log */}
+          {/* Right: Tabbed Panel (Chain / Governance / Agents) */}
           <div className="hidden w-80 flex-shrink-0 border-l border-fd-border lg:flex lg:flex-col">
-            <div className="flex items-center justify-between border-b border-fd-border px-3 py-2">
-              <span className="text-xs font-semibold text-fd-foreground">ExoChain Log</span>
-              <span className="text-[10px] text-fd-muted-foreground font-mono">
-                {chain.length} entries
-              </span>
-            </div>
-            <div ref={chainScrollRef} className="flex-1 overflow-y-auto">
-              {chain.map((entry, i) => (
-                <ChainRow key={i} entry={entry} index={i} />
+            {/* Tab bar */}
+            <div className="flex border-b border-fd-border">
+              {([
+                { key: 'chain' as RightPanelTab, label: 'ExoChain', count: chain.length },
+                { key: 'governance' as RightPanelTab, label: 'Governance', count: govEvents.length },
+                { key: 'agents' as RightPanelTab, label: 'Agents', count: agents.filter((a) => a.state === 'running').length },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setRightTab(tab.key)}
+                  className={`flex-1 px-2 py-2 text-[10px] font-semibold transition-colors ${
+                    rightTab === tab.key
+                      ? 'text-fd-foreground border-b-2 border-fd-primary'
+                      : 'text-fd-muted-foreground hover:text-fd-foreground'
+                  }`}
+                >
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span className="ml-1 text-fd-muted-foreground/60">{tab.count}</span>
+                  )}
+                </button>
               ))}
-              {chain.length === 0 && (
-                <div className="p-3 text-xs text-fd-muted-foreground text-center">
-                  Chain events will appear here as the sandbox operates.
-                </div>
-              )}
             </div>
-            {chain.length > 0 && (
-              <div className="border-t border-fd-border px-3 py-2 bg-fd-accent/20">
-                <div className="font-mono text-[10px] text-fd-muted-foreground leading-relaxed">
-                  <span className="text-fd-muted-foreground/60">WITNESS</span>{' '}
-                  Chain: {chain.length} {chain.length === 1 ? 'entry' : 'entries'}, hash:{' '}
-                  <span className="text-fd-foreground/70">{chain[chain.length - 1].hash}</span>{' '}
-                  <span className="text-green-400">(verified)</span>
+
+            {/* Chain tab */}
+            {rightTab === 'chain' && (
+              <>
+                <div ref={chainScrollRef} className="flex-1 overflow-y-auto">
+                  {chain.map((entry, i) => (
+                    <ChainRow key={i} entry={entry} index={i} />
+                  ))}
+                  {chain.length === 0 && (
+                    <div className="p-3 text-xs text-fd-muted-foreground text-center">
+                      Chain events will appear here as the sandbox operates.
+                    </div>
+                  )}
                 </div>
-              </div>
+                {chain.length > 0 && (
+                  <div className="border-t border-fd-border px-3 py-2 bg-fd-accent/20">
+                    <div className="font-mono text-[10px] text-fd-muted-foreground leading-relaxed">
+                      <span className="text-fd-muted-foreground/60">WITNESS</span>{' '}
+                      Chain: {chain.length} {chain.length === 1 ? 'entry' : 'entries'}, hash:{' '}
+                      <span className="text-fd-foreground/70">{chain[chain.length - 1].hash}</span>{' '}
+                      <span className="text-green-400">(verified)</span>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Governance tab */}
+            {rightTab === 'governance' && (
+              <GovernancePanel rules={GENESIS_RULES} events={govEvents} />
+            )}
+
+            {/* Agents tab */}
+            {rightTab === 'agents' && (
+              <AgentsPanel
+                agents={agents}
+                spawnType={spawnType}
+                onSpawnTypeChange={setSpawnType}
+                onSpawn={handleSpawnAgent}
+                onStop={handleStopAgent}
+              />
             )}
           </div>
         </div>
@@ -1481,10 +2093,303 @@ const OP_COLORS: Record<string, string> = {
   WASM_READY: 'text-orange-400',
   // Misc
   INTROSPECT: 'text-pink-400',
+  // Assessment / GitHub
+  GITHUB_FETCH: 'text-sky-400',
+  TREE_SCAN: 'text-sky-400',
+  ANALYZE: 'text-teal-400',
+  FINDINGS: 'text-teal-400',
   MODE_SET: 'text-fd-muted-foreground',
   KEY_FOUND: 'text-fd-muted-foreground',
   ERROR: 'text-red-400',
+  // Governance events
+  GOV_GENESIS: 'text-indigo-400',
+  GOV_PERMIT: 'text-green-400',
+  GOV_WARN: 'text-yellow-400',
+  GOV_DENY: 'text-red-400',
+  GOV_DEFER: 'text-orange-400',
+  GOV_EVAL: 'text-indigo-300',
+  // Agent lifecycle events
+  AGENT_SPAWN: 'text-teal-400',
+  AGENT_READY: 'text-teal-300',
+  AGENT_STOP: 'text-rose-400',
+  AGENT_LIFECYCLE: 'text-teal-400',
 };
+
+// ---------------------------------------------------------------------------
+// Governance Panel
+// ---------------------------------------------------------------------------
+
+function GovernancePanel({
+  rules,
+  events,
+}: {
+  rules: GovernanceRule[];
+  events: GovernanceEvent[];
+}) {
+  const [showRules, setShowRules] = useState(true);
+  const eventsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [events]);
+
+  const branchCounts = useMemo(() => {
+    const counts: Record<GovernanceBranch, { total: number; blocking: number; warning: number; advisory: number }> = {
+      Legislative: { total: 0, blocking: 0, warning: 0, advisory: 0 },
+      Executive: { total: 0, blocking: 0, warning: 0, advisory: 0 },
+      Judicial: { total: 0, blocking: 0, warning: 0, advisory: 0 },
+    };
+    for (const r of rules) {
+      const b = counts[r.branch];
+      b.total++;
+      if (r.severity === 'Blocking' || r.severity === 'Critical') b.blocking++;
+      else if (r.severity === 'Warning') b.warning++;
+      else b.advisory++;
+    }
+    return counts;
+  }, [rules]);
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Three-branch overview */}
+      <div className="border-b border-fd-border px-3 py-2">
+        <div className="text-[10px] font-semibold text-fd-muted-foreground/60 uppercase tracking-wider mb-1.5">
+          Constitution (3-Branch Model)
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(Object.entries(branchCounts) as [GovernanceBranch, typeof branchCounts.Legislative][]).map(
+            ([branch, counts]) => (
+              <div
+                key={branch}
+                className="rounded-md border border-fd-border/50 bg-fd-accent/20 px-2 py-1.5 text-center"
+              >
+                <div className={`text-[10px] font-bold ${BRANCH_COLORS[branch]}`}>
+                  {branch.slice(0, 3).toUpperCase()}
+                </div>
+                <div className="text-[10px] text-fd-muted-foreground mt-0.5">
+                  <span className="text-red-400">{counts.blocking}</span>
+                  {' / '}
+                  <span className="text-yellow-400">{counts.warning}</span>
+                  {' / '}
+                  <span className="text-slate-400">{counts.advisory}</span>
+                </div>
+              </div>
+            ),
+          )}
+        </div>
+        <div className="mt-1 text-[9px] text-fd-muted-foreground/50 text-center">
+          blocking / warning / advisory
+        </div>
+      </div>
+
+      {/* Toggle rules list */}
+      <div className="border-b border-fd-border">
+        <button
+          onClick={() => setShowRules((v) => !v)}
+          className="w-full px-3 py-1.5 text-left text-[10px] text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+        >
+          {showRules ? 'Hide' : 'Show'} {rules.length} genesis rules
+        </button>
+        {showRules && (
+          <div className="max-h-32 overflow-y-auto px-3 pb-2">
+            {rules.map((rule) => (
+              <div
+                key={rule.id}
+                className="flex items-center gap-1.5 py-0.5 text-[10px] font-mono"
+              >
+                <span className={BRANCH_COLORS[rule.branch]}>{rule.id}</span>
+                <span
+                  className={`rounded px-1 py-0 ${SEVERITY_BADGES[rule.severity].bg} ${SEVERITY_BADGES[rule.severity].text}`}
+                >
+                  {rule.severity.slice(0, 4).toLowerCase()}
+                </span>
+                <span className="text-fd-muted-foreground truncate">
+                  {rule.description}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Live governance feed */}
+      <div className="px-3 py-1.5 border-b border-fd-border">
+        <span className="text-[10px] font-semibold text-fd-muted-foreground/60 uppercase tracking-wider">
+          Live Decisions
+        </span>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {events.length === 0 && (
+          <div className="p-3 text-xs text-fd-muted-foreground text-center">
+            Governance decisions appear here when agents perform actions.
+            <br />
+            Try spawning an agent in the Agents tab.
+          </div>
+        )}
+        {events.map((evt, i) => (
+          <div
+            key={i}
+            className="border-b border-fd-border/50 px-3 py-1.5 font-mono text-[11px] leading-tight hover:bg-fd-accent/30 transition-colors"
+          >
+            <div className="flex items-baseline gap-1.5">
+              <span className={`font-semibold ${DECISION_COLORS[evt.decision]}`}>
+                {evt.decision === 'PermitWithWarning' ? 'WARN' : evt.decision.toUpperCase()}
+              </span>
+              <span className="text-fd-muted-foreground">{evt.action}</span>
+            </div>
+            <div className="text-fd-muted-foreground/70 mt-0.5">
+              agent={evt.agent_id} rule={evt.rule_id} mag={evt.effect_magnitude.toFixed(2)}
+            </div>
+          </div>
+        ))}
+        <div ref={eventsEndRef} />
+      </div>
+
+      {/* Effect vector legend */}
+      <div className="border-t border-fd-border px-3 py-2 bg-fd-accent/20">
+        <div className="text-[9px] text-fd-muted-foreground/60 font-mono">
+          EffectVector: risk + fairness + privacy + novelty + security
+        </div>
+        <div className="text-[9px] text-fd-muted-foreground/60 font-mono">
+          Threshold: 0.70 (Development) | {rules.length} rules active
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Agents Panel
+// ---------------------------------------------------------------------------
+
+function AgentsPanel({
+  agents,
+  spawnType,
+  onSpawnTypeChange,
+  onSpawn,
+  onStop,
+}: {
+  agents: MockAgent[];
+  spawnType: AgentType;
+  onSpawnTypeChange: (t: AgentType) => void;
+  onSpawn: () => void;
+  onStop: (id: string) => void;
+}) {
+  const running = agents.filter((a) => a.state === 'running').length;
+  const spawning = agents.filter((a) => a.state === 'spawning').length;
+  const stopped = agents.filter((a) => a.state === 'stopped').length;
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Spawn controls */}
+      <div className="border-b border-fd-border px-3 py-2.5">
+        <div className="text-[10px] font-semibold text-fd-muted-foreground/60 uppercase tracking-wider mb-2">
+          Spawn Agent
+        </div>
+        <div className="flex gap-1.5 mb-2">
+          {(Object.keys(AGENT_TYPE_LABELS) as AgentType[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => onSpawnTypeChange(t)}
+              className={`rounded px-2 py-1 text-[10px] font-mono transition-colors ${
+                spawnType === t
+                  ? 'bg-fd-primary text-fd-primary-foreground'
+                  : 'bg-fd-accent text-fd-muted-foreground hover:text-fd-foreground'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={onSpawn}
+          disabled={agents.filter((a) => a.state !== 'stopped').length >= 8}
+          className="w-full rounded-md bg-teal-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Spawn {AGENT_TYPE_LABELS[spawnType]}
+          {agents.filter((a) => a.state !== 'stopped').length >= 8 && ' (max 8)'}
+        </button>
+      </div>
+
+      {/* Stats bar */}
+      <div className="flex items-center gap-3 border-b border-fd-border px-3 py-1.5 text-[10px] font-mono text-fd-muted-foreground">
+        <span className="text-green-400">{running} running</span>
+        <span className="text-yellow-400">{spawning} spawning</span>
+        <span className="text-fd-muted-foreground/50">{stopped} stopped</span>
+      </div>
+
+      {/* Agent list */}
+      <div className="flex-1 overflow-y-auto">
+        {agents.length === 0 && (
+          <div className="p-3 text-xs text-fd-muted-foreground text-center">
+            No agents spawned yet.
+            <br />
+            Select a type above and click Spawn.
+          </div>
+        )}
+        {[...agents].reverse().map((agent) => (
+          <div
+            key={agent.id}
+            className="border-b border-fd-border/50 px-3 py-2 hover:bg-fd-accent/30 transition-colors"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    agent.state === 'running'
+                      ? 'bg-green-400'
+                      : agent.state === 'spawning'
+                        ? 'bg-yellow-400 animate-pulse'
+                        : 'bg-fd-muted-foreground/30'
+                  }`}
+                />
+                <span className="text-[11px] font-semibold text-fd-foreground">
+                  {agent.name}
+                </span>
+              </div>
+              {agent.state === 'running' && (
+                <button
+                  onClick={() => onStop(agent.id)}
+                  className="rounded px-1.5 py-0.5 text-[9px] font-mono text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  stop
+                </button>
+              )}
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 text-[10px] font-mono text-fd-muted-foreground/70">
+              <span>PID {agent.pid}</span>
+              <span className="text-fd-border">|</span>
+              <span>{agent.agent_type}</span>
+              <span className="text-fd-border">|</span>
+              <span
+                className={
+                  agent.state === 'running'
+                    ? 'text-green-400'
+                    : agent.state === 'spawning'
+                      ? 'text-yellow-400'
+                      : 'text-fd-muted-foreground/40'
+                }
+              >
+                {agent.state}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-fd-border px-3 py-2 bg-fd-accent/20">
+        <div className="text-[9px] text-fd-muted-foreground/60 font-mono">
+          Max agents: 8 | Governance: every action gated | PID range: 100+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chain Row
+// ---------------------------------------------------------------------------
 
 function ChainRow({ entry, index }: { entry: ChainEntry; index: number }) {
   const time = new Date(entry.ts);

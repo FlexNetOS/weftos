@@ -103,9 +103,14 @@ async fn get_tool_schema(
     Json(state.tools.tool_schema(&name))
 }
 
-async fn create_token(State(state): State<ApiState>) -> Json<serde_json::Value> {
-    let token = state.auth.generate_token(86400); // 24h TTL
-    Json(serde_json::json!({ "token": token }))
+async fn create_token(
+    State(state): State<ApiState>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let token = state
+        .auth
+        .generate_token(86400) // 24h TTL
+        .ok_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "token": token })))
 }
 
 /// Server start time, set once at process start.

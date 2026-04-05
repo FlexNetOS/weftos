@@ -36,6 +36,8 @@ pub enum FrameType {
     ArtifactResponse = 0x0C,
     /// Log aggregation (K6-G2).
     LogAggregation = 0x0D,
+    /// Assessment sync (K6.6 -- cross-project assessment mesh).
+    AssessmentSync = 0x0E,
 }
 
 impl FrameType {
@@ -56,6 +58,7 @@ impl FrameType {
             0x0B => Some(Self::ArtifactRequest),
             0x0C => Some(Self::ArtifactResponse),
             0x0D => Some(Self::LogAggregation),
+            0x0E => Some(Self::AssessmentSync),
             _ => None,
         }
     }
@@ -149,6 +152,7 @@ mod tests {
             (0x0B, FrameType::ArtifactRequest),
             (0x0C, FrameType::ArtifactResponse),
             (0x0D, FrameType::LogAggregation),
+            (0x0E, FrameType::AssessmentSync),
         ];
         for (byte, variant) in expected {
             assert_eq!(FrameType::from_byte(byte), Some(variant));
@@ -158,7 +162,7 @@ mod tests {
     #[test]
     fn frame_type_from_byte_unknown() {
         assert!(FrameType::from_byte(0x00).is_none());
-        assert!(FrameType::from_byte(0x0E).is_none());
+        assert!(FrameType::from_byte(0x0F).is_none());
         assert!(FrameType::from_byte(0xFF).is_none());
     }
 
@@ -241,6 +245,7 @@ mod tests {
             FrameType::ArtifactRequest,
             FrameType::ArtifactResponse,
             FrameType::LogAggregation,
+            FrameType::AssessmentSync,
         ];
         for ft in types {
             let frame = MeshFrame {

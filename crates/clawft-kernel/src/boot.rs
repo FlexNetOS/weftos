@@ -1677,16 +1677,16 @@ mod tests {
             .await
             .unwrap();
 
-        // cron + containers + cluster registered at boot; + hnsw + cognitive_tick with ecc
+        // Base: cron + containers; +cluster; +hnsw +cognitive_tick (ecc); +assess (native)
         let count = kernel.services().len();
         #[cfg(all(feature = "ecc", feature = "cluster"))]
-        assert_eq!(count, 5, "expected cron+containers+cluster+hnsw+cognitive_tick");
+        assert_eq!(count, 6, "expected cron+containers+assess+cluster+hnsw+cognitive_tick");
         #[cfg(all(feature = "ecc", not(feature = "cluster")))]
-        assert_eq!(count, 4, "expected cron+containers+hnsw+cognitive_tick");
+        assert_eq!(count, 5, "expected cron+containers+assess+hnsw+cognitive_tick");
         #[cfg(all(not(feature = "ecc"), feature = "cluster"))]
-        assert_eq!(count, 3, "expected cron+containers+cluster");
+        assert_eq!(count, 4, "expected cron+containers+assess+cluster");
         #[cfg(all(not(feature = "ecc"), not(feature = "cluster")))]
-        assert_eq!(count, 2, "expected cron+containers");
+        assert_eq!(count, 3, "expected cron+containers+assess");
     }
 
     #[tokio::test]

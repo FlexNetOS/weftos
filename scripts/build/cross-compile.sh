@@ -6,7 +6,7 @@
 #   ./scripts/build/cross-compile.sh x86_64-unknown-linux-musl --use-cross
 #   ./scripts/build/cross-compile.sh aarch64-apple-darwin
 #   ./scripts/build/cross-compile.sh x86_64-pc-windows-msvc
-#   ./scripts/build/cross-compile.sh wasm32-wasip1
+#   ./scripts/build/cross-compile.sh wasm32-wasip2
 
 set -euo pipefail
 
@@ -42,7 +42,7 @@ Examples:
   cross-compile.sh x86_64-unknown-linux-musl --use-cross
   cross-compile.sh aarch64-apple-darwin
   cross-compile.sh x86_64-pc-windows-msvc
-  cross-compile.sh wasm32-wasip1
+  cross-compile.sh wasm32-wasip2
 EOF
     exit 0
 }
@@ -139,7 +139,7 @@ info "Running: $BUILD_CMD build ${BUILD_ARGS[*]}"
 if [ "$IS_WASM" = true ]; then
     # WASM output path
     BINARY_PATH="$WORKSPACE_ROOT/target/$TARGET/release-wasm/$BINARY_NAME"
-    # Also check the wasm32-wasip1 alternate output layout
+    # Also check the wasm32-wasip2 alternate output layout
     if [ ! -f "$BINARY_PATH" ]; then
         BINARY_PATH="$WORKSPACE_ROOT/target/$TARGET/release-wasm/clawft-wasm.wasm"
     fi

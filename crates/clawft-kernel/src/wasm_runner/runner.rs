@@ -259,7 +259,7 @@ impl WasmToolRunner {
         wasm_bytes: &[u8],
         input: serde_json::Value,
     ) -> Result<WasmToolResult, WasmError> {
-        use wasmtime_wasi::pipe::{MemoryInputPipe, MemoryOutputPipe};
+        use wasmtime_wasi::p2::pipe::{MemoryInputPipe, MemoryOutputPipe};
 
         let started = std::time::Instant::now();
 
@@ -273,7 +273,7 @@ impl WasmToolRunner {
         let stdin_pipe = MemoryInputPipe::new(input_bytes);
 
         // Build WASI preview1 context with stdio pipes
-        let wasi_ctx = wasmtime_wasi::WasiCtxBuilder::new()
+        let wasi_ctx = wasmtime_wasi::p2::WasiCtxBuilder::new()
             .stdin(stdin_pipe)
             .stdout(stdout_pipe.clone())
             .stderr(stderr_pipe.clone())

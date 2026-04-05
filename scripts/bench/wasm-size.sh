@@ -2,11 +2,11 @@
 # Profile WASM binary size with section breakdown
 set -euo pipefail
 
-WASM_FILE="${1:-target/wasm32-wasip1/release/clawft_wasm.wasm}"
+WASM_FILE="${1:-target/wasm32-wasip2/release/clawft_wasm.wasm}"
 
 if [ ! -f "$WASM_FILE" ]; then
     echo "WASM file not found: $WASM_FILE"
-    echo "Build with: cargo build --target wasm32-wasip1 --release -p clawft-wasm"
+    echo "Build with: cargo build --target wasm32-wasip2 --release -p clawft-wasm"
     exit 1
 fi
 

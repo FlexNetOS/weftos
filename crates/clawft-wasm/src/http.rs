@@ -6,7 +6,7 @@
 //! real network calls using the `wasi:http/outgoing-handler` interface.
 //!
 //! This module is fully decoupled from `clawft-platform` so it can compile for
-//! `wasm32-wasip1` without pulling in tokio or reqwest.
+//! `wasm32-wasip2` without pulling in tokio or reqwest.
 
 use std::collections::HashMap;
 

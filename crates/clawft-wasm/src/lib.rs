@@ -9,7 +9,7 @@
 //!
 //! # Platform Support
 //!
-//! The WASM build targets `wasm32-wasip1` and uses WASI preview 1 for:
+//! The WASM build targets `wasm32-wasip2` and uses WASI preview 1 for:
 //! - HTTP outbound (LLM API calls)
 //! - Filesystem (config, sessions)
 //! - Environment variables
@@ -105,7 +105,7 @@ pub fn process_message(input: &str) -> String {
 pub fn capabilities() -> String {
     serde_json::json!({
         "version": VERSION,
-        "platform": "wasm32-wasip1",
+        "platform": "wasm32-wasip2",
         "tools": ["read_file", "write_file", "edit_file", "list_directory", "memory_read", "memory_write", "web_fetch", "web_search"],
         "excluded_tools": ["exec_shell", "spawn", "message"],
         "channels": [],
@@ -353,6 +353,395 @@ mod browser_entry {
     pub fn set_env(_key: &str, _value: &str) {
         // Browser env vars are managed by BrowserPlatform.env()
     }
+
+    // -------------------------------------------------------------------
+    // Boot info (Feature 3)
+    // -------------------------------------------------------------------
+
+    /// Return a JSON array of boot phases mirroring the native kernel BootLog.
+    ///
+    /// Called once after WASM loads to feed real boot data into the ExoChain
+    /// log instead of hardcoded entries on the TypeScript side.
+    #[wasm_bindgen]
+    pub fn boot_info() -> String {
+        let phases = serde_json::json!([
+            {"phase": "INIT", "detail": format!("WeftOS v{} booting...", crate::VERSION)},
+            {"phase": "INIT", "detail": "PID 0 (kernel)"},
+            {"phase": "CONFIG", "detail": "Platform: wasm32-browser"},
+            {"phase": "CONFIG", "detail": "Max processes: 64"},
+            {"phase": "CONFIG", "detail": "Memory model: linear (WASM)"},
+            {"phase": "SERVICES", "detail": "Service registry ready"},
+            {"phase": "SERVICES", "detail": "IPC subsystem ready"},
+            {"phase": "SERVICES", "detail": "ExoChain audit log active"},
+            {"phase": "NETWORK", "detail": "LLM transport: browser-direct CORS"},
+            {"phase": "READY", "detail": "Kernel ready — all subsystems online"}
+        ]);
+        phases.to_string()
+    }
+
+    // -------------------------------------------------------------------
+    // File analysis (Feature 2)
+    // -------------------------------------------------------------------
+
+    /// Analyze a set of files passed as a JSON array of `{path, content}` objects.
+    ///
+    /// Runs lightweight static analysis mirroring the native kernel's assessment
+    /// analyzers (ComplexityAnalyzer, SecurityAnalyzer, DependencyAnalyzer,
+    /// TopologyAnalyzer) but operating on in-memory strings rather than
+    /// filesystem paths.
+    ///
+    /// Returns a JSON object with:
+    /// - `summary`: file count, total LOC, language breakdown
+    /// - `findings`: array of `{severity, category, file, line?, message}`
+    #[wasm_bindgen]
+    pub fn analyze_files(files_json: &str) -> String {
+        #[derive(serde::Deserialize)]
+        struct InputFile {
+            path: String,
+            content: String,
+        }
+
+        #[derive(serde::Serialize)]
+        struct Finding {
+            severity: String,
+            category: String,
+            file: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            line: Option<usize>,
+            message: String,
+        }
+
+        #[derive(serde::Serialize)]
+        struct LangStat {
+            language: String,
+            files: usize,
+            lines: usize,
+        }
+
+        #[derive(serde::Serialize)]
+        struct Summary {
+            file_count: usize,
+            total_lines: usize,
+            languages: Vec<LangStat>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct AnalysisResult {
+            summary: Summary,
+            findings: Vec<Finding>,
+        }
+
+        let files: Vec<InputFile> = match serde_json::from_str(files_json) {
+            Ok(f) => f,
+            Err(e) => {
+                return serde_json::json!({
+                    "error": format!("Failed to parse input: {e}")
+                })
+                .to_string();
+            }
+        };
+
+        let mut findings: Vec<Finding> = Vec::new();
+        let mut total_lines: usize = 0;
+        let mut lang_map: std::collections::HashMap<String, (usize, usize)> =
+            std::collections::HashMap::new();
+
+        // Secret patterns (mirrors SecurityAnalyzer)
+        let secret_patterns: &[&str] = &[
+            "api_key=", "api_key =", "apikey=", "apikey =",
+            "password=", "password =", "passwd=", "passwd =",
+            "secret=", "secret =", "token=", "token =",
+            "aws_secret", "private_key",
+        ];
+
+        for file in &files {
+            let path = &file.path;
+            let content = &file.content;
+            let line_count = content.lines().count();
+            total_lines += line_count;
+
+            // Language detection by extension
+            let ext = path.rsplit('.').next().unwrap_or("");
+            let lang = match ext {
+                "rs" => "Rust",
+                "ts" | "tsx" => "TypeScript",
+                "js" | "jsx" | "mjs" | "cjs" => "JavaScript",
+                "py" => "Python",
+                "go" => "Go",
+                "java" => "Java",
+                "c" | "h" => "C",
+                "cpp" | "cc" | "cxx" | "hpp" => "C++",
+                "rb" => "Ruby",
+                "toml" => "TOML",
+                "json" => "JSON",
+                "yaml" | "yml" => "YAML",
+                "md" | "mdx" => "Markdown",
+                "sh" | "bash" => "Shell",
+                "css" | "scss" | "less" => "CSS",
+                "html" | "htm" => "HTML",
+                "sql" => "SQL",
+                "dockerfile" | "Dockerfile" => "Dockerfile",
+                _ => {
+                    // Check filename for special cases
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    match name {
+                        n if n.starts_with("Dockerfile") => "Dockerfile",
+                        "Makefile" | "Justfile" => "Make",
+                        _ => "Other",
+                    }
+                }
+            };
+
+            let entry = lang_map.entry(lang.to_string()).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += line_count;
+
+            // --- Complexity: large files ---
+            if line_count > 500 {
+                findings.push(Finding {
+                    severity: "warning".into(),
+                    category: "size".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: format!("File has {line_count} lines (>500 limit)"),
+                });
+            }
+
+            // --- Complexity: TODO/FIXME/HACK markers ---
+            for (i, line) in content.lines().enumerate() {
+                if line.contains("TODO") || line.contains("FIXME") || line.contains("HACK") {
+                    findings.push(Finding {
+                        severity: "info".into(),
+                        category: "todo".into(),
+                        file: path.clone(),
+                        line: Some(i + 1),
+                        message: line.trim().to_string(),
+                    });
+                }
+            }
+
+            // --- Security: .env files ---
+            let file_name = path.rsplit('/').next().unwrap_or(path);
+            if file_name == ".env" || file_name.starts_with(".env.") {
+                findings.push(Finding {
+                    severity: "error".into(),
+                    category: "security".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: "Environment file should not be committed to version control"
+                        .into(),
+                });
+                continue;
+            }
+
+            // --- Security: hardcoded secrets ---
+            let is_test = path.contains("test")
+                || path.contains("spec")
+                || path.contains("fixture")
+                || path.contains("mock");
+
+            if !is_test {
+                for (i, line) in content.lines().enumerate() {
+                    let lower = line.to_lowercase();
+                    let trimmed = lower.trim();
+                    // Skip comments
+                    if trimmed.starts_with("//")
+                        || trimmed.starts_with('#')
+                        || trimmed.starts_with("/*")
+                        || trimmed.starts_with('*')
+                    {
+                        continue;
+                    }
+                    for pattern in secret_patterns {
+                        if lower.contains(pattern) {
+                            if let Some(pos) = lower.find('=') {
+                                let after = lower[pos + 1..].trim();
+                                if !after.is_empty()
+                                    && after != "\"\""
+                                    && after != "''"
+                                    && !after.starts_with("env")
+                                    && !after.starts_with("std::env")
+                                    && !after.starts_with("process.env")
+                                    && !after.starts_with("os.environ")
+                                {
+                                    findings.push(Finding {
+                                        severity: "warning".into(),
+                                        category: "security".into(),
+                                        file: path.clone(),
+                                        line: Some(i + 1),
+                                        message: format!(
+                                            "Possible hardcoded secret: {}",
+                                            pattern.trim_end_matches('=').trim()
+                                        ),
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Dependency: Cargo.toml ---
+            if file_name == "Cargo.toml" {
+                let mut in_deps = false;
+                let mut dep_count: usize = 0;
+                for line in content.lines() {
+                    let t = line.trim();
+                    if t.starts_with('[') {
+                        in_deps = t == "[dependencies]"
+                            || t == "[dev-dependencies]"
+                            || t == "[build-dependencies]"
+                            || t.starts_with("[dependencies.")
+                            || t.starts_with("[dev-dependencies.")
+                            || t.starts_with("[build-dependencies.");
+                        continue;
+                    }
+                    if in_deps && !t.is_empty() && !t.starts_with('#') {
+                        if let Some(dep_name) = t.split('=').next().map(|s| s.trim()) {
+                            if !dep_name.is_empty() {
+                                dep_count += 1;
+                            }
+                        }
+                    }
+                }
+                findings.push(Finding {
+                    severity: "info".into(),
+                    category: "dependency".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: format!("Cargo.toml has {dep_count} dependencies"),
+                });
+            }
+
+            // --- Dependency: package.json ---
+            if file_name == "package.json" {
+                // Simple JSON key counting for deps
+                let dep_count = content.matches("\"dependencies\"").count()
+                    + content.matches("\"devDependencies\"").count();
+                let pkg_deps = count_json_object_keys(content, "dependencies")
+                    + count_json_object_keys(content, "devDependencies");
+                findings.push(Finding {
+                    severity: "info".into(),
+                    category: "dependency".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: format!(
+                        "package.json: {} dependency section(s), ~{} packages",
+                        dep_count, pkg_deps
+                    ),
+                });
+            }
+
+            // --- Topology: Docker / k8s ---
+            if file_name.starts_with("Dockerfile") {
+                findings.push(Finding {
+                    severity: "info".into(),
+                    category: "topology".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: "Dockerfile detected".into(),
+                });
+                // Extract base image
+                for line in content.lines() {
+                    if line.trim().to_uppercase().starts_with("FROM ") {
+                        findings.push(Finding {
+                            severity: "info".into(),
+                            category: "topology".into(),
+                            file: path.clone(),
+                            line: None,
+                            message: format!("Base image: {}", line.trim()),
+                        });
+                        break;
+                    }
+                }
+            }
+            if file_name.starts_with("docker-compose") {
+                findings.push(Finding {
+                    severity: "info".into(),
+                    category: "topology".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: "Docker Compose file detected".into(),
+                });
+            }
+            // k8s manifests
+            if (ext == "yaml" || ext == "yml")
+                && (content.contains("apiVersion:") && content.contains("kind:"))
+            {
+                findings.push(Finding {
+                    severity: "info".into(),
+                    category: "topology".into(),
+                    file: path.clone(),
+                    line: None,
+                    message: "Kubernetes manifest detected".into(),
+                });
+            }
+        }
+
+        // Build language stats
+        let mut languages: Vec<LangStat> = lang_map
+            .into_iter()
+            .map(|(language, (files, lines))| LangStat {
+                language,
+                files,
+                lines,
+            })
+            .collect();
+        languages.sort_by(|a, b| b.lines.cmp(&a.lines));
+
+        let result = AnalysisResult {
+            summary: Summary {
+                file_count: files.len(),
+                total_lines,
+                languages,
+            },
+            findings,
+        };
+
+        serde_json::to_string(&result).unwrap_or_else(|e| {
+            serde_json::json!({"error": format!("Serialization failed: {e}")}).to_string()
+        })
+    }
+
+    /// Count approximate number of keys in a named JSON object section.
+    /// This is a simple line-based heuristic, not a full parser.
+    fn count_json_object_keys(content: &str, section: &str) -> usize {
+        let search = format!("\"{}\"", section);
+        let mut count = 0;
+        let mut in_section = false;
+        let mut brace_depth = 0;
+
+        for line in content.lines() {
+            let t = line.trim();
+            if !in_section {
+                if t.contains(&search) {
+                    in_section = true;
+                    if t.contains('{') {
+                        brace_depth = 1;
+                    }
+                }
+                continue;
+            }
+            for ch in t.chars() {
+                match ch {
+                    '{' => brace_depth += 1,
+                    '}' => {
+                        brace_depth -= 1;
+                        if brace_depth <= 0 {
+                            in_section = false;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if in_section && t.contains(':') && t.starts_with('"') {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 #[cfg(feature = "browser")]
@@ -378,7 +767,7 @@ mod tests {
     fn capabilities_is_valid_json() {
         let caps = capabilities();
         let parsed: serde_json::Value = serde_json::from_str(&caps).unwrap();
-        assert_eq!(parsed["platform"], "wasm32-wasip1");
+        assert_eq!(parsed["platform"], "wasm32-wasip2");
         assert!(parsed["tools"].as_array().unwrap().len() > 0);
     }
 

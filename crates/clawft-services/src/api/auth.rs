@@ -24,19 +24,24 @@ impl TokenStore {
     }
 
     /// Generate a new API token with the given TTL in seconds.
-    pub fn generate_token(&self, ttl_secs: u64) -> String {
+    ///
+    /// Returns `None` if the internal lock is poisoned.
+    pub fn generate_token(&self, ttl_secs: u64) -> Option<String> {
         let token = uuid::Uuid::new_v4().to_string();
         let info = TokenInfo {
             created_at: std::time::Instant::now(),
             ttl_secs,
         };
-        self.tokens.write().unwrap().insert(token.clone(), info);
-        token
+        self.tokens.write().ok()?.insert(token.clone(), info);
+        Some(token)
     }
 
     /// Validate a token. Returns true if valid and not expired.
     pub fn validate(&self, token: &str) -> bool {
-        let tokens = self.tokens.read().unwrap();
+        let tokens = match self.tokens.read() {
+            Ok(t) => t,
+            Err(_) => return false, // poisoned lock -- deny access
+        };
         if let Some(info) = tokens.get(token) {
             info.created_at.elapsed().as_secs() < info.ttl_secs
         } else {
@@ -109,7 +114,7 @@ mod tests {
     #[test]
     fn token_store_generate_and_validate() {
         let store = TokenStore::new();
-        let token = store.generate_token(3600);
+        let token = store.generate_token(3600).expect("generate_token failed");
         assert!(store.validate(&token));
     }
 

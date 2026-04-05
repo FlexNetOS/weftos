@@ -144,15 +144,15 @@ cmd_native_debug() {
 
 cmd_wasi() {
     local profile="${PROFILE:-release-wasm}"
-    header "Building WASM for WASI (wasm32-wasip1, profile: $profile)"
-    if ! check_target_installed wasm32-wasip1; then return 1; fi
+    header "Building WASM for WASI (wasm32-wasip2, profile: $profile)"
+    if ! check_target_installed wasm32-wasip2; then return 1; fi
     force_clean_pkg clawft-wasm
     timer_start
-    local args=(cargo build --target wasm32-wasip1 --profile "$profile" -p clawft-wasm)
+    local args=(cargo build --target wasm32-wasip2 --profile "$profile" -p clawft-wasm)
     [ -n "$FEATURES" ] && args+=(--features "$FEATURES")
     run_cmd "${args[@]}"
     timer_end
-    report_binary_size "target/wasm32-wasip1/${profile}/clawft_wasm.wasm" "WASI WASM"
+    report_binary_size "target/wasm32-wasip2/${profile}/clawft_wasm.wasm" "WASI WASM"
 }
 
 cmd_browser() {
@@ -372,12 +372,12 @@ cmd_gate() {
         cargo build --release --bin weft --bin weaver
 
     # 3. WASI WASM
-    if check_target_installed wasm32-wasip1; then
-        run_gate_check 3 "WASI WASM (wasm32-wasip1)" \
-            cargo build --target wasm32-wasip1 --profile release-wasm -p clawft-wasm
+    if check_target_installed wasm32-wasip2; then
+        run_gate_check 3 "WASI WASM (wasm32-wasip2)" \
+            cargo build --target wasm32-wasip2 --profile release-wasm -p clawft-wasm
     else
-        printf "\n${BOLD}[%2d/%d]${NC} %s\n" 3 "$total" "WASI WASM (wasm32-wasip1)"
-        skip "wasm32-wasip1 target not installed"
+        printf "\n${BOLD}[%2d/%d]${NC} %s\n" 3 "$total" "WASI WASM (wasm32-wasip2)"
+        skip "wasm32-wasip2 target not installed"
         skipped=$((skipped + 1))
     fi
 
@@ -454,7 +454,7 @@ ${BOLD}Usage:${NC} scripts/build.sh <command> [options]
 ${BOLD}Commands:${NC}
   native          Build native CLI binary (release)
   native-debug    Build native CLI binary (debug, fast)
-  wasi            Build WASM for WASI (wasm32-wasip1)
+  wasi            Build WASM for WASI (wasm32-wasip2)
   browser         Build WASM for browser (wasm32-unknown-unknown)
   ui              Build React frontend (tsc + vite)
   all             Build everything (native + wasi + browser + ui)

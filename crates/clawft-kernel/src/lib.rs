@@ -184,6 +184,8 @@ pub mod mesh_artifact;
 #[cfg(feature = "mesh")]
 pub mod mesh_log;
 #[cfg(feature = "mesh")]
+pub mod mesh_assess;
+#[cfg(feature = "mesh")]
 pub mod mesh_runtime;
 
 // Re-export key types at the crate level for convenience.
@@ -342,6 +344,8 @@ pub use mesh_artifact::{ArtifactAnnouncement, ArtifactExchange, ArtifactRequest,
 #[cfg(feature = "mesh")]
 pub use mesh_log::{LogAggregator, LogQuery as MeshLogQuery, RemoteLogEntry};
 #[cfg(feature = "mesh")]
+pub use mesh_assess::{AssessmentEnvelope, AssessmentTransport};
+#[cfg(feature = "mesh")]
 pub use mesh_runtime::{DiscoveryState, MeshRuntime, PeerConnection};
 #[cfg(feature = "os-patterns")]
 pub use auth_service::{
@@ -353,8 +357,9 @@ pub use config_service::{ConfigChange, ConfigEntry, ConfigService, ConfigValue, 
 pub use tree_view::{AgentTreeView, TreeScope};
 pub use process::{Pid, ProcessEntry, ProcessState, ProcessTable, ResourceUsage};
 pub use service::{
-    McpAdapter, ServiceApi, ServiceAuditLevel, ServiceContract, ServiceEndpoint, ServiceEntry,
-    ServiceInfo, ServiceRegistry, ServiceType, ShellAdapter, SystemService,
+    KernelServiceApi, McpAdapter, ServiceApi, ServiceAuditLevel, ServiceContract,
+    ServiceEndpoint, ServiceEntry, ServiceInfo, ServiceRegistry, ServiceType, ShellAdapter,
+    SystemService,
 };
 pub use supervisor::{AgentSupervisor, EnclaveConfig, SpawnBackend, SpawnRequest, SpawnResult};
 #[cfg(feature = "os-patterns")]
