@@ -110,7 +110,7 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 - [x] **clawft-plugin-ci** — GitHub Actions / Vercel config parsing (WS5)
 - [x] **Plugin marketplace scaffold** — create-weftos-plugin CLI, registry design (WS5)
 - [x] **Rustdoc JSON-to-MDX** — converter for native Fumadocs API pages (WS5)
-- [ ] **Evaluate gui/ vs ui/** — consolidate or archive redundant web dashboard (ui/) vs Tauri desktop (gui/)
+- [x] **Evaluate gui/ vs ui/** — NOT redundant: `gui/` = WeftOS kernel desktop (Tauri), `clawft-ui/` = clawft agent web dashboard. Renamed `ui/` → `clawft-ui/` for clarity.
 
 ### weavelogic.ai site (WS6)
 - [ ] ROI calculator
@@ -119,20 +119,29 @@ The AssessmentService currently does file counting + complexity + TODOs. Make it
 - [ ] Restructure /services as post-assessment flow
 - [ ] Consolidate CTAs to 2 variants
 
-### Architecture & Platform
+### Architecture & Platform — Sprint 16 Priorities
+
+**Do now (security + infra):**
+- [ ] wasmtime upgrade to v33+ (closes remaining 10 Dependabot alerts)
+- [ ] Security audit (1.0 gate) — required before client deployment
+
+**Do now (demo + product):**
+- [ ] Playground Phase 3-4 (governance panel, agent spawning UI) — needed for product demo
+- [ ] ServiceApi trait implementation (ADR-035) — enables GUI/sandbox to talk to real kernel services
+- [ ] wasip2 migration from wasip1 (ADR-044) — modernizes the WASM story for sandbox demo
+- [ ] **SOP 3: Cross-project mesh** — real-time mesh coordination via K6 transport (WS4)
+
+**Do now (browser sandbox):**
+- [ ] **Client session/config persistence** — IndexedDB/localStorage for assessment data, conversation history, config across visits
+- [ ] **Browser WASM assessment engine** — refactor Analyzer trait for in-memory content, export wasm_bindgen analyze_repo(), GitHub API fetcher, full analyzer pipeline in browser
+- [ ] **Real ExoChain boot log in WASM** — export boot_info() from browser_entry returning kernel boot phases as JSON
+
+**Defer (post-launch):**
 - [ ] Block drag-and-drop layout editing (GUI)
-- [ ] Playground Phase 3-4 (governance panel, agent spawning UI)
-- [ ] Security audit (1.0 gate)
 - [ ] Post-quantum key exchange implementation (ADR-028 Phase 2)
 - [ ] BLAKE3 hash migration from SHAKE-256 (ADR-043)
-- [ ] ServiceApi trait implementation (ADR-035)
 - [ ] N-dimensional EffectVector refactor (ADR-034 C9)
-- [ ] wasip2 migration from wasip1 (ADR-044)
 - [ ] ChainAnchor blockchain integration (ADR-041)
-- [ ] wasmtime upgrade to v33+ (closes remaining 10 Dependabot alerts)
-- [ ] **Client session/config persistence** — design client-side session management (IndexedDB, localStorage) so users don't lose assessment data, conversation history, or configuration across visits; consider auth model for saving/resuming analysis sessions
-- [ ] **Browser WASM assessment engine** — refactor Analyzer trait to accept in-memory file content (`analyze_content(&str, &str)`) alongside `std::fs` path, export `#[wasm_bindgen] analyze_repo(files_json)` from browser_entry, fetch public GitHub repos via REST API client-side, run full analyzer pipeline in WASM (complexity, security, dependency, topology, data source), render findings in sandbox UI with real ExoChain boot phases
-- [ ] **Real ExoChain boot log in WASM** — export `boot_info()` from browser_entry returning kernel boot phases as JSON (depends on browser assessment engine or standalone lightweight boot)
 
 ---
 
