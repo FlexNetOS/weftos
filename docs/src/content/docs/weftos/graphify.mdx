@@ -1,0 +1,483 @@
+---
+title: "Knowledge Graph (Graphify)"
+description: "clawft-graphify: AST-based knowledge graph extraction, community detection, analysis, and export for code assessment and forensic investigation."
+---
+
+The `clawft-graphify` crate builds knowledge graphs from source code and investigative documents. It extracts entities and relationships via tree-sitter AST parsing, clusters them into communities, analyzes structural patterns, and exports interactive visualizations.
+
+**Crate**: `clawft-graphify`
+**Source**: 35 modules, 88 tests
+**CLI**: `weaver graphify`
+
+## Why Graphify
+
+WeftOS needs to understand the systems it manages. Graphify provides two domain-specific lenses:
+
+- **Code Assessment**: Map modules, classes, functions, imports, call graphs, and inferred dependencies into a queryable knowledge graph. Detect god nodes, surprising cross-module coupling, and architectural drift.
+- **Forensic Analysis**: Extract persons, events, evidence, locations, timelines, and their relationships from investigative documents. Run gap analysis, coherence scoring, and counterfactual predictions.
+
+Both domains share the same underlying graph infrastructure: BLAKE3-hashed entity IDs, confidence-weighted edges, label propagation clustering, and petgraph-backed traversal.
+
+## Quick Start
+
+```bash
+# Ingest a local project
+weaver graphify ingest /path/to/project
+
+# Ingest a URL (tweet, arXiv paper, webpage)
+weaver graphify ingest https://arxiv.org/abs/2301.12345
+
+# Query the graph
+weaver graphify query "authentication service"
+
+# Export as interactive HTML
+weaver graphify export html
+
+# Export as Obsidian vault
+weaver graphify export obsidian
+```
+
+## CLI Reference
+
+### `weaver graphify ingest <path|url>`
+
+Ingest a local path or URL into the knowledge graph. Local paths run the extraction pipeline (tree-sitter AST + call graph inference). URLs are fetched, classified, and saved as annotated markdown for re-extraction.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-o, --output` | `graphify-out/memory` | Output directory for ingested files |
+| `--contributor` | *(none)* | Contributor name for metadata |
+
+```bash
+# Ingest a local codebase
+weaver graphify ingest ./my-project
+
+# Ingest a tweet
+weaver graphify ingest https://x.com/user/status/123 --contributor "analyst"
+
+# Ingest a PDF
+weaver graphify ingest https://example.com/report.pdf -o evidence/
+```
+
+### `weaver graphify query <question>`
+
+Search the knowledge graph with a natural-language question. Performs keyword matching against entity labels and source files, returning ranked results with community assignments.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-g, --graph` | `graphify-out/graph.json` | Path to graph JSON |
+| `-m, --mode` | `bfs` | Traversal mode: `bfs` or `dfs` |
+| `-d, --depth` | `3` | Traversal depth (1-6) |
+
+```bash
+weaver graphify query "database connection pool"
+weaver graphify query "AuthService" --mode dfs --depth 4
+```
+
+**Output**:
+```
+Matching nodes:
+  [2.0] Database (src=src/db.py, community=0)
+  [1.5] ConnectionPool (src=src/pool.py, community=0)
+  [1.0] DbConfig (src=src/config.py, community=2)
+```
+
+### `weaver graphify export <format> [output]`
+
+Export the knowledge graph to a file or directory.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-o, --output` | `graphify-out/<format>` | Output path |
+| `-g, --graph` | `graphify-out/graph.json` | Source graph JSON |
+
+```bash
+weaver graphify export json
+weaver graphify export html -o report.html
+weaver graphify export obsidian -o ~/vault/project
+weaver graphify export wiki -o docs/wiki
+weaver graphify export graphml -o graph.graphml
+```
+
+### `weaver graphify diff`
+
+Compare the current graph against a previous version to see what changed: new/removed nodes and edges.
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `old` | `graphify-out/graph.json.bak` | Path to old graph |
+| `current` | `graphify-out/graph.json` | Path to current graph |
+
+```bash
+weaver graphify diff
+```
+
+**Output**:
+```
+Graph diff:
+  Nodes: 142 -> 148 (+6)
+  Edges: 387 -> 401 (+14)
+```
+
+### `weaver graphify rebuild`
+
+Force a full re-extraction of the knowledge graph from the project root.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `root` | `.` | Root directory to scan |
+| `--clean` | `false` | Clear cache before rebuilding |
+
+```bash
+weaver graphify rebuild
+weaver graphify rebuild --clean
+weaver graphify rebuild /path/to/project
+```
+
+### `weaver graphify watch`
+
+Start a file watcher that monitors the project for changes and triggers automatic re-extraction. Uses polling with configurable debounce.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `root` | `.` | Root directory to watch |
+| `-d, --debounce` | `2.0` | Debounce window in seconds |
+
+```bash
+weaver graphify watch
+weaver graphify watch --debounce 5.0
+```
+
+The watcher monitors 30+ file extensions (code, documents, images) and ignores `.git`, `node_modules`, `__pycache__`, and `graphify-out` directories.
+
+### `weaver graphify hooks install|uninstall|status`
+
+Manage git hooks for automatic graph rebuilding after commits and branch switches.
+
+```bash
+# Install post-commit and post-checkout hooks
+weaver graphify hooks install
+
+# Check installation status
+weaver graphify hooks status
+
+# Remove graphify hooks (preserves other hook content)
+weaver graphify hooks uninstall
+```
+
+**post-commit hook**: Detects which files changed in the last commit. If any code files changed (`.py`, `.ts`, `.rs`, `.go`, etc.), runs `weaver graphify rebuild` automatically.
+
+**post-checkout hook**: When switching branches, rebuilds the graph if a `graphify-out` directory exists.
+
+## Supported Languages
+
+AST extraction uses tree-sitter grammars, each gated behind a feature flag.
+
+| Language | Feature Flag | Entities Extracted |
+|----------|-------------|-------------------|
+| Python | `lang-python` | Module, Class, Function, Import, Constant |
+| JavaScript | `lang-javascript` | Module, Class, Function, Import |
+| TypeScript | `lang-typescript` | Module, Class, Function, Interface, Import, Enum |
+| Rust | `lang-rust` | Module, Struct, Enum, Function, Import, Constant |
+| Go | `lang-go` | Package, Struct, Interface, Function, Import |
+| Java | `lang-java` | Package, Class, Interface, Function, Import |
+| C | `lang-c` | Function, Struct, Constant, Import |
+| C++ | `lang-cpp` | Class, Function, Struct, Constant, Import |
+| Ruby | `lang-ruby` | Module, Class, Function, Import |
+| C# | `lang-csharp` | Class, Interface, Function, Import |
+
+All language features require the `ast-extract` base feature (pulled in automatically). Use `lang-all` to enable every grammar.
+
+**Extraction is two-pass**: (1) structural AST walk to extract declarations and imports, (2) call graph inference to connect function calls across files.
+
+## Entity Types
+
+The `EntityType` enum defines 26 variants across two domains plus shared types.
+
+### Code Domain (12 types)
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `Module` | Source file or logical module | `auth.py`, `src/db` |
+| `Class` | Class definition | `AuthService` |
+| `Function` | Function or method | `validate_token()` |
+| `Import` | Import statement | `import jwt` |
+| `Config` | Configuration file or block | `settings.toml` |
+| `Service` | Service definition | `UserService` |
+| `Endpoint` | API endpoint | `POST /api/login` |
+| `Interface` | Interface or trait | `Authenticator` |
+| `Struct` | Struct definition | `UserRecord` |
+| `Enum` | Enum definition | `UserRole` |
+| `Constant` | Constant value | `MAX_RETRIES` |
+| `Package` | Package or crate | `clawft-kernel` |
+
+### Forensic Domain (12 types)
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `Person` | Individual | `John Doe` |
+| `Event` | Incident or occurrence | `Break-in at 123 Main St` |
+| `Evidence` | Physical or digital evidence | `Bloodstain on doorframe` |
+| `Location` | Geographic place | `123 Main Street` |
+| `Timeline` | Temporal sequence | `Jan 5 - Jan 12 window` |
+| `Document` | Report or record | `Police report #4521` |
+| `Hypothesis` | Investigative theory | `Suspect entered via rear door` |
+| `Organization` | Company or group | `Acme Corp` |
+| `PhysicalObject` | Tangible item | `Kitchen knife` |
+| `DigitalArtifact` | Digital item | `security_cam_01.mp4` |
+| `FinancialRecord` | Transaction or account | `Wire transfer $50K` |
+| `Communication` | Message or call | `Phone call at 11:42 PM` |
+
+### Shared Types (2 + Custom)
+
+| Type | Description |
+|------|-------------|
+| `File` | Source file node |
+| `Concept` | Abstract concept |
+| `Custom(String)` | User-defined type |
+
+### Entity Identity
+
+Every entity receives a deterministic 32-byte ID computed as:
+
+```
+EntityId = BLAKE3(domain_byte || entity_type_discriminant || name || source_file)
+```
+
+The `DomainTag` byte separates namespaces: `0x20` for Code, `0x21` for Forensic, or a custom byte.
+
+## Relationship Types
+
+The `RelationType` enum defines 23 variants plus `Custom(String)`.
+
+### Code Domain (10 types)
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `Calls` | Function call | `auth.validate()` calls `jwt.decode()` |
+| `Imports` | Module import | `auth.py` imports `jwt` |
+| `ImportsFrom` | Selective import | `from jwt import decode` |
+| `DependsOn` | Dependency | `auth` depends on `database` |
+| `Contains` | Structural containment | `UserModule` contains `UserService` |
+| `Implements` | Interface implementation | `AuthService` implements `Authenticator` |
+| `Configures` | Configuration link | `settings.toml` configures `DatabasePool` |
+| `Extends` | Inheritance | `AdminUser` extends `User` |
+| `MethodOf` | Method membership | `validate()` is method of `AuthService` |
+| `Instantiates` | Object creation | `main()` instantiates `AuthService` |
+
+### Forensic Domain (11 types)
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `WitnessedBy` | Witness observation | `Break-in` witnessed by `Jane Smith` |
+| `FoundAt` | Evidence location | `Bloodstain` found at `Kitchen` |
+| `Contradicts` | Conflicting evidence | `Alibi` contradicts `Surveillance footage` |
+| `Corroborates` | Supporting evidence | `Phone records` corroborate `Witness statement` |
+| `AlibiedBy` | Alibi relationship | `Suspect` alibied by `Coworker` |
+| `Precedes` | Temporal ordering | `Phone call` precedes `Break-in` |
+| `DocumentedIn` | Documentation link | `Evidence` documented in `Police report` |
+| `OwnedBy` | Ownership | `Vehicle` owned by `Suspect` |
+| `ContactedBy` | Communication link | `Victim` contacted by `Unknown caller` |
+| `LocatedAt` | Location association | `Suspect` located at `Warehouse` |
+| `SemanticallySimilarTo` | Semantic similarity | `Witness A statement` similar to `Witness B statement` |
+
+### Shared Types (2 + Custom)
+
+| Type | Description |
+|------|-------------|
+| `RelatedTo` | General relationship |
+| `CaseOf` | Case association |
+| `Custom(String)` | User-defined type |
+
+## Confidence Levels
+
+Every relationship carries a `Confidence` level that affects edge weight in graph algorithms and scoring in exports.
+
+| Level | Weight | Score | Description |
+|-------|--------|-------|-------------|
+| `EXTRACTED` | 1.0 | 1.0 | Deterministically extracted from AST or document structure |
+| `INFERRED` | 0.7 | 0.5 | Inferred by LLM or heuristic reasoning |
+| `AMBIGUOUS` | 0.4 | 0.2 | Multiple interpretations possible |
+
+**Weight** is used as edge weight in graph algorithms (petgraph) and the CausalGraph bridge. **Score** is used in the JSON export `confidence_score` field and coherence calculations.
+
+## Analysis Features
+
+### God Nodes
+
+Entities with disproportionately high degree (connection count). These represent coupling risks or core abstractions that many other components depend on.
+
+The analysis filters out file-level hub nodes (where the label matches the source filename), method stubs (`.method_name()`), and concept nodes (entities without a file extension in their source path).
+
+Results are sorted by degree descending and capped at `top_n` (default: 10).
+
+### Surprising Connections
+
+Edges that are structurally non-obvious, scored using five factors:
+
+1. **Confidence weight**: `AMBIGUOUS` (+3), `INFERRED` (+2), `EXTRACTED` (+1)
+2. **Cross file-type**: Connection between code and paper/image files (+2)
+3. **Cross-directory**: Connection across different top-level directories (+2)
+4. **Cross-community**: Edge bridges separate communities (+1)
+5. **Peripheral-to-hub**: Low-degree node unexpectedly reaches a high-degree hub (+1)
+
+Semantic similarity edges receive a 1.5x multiplier. Structural relations (`imports`, `imports_from`, `contains`, `method`) are excluded.
+
+For multi-file corpora, cross-file edges are ranked by composite surprise score. For single-file corpora, cross-community edges are used instead.
+
+### Question Generation
+
+Five strategies produce investigation questions from graph structure:
+
+| Strategy | Trigger | Example Question |
+|----------|---------|-----------------|
+| **Ambiguous edges** | Edge with `AMBIGUOUS` confidence | "What is the exact relationship between `AuthService` and `CacheLayer`?" |
+| **Bridge nodes** | High betweenness centrality | "Why does `ConfigLoader` connect `auth` to `database`?" |
+| **Verify inferred** | God node with 2+ `INFERRED` edges | "Are the 5 inferred relationships involving `ApiHandler` actually correct?" |
+| **Isolated nodes** | Entities with degree 0-1 | "What connects `HealthCheck`, `Metrics` to the rest of the system?" |
+| **Low cohesion** | Community with score < 0.15 and 5+ nodes | "Should `utils` be split into smaller, more focused modules?" |
+
+If none of these strategies produce results, a `NoSignal` question is returned suggesting more files or deeper extraction.
+
+### Graph Diff
+
+Compares two graph snapshots (old vs. new) and reports:
+- New nodes and their labels
+- Removed nodes and their labels
+- New edges with relation type and confidence
+- Removed edges with relation type and confidence
+- Summary string (e.g., "6 new nodes, 14 new edges, 2 edges removed")
+
+Edge comparison uses undirected keys `(min_hex, max_hex, relation)` to avoid order-dependent duplicates.
+
+## Community Detection
+
+Label propagation with three post-processing steps.
+
+**Algorithm**: Each node starts with a unique label. In each iteration, every node adopts the most frequent label among its neighbors (ties broken by smallest label for determinism). Converges when no labels change, with a 50-iteration safety cap.
+
+**Oversized splitting**: Communities larger than 25% of the graph (and at least 10 nodes) are recursively split by running label propagation on their subgraph.
+
+**Re-indexing**: Final communities are sorted by size descending so community 0 is always the largest.
+
+**Isolates**: Nodes with degree 0 each become their own single-node community.
+
+**Cohesion scoring**: Ratio of actual intra-community edges to maximum possible edges. A complete subgraph scores 1.0, disconnected nodes score 0.0, and a single node scores 1.0 by convention.
+
+**Auto-labeling**: Communities are labeled with the most common source file stem among their members, falling back to the highest-degree node's label.
+
+## Export Formats
+
+| Format | Extension | Use Case |
+|--------|-----------|----------|
+| **JSON** | `.json` | Machine-readable, `node_link_data` compatible. Import into other tools. |
+| **HTML** | `.html` | Interactive vis.js visualization. Open in a browser. Requires `html-export` feature. |
+| **GraphML** | `.graphml` | XML interchange format. Import into Gephi, yEd, Cytoscape. |
+| **Obsidian** | vault + `.canvas` | Obsidian vault with one note per entity plus a canvas file for visual layout. |
+| **Wiki** | `.md` directory | Wikipedia-style markdown wiki with interlinked pages. |
+| **Cypher** | `.cypher` | Neo4j Cypher statements. Import into Neo4j. Requires `neo4j-export` feature. |
+| **SVG** | `.svg` | Static vector graph rendering. |
+
+## Caching
+
+Extraction results are cached using BLAKE3 content hashes of the source file. On re-extraction, only files whose content hash has changed are re-processed.
+
+Cache directory: `.weftos/graphify-cache/` (configurable via `PipelineConfig::cache_dir`).
+
+The `--clean` flag on `weaver graphify rebuild` clears the cache before rebuilding.
+
+## URL Ingestion
+
+The `ingest` module fetches URLs, classifies them, and saves annotated markdown (or raw files) for extraction into the graph.
+
+### Supported URL Types
+
+| Type | Detection | Output |
+|------|-----------|--------|
+| **Tweet** | `twitter.com` or `x.com` | Markdown with tweet text via oEmbed API |
+| **arXiv** | `arxiv.org` | Markdown with title, authors, abstract |
+| **PDF** | `.pdf` extension | Raw PDF file |
+| **Image** | `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` | Raw image file |
+| **GitHub** | `github.com` | Webpage markdown |
+| **YouTube** | `youtube.com` or `youtu.be` | Webpage markdown |
+| **Webpage** | Everything else | HTML stripped to text, truncated to 12K chars |
+
+### SSRF Protection
+
+URL validation blocks:
+- Non-HTTP schemes (`file://`, `ftp://`, etc.)
+- Localhost (`127.0.0.1`, `localhost`, `::1`)
+- Private IP ranges (`10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`)
+
+### Query Result Feedback
+
+Query answers can be saved as markdown in the memory directory for re-extraction into the graph, creating a feedback loop where questions and answers become part of the knowledge base.
+
+## File Watcher
+
+The polling-based file watcher monitors a directory tree for changes and triggers re-extraction.
+
+**Watched extensions** (30+): `.py`, `.ts`, `.js`, `.go`, `.rs`, `.java`, `.cpp`, `.c`, `.rb`, `.swift`, `.kt`, `.cs`, `.scala`, `.php`, `.md`, `.txt`, `.rst`, `.pdf`, `.png`, `.jpg`, and more.
+
+**Ignored directories**: `.git`, `graphify-out`, `__pycache__`, `node_modules`, and any directory starting with `.`.
+
+**Debounce**: Changes are batched with a configurable debounce window (default 2 seconds) before triggering a rebuild. Code-only changes trigger AST-only re-extraction; non-code changes (documents, images) trigger full re-extraction.
+
+## Git Hooks
+
+Two hooks are installed into `.git/hooks/`:
+
+**post-commit**: Checks `git diff --name-only HEAD~1 HEAD` for code file changes. If any code files changed, runs `weaver graphify rebuild`. Detects 18 code extensions.
+
+**post-checkout**: When a branch switch occurs (`$3 == 1`) and a `graphify-out` directory exists, runs `weaver graphify rebuild`.
+
+Hooks are marker-delimited (`# graphify-hook-start` / `# graphify-hook-end`) so they can be cleanly appended to existing hook files and removed without affecting other hook content.
+
+## Feature Flags
+
+| Feature | Dependencies | Description |
+|---------|-------------|-------------|
+| `code-domain` | *(default)* | Code analysis entity and relationship types |
+| `forensic-domain` | *(none)* | Forensic analysis entity and relationship types, gap analysis, coherence scoring |
+| `ast-extract` | `tree-sitter` | AST-based entity extraction (required by all `lang-*` features) |
+| `lang-python` | `tree-sitter-python` | Python grammar |
+| `lang-javascript` | `tree-sitter-javascript` | JavaScript grammar |
+| `lang-typescript` | `tree-sitter-typescript` | TypeScript grammar |
+| `lang-rust` | `tree-sitter-rust` | Rust grammar |
+| `lang-go` | `tree-sitter-go` | Go grammar |
+| `lang-java` | `tree-sitter-java` | Java grammar |
+| `lang-c` | `tree-sitter-c` | C grammar |
+| `lang-cpp` | `tree-sitter-cpp` | C++ grammar |
+| `lang-ruby` | `tree-sitter-ruby` | Ruby grammar |
+| `lang-csharp` | `tree-sitter-c-sharp` | C# grammar |
+| `lang-all` | All `lang-*` features | Enable every language grammar |
+| `semantic-extract` | *(none)* | LLM-based semantic extraction for documents |
+| `vision-extract` | *(none)* | Vision model extraction for images |
+| `html-export` | `html-escape` | Interactive HTML/vis.js export |
+| `neo4j-export` | *(none)* | Neo4j Cypher export |
+| `kernel-bridge` | `clawft-kernel`, `async-trait` | CausalGraph, HNSW, CrossRef bridge |
+| `full` | All of the above | Enable everything |
+
+## Integration with WeftOS
+
+### CausalGraph Bridge
+
+With the `kernel-bridge` feature, the `GraphifyBridge` maps the `KnowledgeGraph` into the ECC subsystems:
+
+- **CausalGraph**: Each entity becomes a causal node. Relationships are mapped to `CausalEdgeType` variants (`Calls`/`Imports` to `Causes`, `Contains` to `Enables`, `Contradicts` to `Contradicts`, `Corroborates` to `EvidenceFor`, `Precedes` to `Follows`, `AlibiedBy` to `Inhibits`, remainder to `Correlates`).
+- **HNSW**: Entity labels and types are embedded into the HNSW vector index for semantic similarity search.
+- **CrossRefStore**: Each entity and relationship gets a `CrossRef` entry with a Graphify-namespaced `UniversalNodeId` (structure tag `0x20`). Relationship types are preserved as custom discriminants in the `0x20..0x3F` range.
+
+The bridge supports bidirectional operation: `ingest()` pushes a `KnowledgeGraph` into ECC, and `export_from_causal()` reconstructs a `KnowledgeGraph` from the CausalGraph.
+
+### 9th Assessment Analyzer
+
+The `GraphifyAnalyzer` is the 9th analyzer in the WeftOS assessment pipeline. It produces findings in three categories:
+
+- **Complexity**: God nodes with high connection counts flagged as coupling risks
+- **Dependencies**: Surprising cross-community connections flagged as unexpected coupling
+- **Architecture**: Singleton communities (isolated entities) flagged as architectural concerns
+
+### HNSW Indexing
+
+Entity labels are embedded and indexed in the HNSW service, enabling semantic search queries like "find entities similar to authentication handler" without exact keyword matching.

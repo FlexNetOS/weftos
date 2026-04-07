@@ -1,0 +1,428 @@
+---
+title: "Forensic Investigation with Graphify"
+description: "Using clawft-graphify for evidence analysis, gap detection, coherence scoring, and cold case investigation."
+---
+
+This guide covers the forensic investigation domain of clawft-graphify: building knowledge graphs from investigative documents, detecting structural gaps in evidence, scoring case coherence, and predicting the impact of new leads.
+
+## Overview
+
+Traditional case management stores evidence as flat files and text documents. Graphify transforms this material into a structured knowledge graph where entities (persons, events, evidence, locations) are connected by typed relationships (witnessed_by, contradicts, corroborates, precedes). This structure enables automated analysis that surfaces gaps, contradictions, and missing connections that would be difficult to spot manually.
+
+The forensic domain is enabled with the `forensic-domain` feature flag:
+
+```toml
+[dependencies]
+clawft-graphify = { version = "0.5", features = ["forensic-domain"] }
+```
+
+## Forensic Entity Types
+
+The forensic domain defines 12 entity types (plus shared `File` and `Concept`). Each entity carries a deterministic BLAKE3 ID, a label, source file reference, and arbitrary JSON metadata.
+
+### Person
+
+Individuals relevant to the investigation: suspects, witnesses, victims, officers, experts.
+
+```
+Entity: "Jane Smith"
+Type: Person
+Source: witness_statement_003.md
+Metadata: { "role": "witness", "dob": "1985-03-12" }
+```
+
+### Event
+
+Incidents, occurrences, or actions with temporal significance.
+
+```
+Entity: "Break-in at 123 Main St"
+Type: Event
+Source: police_report_4521.md
+Metadata: { "date": "2025-11-03", "time": "02:30" }
+```
+
+### Evidence
+
+Physical or digital evidence items. Graphify flags evidence nodes with low connectivity as potential gaps.
+
+```
+Entity: "Bloodstain on doorframe"
+Type: Evidence
+Source: forensic_lab_report.md
+Metadata: { "type": "biological", "collection_date": "2025-11-03" }
+```
+
+### Location
+
+Geographic places or areas relevant to the case.
+
+```
+Entity: "123 Main Street, Apt 4B"
+Type: Location
+Source: crime_scene_report.md
+Metadata: { "type": "residence", "coordinates": [40.7128, -74.0060] }
+```
+
+### Timeline
+
+Temporal sequences or windows that establish ordering between events.
+
+```
+Entity: "Nov 1-5 activity window"
+Type: Timeline
+Source: phone_records_analysis.md
+```
+
+### Document
+
+Reports, records, and official documents that contain or reference other entities.
+
+```
+Entity: "Police Report #4521"
+Type: Document
+Source: police_report_4521.md
+Metadata: { "author": "Det. Rodriguez", "date": "2025-11-04" }
+```
+
+### Hypothesis
+
+Investigative theories that can be tested against the evidence graph.
+
+```
+Entity: "Suspect entered via rear door"
+Type: Hypothesis
+Source: case_notes_day3.md
+Metadata: { "status": "unverified", "proposed_by": "Det. Rodriguez" }
+```
+
+### Additional Types
+
+| Type | Description |
+|------|-------------|
+| `Organization` | Company, group, or institution |
+| `PhysicalObject` | Tangible item (weapon, vehicle, clothing) |
+| `DigitalArtifact` | Digital item (video file, email, log entry) |
+| `FinancialRecord` | Transaction, bank record, invoice |
+| `Communication` | Phone call, text message, email exchange |
+
+## Forensic Edge Types
+
+Relationships between forensic entities carry a `Confidence` level (`EXTRACTED`, `INFERRED`, or `AMBIGUOUS`) and a directional type.
+
+### witnessed_by
+
+Links an event to a person who observed it.
+
+```
+Break-in at 123 Main St --[witnessed_by]--> Jane Smith
+Confidence: EXTRACTED (from witness statement)
+```
+
+### found_at
+
+Links evidence to the location where it was discovered.
+
+```
+Bloodstain on doorframe --[found_at]--> Kitchen
+Confidence: EXTRACTED (from crime scene report)
+```
+
+### contradicts
+
+Indicates conflicting evidence or testimony. These edges are critical for gap analysis.
+
+```
+Alibi statement --[contradicts]--> Surveillance footage
+Confidence: EXTRACTED
+```
+
+### corroborates
+
+Supporting evidence or testimony that strengthens another entity.
+
+```
+Phone records --[corroborates]--> Witness statement
+Confidence: INFERRED (analyst judgment)
+```
+
+### alibied_by
+
+Links a person to another person or evidence providing an alibi. Mapped to `CausalEdgeType::Inhibits` in the kernel bridge.
+
+```
+Suspect --[alibied_by]--> Coworker testimony
+Confidence: AMBIGUOUS (unverified)
+```
+
+### precedes
+
+Temporal ordering between events. Essential for timeline reconstruction; events without `Precedes` edges are flagged as timeline discontinuities.
+
+```
+Phone call at 11:42 PM --[precedes]--> Break-in at 2:30 AM
+Confidence: EXTRACTED
+```
+
+### Other Edge Types
+
+| Type | Description |
+|------|-------------|
+| `documented_in` | Entity is documented in a report or record |
+| `owned_by` | Object or artifact owned by a person |
+| `contacted_by` | Person contacted by another person |
+| `located_at` | Person or object located at a place |
+| `semantically_similar_to` | Semantic similarity between statements or documents |
+| `related_to` | General relationship |
+| `case_of` | Case association |
+
+## Gap Analysis
+
+Gap analysis scans a forensic knowledge graph for four types of structural weaknesses.
+
+### Unlinked Evidence
+
+Evidence nodes with degree 0 (completely isolated) or degree 1 (connected to only one other entity). This suggests the evidence has not been connected to suspects, events, or locations.
+
+**Detection**: Any entity with `entity_type == Evidence` and `degree <= 1`.
+
+**Action**: Link the evidence to relevant events, persons, or locations.
+
+### Timeline Discontinuity
+
+Event nodes that lack temporal ordering edges (`Precedes` relationships). Without temporal edges, the timeline cannot be reconstructed.
+
+**Detection**: Any entity with `entity_type == Event` that has no `Precedes` edge (incoming or outgoing).
+
+**Action**: Establish temporal ordering between the event and other events in the case.
+
+### Unverified Claims
+
+Relationships with `Confidence::Ambiguous` that have not been verified or upgraded. These represent assertions in the graph that rest on uncertain ground.
+
+**Detection**: Any edge with `confidence == AMBIGUOUS`.
+
+**Action**: Investigate and either upgrade to `INFERRED`/`EXTRACTED` or remove.
+
+### Missing Connections
+
+Person entities that are mentioned in the case but not linked to any Event. This suggests the person's role in the timeline has not been established.
+
+**Detection**: Any entity with `entity_type == Person` that has no edge connecting it to any `Event` entity.
+
+**Action**: Determine how the person relates to the events in the case.
+
+### Running Gap Analysis
+
+```rust
+use clawft_graphify::domain::forensic::gap_analysis;
+
+let gaps = gap_analysis(&knowledge_graph);
+for gap in &gaps {
+    match gap {
+        Gap::UnlinkedEvidence { label, degree, .. } => {
+            println!("Unlinked evidence: {} (degree {})", label, degree);
+        }
+        Gap::TimelineDiscontinuity { label, .. } => {
+            println!("Timeline gap: {} has no temporal edges", label);
+        }
+        Gap::UnverifiedClaim { relation_type, .. } => {
+            println!("Unverified: {} relationship needs verification", relation_type);
+        }
+        Gap::MissingConnection { label, .. } => {
+            println!("Missing connection: {} not linked to any event", label);
+        }
+    }
+}
+```
+
+## Coherence Scoring
+
+Coherence measures how well-connected and well-supported the evidence graph is. It combines graph density with average edge confidence.
+
+**Formula**: `coherence = density * average_confidence`
+
+Where:
+- `density = actual_edges / (n * (n - 1))` for a directed graph with `n` nodes
+- `average_confidence` = mean of `confidence.to_score()` across all edges
+
+**Interpretation**:
+
+| Score | Meaning |
+|-------|---------|
+| 0.0 | Empty or completely disconnected graph |
+| 0.01 - 0.05 | Sparse evidence with many gaps |
+| 0.05 - 0.15 | Moderate coverage, significant gaps remain |
+| 0.15 - 0.30 | Good coverage, some areas need attention |
+| 0.30+ | Dense, well-supported evidence network |
+| 1.0 | Fully connected with all `EXTRACTED` confidence (theoretical maximum) |
+
+A single-node graph returns 1.0 by convention. An empty graph returns 0.0.
+
+```rust
+use clawft_graphify::domain::forensic::coherence_score;
+
+let score = coherence_score(&knowledge_graph);
+println!("Case coherence: {:.3}", score);
+```
+
+## Counterfactual Delta
+
+The counterfactual delta predicts how much a hypothetical new relationship would improve graph coherence, without actually modifying the graph.
+
+**Use case**: Prioritize investigative leads. If connecting Evidence X to Location Y would produce a high delta, that connection is worth investigating first.
+
+**Calculation**: Computes the analytical difference `coherence_after - coherence_before` by projecting the new edge's effect on density and average confidence.
+
+A positive delta means the hypothetical edge would improve coherence. A larger delta means the edge would have a bigger impact.
+
+```rust
+use clawft_graphify::domain::forensic::counterfactual_delta;
+use clawft_graphify::relationship::{Confidence, RelationType, Relationship};
+
+let hypothetical = Relationship {
+    source: weapon_id.clone(),
+    target: crime_scene_id.clone(),
+    relation_type: RelationType::FoundAt,
+    confidence: Confidence::Extracted,
+    weight: 1.0,
+    source_file: None,
+    source_location: None,
+    metadata: serde_json::json!({}),
+};
+
+let delta = counterfactual_delta(&knowledge_graph, &hypothetical);
+println!("Predicted coherence improvement: {:.4}", delta);
+```
+
+## Case Graph Workflow
+
+### Step 1: Ingest Reports
+
+Collect all case documents (police reports, witness statements, lab results, phone records) into a directory and ingest them.
+
+```bash
+mkdir case-evidence/
+# Copy documents into case-evidence/
+weaver graphify ingest case-evidence/
+```
+
+For URLs (online reports, social media posts):
+
+```bash
+weaver graphify ingest https://example.com/report.pdf -o case-evidence/
+```
+
+### Step 2: Build the Graph
+
+Run the extraction pipeline to build the knowledge graph from ingested documents.
+
+```bash
+weaver graphify rebuild case-evidence/
+```
+
+### Step 3: Run Analysis
+
+Query the graph to explore entities and relationships.
+
+```bash
+weaver graphify query "suspect"
+weaver graphify query "timeline"
+```
+
+### Step 4: Identify Gaps
+
+Run gap analysis programmatically (or review the JSON export for gap indicators).
+
+```bash
+weaver graphify export json -o case-graph.json
+```
+
+The JSON export includes community assignments, cohesion scores, and entity metadata that surface structural gaps.
+
+### Step 5: Export for Review
+
+Generate an interactive visualization or Obsidian vault for collaborative review.
+
+```bash
+# Interactive HTML for presentations
+weaver graphify export html -o case-map.html
+
+# Obsidian vault for collaborative note-taking
+weaver graphify export obsidian -o ~/vault/cold-case-42/
+```
+
+### Step 6: Iterate
+
+As new evidence is gathered, add it to the evidence directory and rebuild. Use `weaver graphify diff` to see what changed.
+
+```bash
+# Add new evidence
+cp new_witness_statement.md case-evidence/
+
+# Rebuild and diff
+weaver graphify rebuild case-evidence/
+weaver graphify diff
+```
+
+## Worked Example
+
+Consider a simple burglary case with 5 entities.
+
+### Entities
+
+| Entity | Type | Source |
+|--------|------|--------|
+| Break-in at 123 Main | Event | police_report.md |
+| Jane Smith | Person | witness_statement.md |
+| Bloodstain | Evidence | lab_report.md |
+| Kitchen | Location | crime_scene.md |
+| John Doe | Person | suspect_file.md |
+
+### Relationships
+
+| Source | Relationship | Target | Confidence |
+|--------|-------------|--------|------------|
+| Break-in at 123 Main | witnessed_by | Jane Smith | EXTRACTED |
+| Bloodstain | found_at | Kitchen | EXTRACTED |
+| John Doe | alibied_by | *(unlinked)* | AMBIGUOUS |
+| Jane Smith | located_at | Kitchen | INFERRED |
+
+### Gap Analysis Output
+
+Running `gap_analysis()` on this graph produces:
+
+1. **UnlinkedEvidence**: "Bloodstain" has degree 1 (only connected to Kitchen). Not linked to any person or event.
+2. **TimelineDiscontinuity**: "Break-in at 123 Main" has no `Precedes` edges. No temporal ordering established.
+3. **UnverifiedClaim**: The `alibied_by` relationship involving John Doe has `AMBIGUOUS` confidence.
+4. **MissingConnection**: "John Doe" is not linked to any Event. His role in the timeline is unknown.
+
+### Coherence Score
+
+With 5 nodes and 3 edges (the unlinked alibi does not connect to a target in the graph):
+- `density = 3 / (5 * 4) = 0.15`
+- `average_confidence = (1.0 + 1.0 + 0.5) / 3 = 0.833`
+- `coherence = 0.15 * 0.833 = 0.125`
+
+Score of 0.125 indicates moderate coverage with significant gaps.
+
+### Counterfactual: What If We Link the Bloodstain to the Break-in?
+
+```rust
+let hypothetical = Relationship {
+    source: bloodstain_id,
+    target: breakin_id,
+    relation_type: RelationType::RelatedTo,
+    confidence: Confidence::Extracted,
+    ..
+};
+let delta = counterfactual_delta(&kg, &hypothetical);
+// delta > 0: adding this edge would improve coherence
+```
+
+After adding a `Bloodstain -> Break-in` edge with `EXTRACTED` confidence:
+- `density = 4 / 20 = 0.20`
+- `average_confidence = (1.0 + 1.0 + 0.5 + 1.0) / 4 = 0.875`
+- `coherence = 0.20 * 0.875 = 0.175`
+
+The delta of +0.050 indicates this connection is worth establishing, guiding the investigator to formally link the physical evidence to the event.

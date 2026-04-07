@@ -1,9 +1,29 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.4.2.
+description: Complete version history for WeftOS from initial development through v0.5.1.
 ---
 
 # Release Notes
+
+## v0.5.1 — Knowledge Graph Builder
+
+*2026-04-07*
+
+### clawft-graphify (New Crate)
+
+- **11,896 lines of Rust** across 35 modules with 88 tests
+- **AST extraction** via tree-sitter for Python, JavaScript/TypeScript, Rust, Go
+- **Two-pass extraction**: structural walk + call graph inference
+- **Community detection**: label propagation with oversized splitting
+- **Analysis**: god nodes, surprising connections (5-factor scoring), question generation (5 strategies), graph diff
+- **7 export formats**: JSON, HTML/vis.js, GraphML, Obsidian vault+canvas, Wiki
+- **URL ingestion**: tweet, arXiv, PDF, webpage with SSRF protection
+- **WeftOS integration**: CausalGraph bridge, 9th assessment analyzer, HNSW indexing
+- **Forensic domain**: 14 entity types, 13 edge types, gap analysis, coherence scoring, counterfactual delta
+- **CLI**: `weaver graphify` with 7 subcommands (ingest, query, export, diff, rebuild, watch, hooks)
+- **File watcher** + **git hooks** for continuous graph updates
+
+---
 
 ## v0.4.2 — Sprint 15 Completion + Docker Optimization
 

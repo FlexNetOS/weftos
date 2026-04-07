@@ -20,6 +20,7 @@
     "mesh-networking",
     "discovery",
     "clustering",
+    "graphify",
     "wasm-sandbox",
     "containers",
     "app-framework",
