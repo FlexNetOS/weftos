@@ -1,0 +1,433 @@
+//! Community detection via label propagation, oversized community splitting,
+//! cohesion scoring, and auto-labeling.
+//!
+//! Ported from Python `graphify/cluster.py`. Uses label propagation instead of
+//! Leiden/Louvain since it's simpler, deterministic with a fixed seed, and matches
+//! the WeftOS `causal.rs` community detection approach.
+
+use crate::entity::EntityId;
+use crate::model::KnowledgeGraph;
+use std::collections::HashMap;
+
+/// Communities larger than 25% of the graph get split.
+pub const MAX_COMMUNITY_FRACTION: f64 = 0.25;
+/// Only split if community has at least this many nodes.
+pub const MIN_SPLIT_SIZE: usize = 10;
+
+/// Run community detection on the knowledge graph.
+///
+/// Returns `{community_id: [entity_ids]}` where community 0 is the largest.
+/// - Empty graph returns `{}`
+/// - Edgeless graph: each node is its own community
+/// - Oversized communities (>25% of graph, >=10 nodes) are recursively split
+/// - Communities are re-indexed by size descending
+pub fn cluster(kg: &KnowledgeGraph) -> HashMap<usize, Vec<EntityId>> {
+    if kg.node_count() == 0 {
+        return HashMap::new();
+    }
+
+    if kg.edge_count() == 0 {
+        let mut result = HashMap::new();
+        let mut ids: Vec<EntityId> = kg.entity_ids().cloned().collect();
+        ids.sort_by(|a, b| a.0.cmp(&b.0));
+        for (i, id) in ids.into_iter().enumerate() {
+            result.insert(i, vec![id]);
+        }
+        return result;
+    }
+
+    // Separate isolates from connected nodes
+    let isolates: Vec<EntityId> = kg
+        .entity_ids()
+        .filter(|id| kg.degree(id) == 0)
+        .cloned()
+        .collect();
+    let connected: Vec<EntityId> = kg
+        .entity_ids()
+        .filter(|id| kg.degree(id) > 0)
+        .cloned()
+        .collect();
+
+    // Run label propagation on connected subgraph
+    let mut raw: HashMap<usize, Vec<EntityId>> = HashMap::new();
+    if !connected.is_empty() {
+        let partition = label_propagation(kg, &connected);
+        for (node, cid) in partition {
+            raw.entry(cid).or_default().push(node);
+        }
+    }
+
+    // Each isolate becomes its own single-node community
+    let mut next_cid = raw.keys().copied().max().unwrap_or(0) + 1;
+    for node in isolates {
+        raw.insert(next_cid, vec![node]);
+        next_cid += 1;
+    }
+
+    // Split oversized communities
+    let max_size = std::cmp::max(
+        MIN_SPLIT_SIZE,
+        (kg.node_count() as f64 * MAX_COMMUNITY_FRACTION) as usize,
+    );
+
+    let mut final_communities: Vec<Vec<EntityId>> = Vec::new();
+    for nodes in raw.into_values() {
+        if nodes.len() > max_size {
+            final_communities.extend(split_community(kg, &nodes));
+        } else {
+            final_communities.push(nodes);
+        }
+    }
+
+    // Re-index by size descending
+    final_communities.sort_by(|a, b| b.len().cmp(&a.len()));
+    final_communities
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut nodes)| {
+            nodes.sort_by(|a, b| a.0.cmp(&b.0));
+            (i, nodes)
+        })
+        .collect()
+}
+
+/// Label propagation community detection.
+///
+/// Each node starts with a unique label. In each iteration, each node adopts
+/// the most frequent label among its neighbors (ties broken by smallest label
+/// for determinism). Converges when no labels change.
+fn label_propagation(kg: &KnowledgeGraph, nodes: &[EntityId]) -> HashMap<EntityId, usize> {
+    let node_set: std::collections::HashSet<&EntityId> = nodes.iter().collect();
+
+    // Initialize: each node gets its own label (index-based for determinism)
+    let mut sorted_nodes: Vec<&EntityId> = nodes.iter().collect();
+    sorted_nodes.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let _node_to_idx: HashMap<&EntityId, usize> = sorted_nodes
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (*id, i))
+        .collect();
+
+    let mut labels: HashMap<&EntityId, usize> = sorted_nodes
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (*id, i))
+        .collect();
+
+    // Iterate until convergence (max 50 iterations as safety valve)
+    for _ in 0..50 {
+        let mut changed = false;
+
+        // Process nodes in deterministic order
+        for &node in &sorted_nodes {
+            let neighbors = kg.neighbors(node);
+            let neighbor_labels: Vec<usize> = neighbors
+                .iter()
+                .filter(|n| node_set.contains(&n.id))
+                .filter_map(|n| labels.get(&n.id).copied())
+                .collect();
+
+            if neighbor_labels.is_empty() {
+                continue;
+            }
+
+            // Count label frequencies
+            let mut freq: HashMap<usize, usize> = HashMap::new();
+            for l in &neighbor_labels {
+                *freq.entry(*l).or_insert(0) += 1;
+            }
+
+            // Pick the most frequent label (ties broken by smallest label ID)
+            let max_count = *freq.values().max().unwrap();
+            let best_label = freq
+                .iter()
+                .filter(|(_, count)| **count == max_count)
+                .map(|(label, _)| *label)
+                .min()
+                .unwrap();
+
+            if labels[node] != best_label {
+                labels.insert(node, best_label);
+                changed = true;
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    // Remap labels to contiguous community IDs
+    let mut label_to_cid: HashMap<usize, usize> = HashMap::new();
+    let mut next_cid = 0;
+    // Ensure deterministic ordering of community IDs
+    let mut unique_labels: Vec<usize> = labels.values().copied().collect();
+    unique_labels.sort();
+    unique_labels.dedup();
+    for label in unique_labels {
+        label_to_cid.insert(label, next_cid);
+        next_cid += 1;
+    }
+
+    labels
+        .into_iter()
+        .map(|(id, label)| (id.clone(), label_to_cid[&label]))
+        .collect()
+}
+
+/// Split an oversized community by running label propagation on its subgraph.
+fn split_community(kg: &KnowledgeGraph, nodes: &[EntityId]) -> Vec<Vec<EntityId>> {
+    let sub = kg.subgraph(nodes);
+    if sub.edge_count() == 0 {
+        // No edges: each node is its own community
+        return nodes.iter().map(|n| vec![n.clone()]).collect();
+    }
+
+    let connected: Vec<EntityId> = nodes
+        .iter()
+        .filter(|id| sub.degree(id) > 0)
+        .cloned()
+        .collect();
+
+    if connected.is_empty() {
+        return vec![nodes.to_vec()];
+    }
+
+    let partition = label_propagation(&sub, &connected);
+    let mut sub_communities: HashMap<usize, Vec<EntityId>> = HashMap::new();
+    for (node, cid) in partition {
+        sub_communities.entry(cid).or_default().push(node);
+    }
+
+    if sub_communities.len() <= 1 {
+        return vec![nodes.to_vec()];
+    }
+
+    sub_communities
+        .into_values()
+        .map(|mut v| {
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v
+        })
+        .collect()
+}
+
+/// Cohesion score: ratio of actual intra-community edges to maximum possible.
+///
+/// - Complete subgraph = 1.0
+/// - Disconnected nodes = 0.0
+/// - Single node = 1.0 by convention
+pub fn cohesion_score(kg: &KnowledgeGraph, community_nodes: &[EntityId]) -> f64 {
+    let n = community_nodes.len();
+    if n <= 1 {
+        return 1.0;
+    }
+
+    let sub = kg.subgraph(community_nodes);
+    let actual = sub.edge_count() as f64;
+    let possible = n as f64 * (n as f64 - 1.0) / 2.0;
+
+    if possible <= 0.0 {
+        return 0.0;
+    }
+
+    let score = actual / possible;
+    (score * 100.0).round() / 100.0
+}
+
+/// Batch cohesion scoring for all communities.
+pub fn score_all(
+    kg: &KnowledgeGraph,
+    communities: &HashMap<usize, Vec<EntityId>>,
+) -> HashMap<usize, f64> {
+    communities
+        .iter()
+        .map(|(&cid, nodes)| (cid, cohesion_score(kg, nodes)))
+        .collect()
+}
+
+/// Auto-label a community: use the most common source file stem, or the
+/// highest-degree node's label if no common file.
+pub fn auto_label(kg: &KnowledgeGraph, community: &[EntityId]) -> String {
+    // Count source file stems
+    let mut stem_counts: HashMap<String, usize> = HashMap::new();
+    for id in community {
+        if let Some(entity) = kg.entity(id) {
+            if let Some(ref source) = entity.source_file {
+                if !source.is_empty() {
+                    let stem = std::path::Path::new(source.as_str())
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(source.as_str())
+                        .to_owned();
+                    *stem_counts.entry(stem).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Pick the most common stem
+    if let Some((stem, _)) = stem_counts.iter().max_by_key(|(_, count)| *count) {
+        return stem.clone();
+    }
+
+    // Fallback: highest-degree node label
+    community
+        .iter()
+        .max_by_key(|id| kg.degree(id))
+        .and_then(|id| kg.entity(id))
+        .map(|e| e.label.clone())
+        .unwrap_or_else(|| format!("Community ({})", community.len()))
+}
+
+/// Generate labels for all communities.
+pub fn auto_label_all(
+    kg: &KnowledgeGraph,
+    communities: &HashMap<usize, Vec<EntityId>>,
+) -> HashMap<usize, String> {
+    communities
+        .iter()
+        .map(|(&cid, nodes)| (cid, auto_label(kg, nodes)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::{DomainTag, EntityType, FileType};
+    use crate::model::Entity;
+    use crate::relationship::{Confidence, RelationType, Relationship};
+
+    fn make_entity(name: &str, source_file: &str) -> Entity {
+        Entity {
+            id: EntityId::new(&DomainTag::Code, &EntityType::Function, name, source_file),
+            entity_type: EntityType::Function,
+            label: name.to_owned(),
+            source_file: Some(source_file.to_owned()),
+            source_location: None,
+            file_type: FileType::Code,
+            metadata: serde_json::json!({}),
+            legacy_id: None,
+        }
+    }
+
+    fn make_rel(src_name: &str, src_file: &str, tgt_name: &str, tgt_file: &str) -> Relationship {
+        Relationship {
+            source: EntityId::new(&DomainTag::Code, &EntityType::Function, src_name, src_file),
+            target: EntityId::new(&DomainTag::Code, &EntityType::Function, tgt_name, tgt_file),
+            relation_type: RelationType::Calls,
+            confidence: Confidence::Extracted,
+            weight: 1.0,
+            source_file: None,
+            source_location: None,
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn empty_graph_returns_empty() {
+        let kg = KnowledgeGraph::new();
+        let c = cluster(&kg);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn edgeless_graph_each_node_own_community() {
+        let entities = vec![make_entity("a", "a.py"), make_entity("b", "b.py")];
+        let kg = KnowledgeGraph::from_parts(entities, vec![], vec![]);
+        let c = cluster(&kg);
+        assert_eq!(c.len(), 2);
+        for nodes in c.values() {
+            assert_eq!(nodes.len(), 1);
+        }
+    }
+
+    #[test]
+    fn cluster_covers_all_nodes() {
+        let entities = vec![
+            make_entity("a", "f.py"),
+            make_entity("b", "f.py"),
+            make_entity("c", "f.py"),
+            make_entity("d", "g.py"),
+        ];
+        let rels = vec![
+            make_rel("a", "f.py", "b", "f.py"),
+            make_rel("b", "f.py", "c", "f.py"),
+            make_rel("a", "f.py", "c", "f.py"),
+        ];
+        let kg = KnowledgeGraph::from_parts(entities, rels, vec![]);
+        let c = cluster(&kg);
+        let all_nodes: Vec<&EntityId> = c.values().flat_map(|v| v.iter()).collect();
+        assert_eq!(all_nodes.len(), 4);
+    }
+
+    #[test]
+    fn cohesion_complete_subgraph_is_one() {
+        let entities = vec![
+            make_entity("a", "f.py"),
+            make_entity("b", "f.py"),
+            make_entity("c", "f.py"),
+        ];
+        let rels = vec![
+            make_rel("a", "f.py", "b", "f.py"),
+            make_rel("b", "f.py", "c", "f.py"),
+            make_rel("a", "f.py", "c", "f.py"),
+        ];
+        let kg = KnowledgeGraph::from_parts(entities, rels, vec![]);
+        let ids: Vec<EntityId> = kg.entity_ids().cloned().collect();
+        let score = cohesion_score(&kg, &ids);
+        assert!((score - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn cohesion_disconnected_is_zero() {
+        let entities = vec![
+            make_entity("a", "f.py"),
+            make_entity("b", "f.py"),
+            make_entity("c", "f.py"),
+        ];
+        let kg = KnowledgeGraph::from_parts(entities, vec![], vec![]);
+        let ids: Vec<EntityId> = kg.entity_ids().cloned().collect();
+        let score = cohesion_score(&kg, &ids);
+        assert!((score - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn cohesion_single_node_is_one() {
+        let entities = vec![make_entity("a", "f.py")];
+        let kg = KnowledgeGraph::from_parts(entities, vec![], vec![]);
+        let ids: Vec<EntityId> = kg.entity_ids().cloned().collect();
+        let score = cohesion_score(&kg, &ids);
+        assert!((score - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn score_all_keys_match_communities() {
+        let entities = vec![
+            make_entity("a", "f.py"),
+            make_entity("b", "f.py"),
+        ];
+        let rels = vec![make_rel("a", "f.py", "b", "f.py")];
+        let kg = KnowledgeGraph::from_parts(entities, rels, vec![]);
+        let communities = cluster(&kg);
+        let scores = score_all(&kg, &communities);
+        assert_eq!(scores.len(), communities.len());
+        for key in communities.keys() {
+            assert!(scores.contains_key(key));
+        }
+    }
+
+    #[test]
+    fn auto_label_uses_file_stem() {
+        let entities = vec![
+            make_entity("a", "auth.py"),
+            make_entity("b", "auth.py"),
+            make_entity("c", "models.py"),
+        ];
+        let kg = KnowledgeGraph::from_parts(entities, vec![], vec![]);
+        let ids: Vec<EntityId> = kg.entity_ids().cloned().collect();
+        let label = auto_label(&kg, &ids);
+        assert_eq!(label, "auth");
+    }
+}

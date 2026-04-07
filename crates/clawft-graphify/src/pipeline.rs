@@ -1,0 +1,292 @@
+//! Pipeline orchestrator: detect -> extract -> build -> cluster -> analyze.
+//!
+//! Ported from Python `graphify/pipeline.py`.
+
+use crate::analyze;
+use crate::cluster;
+use crate::entity::EntityId;
+use crate::model::{
+    DetectionResult, Entity, ExtractionResult, ExtractionStats, Hyperedge,
+    KnowledgeGraph,
+};
+use crate::relationship::Relationship;
+use crate::GraphifyError;
+use std::collections::HashMap;
+use std::path::Path;
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+/// Pipeline configuration.
+#[derive(Debug, Clone)]
+pub struct PipelineConfig {
+    /// Whether to run community detection.
+    pub cluster: bool,
+    /// Whether to run analysis (god nodes, surprises, questions).
+    pub analyze: bool,
+    /// Export formats to generate.
+    pub exports: Vec<String>,
+    /// Maximum number of god nodes to report.
+    pub god_nodes_top_n: usize,
+    /// Maximum surprising connections.
+    pub surprises_top_n: usize,
+    /// Maximum questions.
+    pub questions_top_n: usize,
+    /// Cache directory (optional).
+    pub cache_dir: Option<String>,
+    /// Domain hint.
+    pub domain: Option<String>,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            cluster: true,
+            analyze: true,
+            exports: vec!["json".to_owned()],
+            god_nodes_top_n: 10,
+            surprises_top_n: 5,
+            questions_top_n: 7,
+            cache_dir: None,
+            domain: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+/// Results of the full analysis pipeline.
+#[derive(Debug, Clone)]
+pub struct AnalysisResult {
+    pub god_nodes: Vec<analyze::GodNode>,
+    pub surprising_connections: Vec<analyze::SurprisingConnection>,
+    pub questions: Vec<analyze::SuggestedQuestion>,
+    pub communities: HashMap<usize, Vec<EntityId>>,
+    pub community_labels: HashMap<usize, String>,
+    pub cohesion_scores: HashMap<usize, f64>,
+}
+
+/// Full pipeline result.
+#[derive(Debug)]
+pub struct PipelineResult {
+    pub graph: KnowledgeGraph,
+    pub analysis: Option<AnalysisResult>,
+    pub stats: ExtractionStats,
+    pub detection: DetectionResult,
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+/// The full graphify pipeline.
+pub struct Pipeline {
+    config: PipelineConfig,
+}
+
+impl Pipeline {
+    pub fn new(config: PipelineConfig) -> Self {
+        Self { config }
+    }
+
+    /// Run the full pipeline on pre-extracted results.
+    ///
+    /// This is the Phase 2 entry point: takes already-extracted entities/relationships
+    /// and runs build -> cluster -> analyze. Phase 1 will add the detect -> extract
+    /// steps with tree-sitter and LLM extraction.
+    pub fn run_from_extractions(
+        &self,
+        extractions: Vec<ExtractionResult>,
+        detection: DetectionResult,
+    ) -> Result<PipelineResult, GraphifyError> {
+        // Aggregate entities, relationships, hyperedges from all extractions
+        let mut all_entities: Vec<Entity> = Vec::new();
+        let mut all_relationships: Vec<Relationship> = Vec::new();
+        let mut all_hyperedges: Vec<Hyperedge> = Vec::new();
+        let mut stats = ExtractionStats::default();
+
+        for result in &extractions {
+            all_entities.extend(result.entities.clone());
+            all_relationships.extend(result.relationships.clone());
+            all_hyperedges.extend(result.hyperedges.clone());
+            stats.files_processed += 1;
+            stats.entities_extracted += result.entities.len();
+            stats.relationships_extracted += result.relationships.len();
+            stats.input_tokens += result.input_tokens;
+            stats.output_tokens += result.output_tokens;
+            if !result.errors.is_empty() {
+                // Partial failure: count but don't abort
+                tracing::warn!(
+                    file = %result.source_file,
+                    errors = ?result.errors,
+                    "Extraction had partial failures"
+                );
+            }
+        }
+
+        // Build the graph
+        let graph = KnowledgeGraph::from_parts(all_entities, all_relationships, all_hyperedges);
+
+        // Cluster + analyze
+        let analysis = if self.config.cluster || self.config.analyze {
+            let communities = if self.config.cluster {
+                cluster::cluster(&graph)
+            } else {
+                HashMap::new()
+            };
+
+            let community_labels = cluster::auto_label_all(&graph, &communities);
+            let cohesion_scores = cluster::score_all(&graph, &communities);
+
+            let (god_nodes, surprising_connections, questions) = if self.config.analyze {
+                let gn = analyze::god_nodes(&graph, self.config.god_nodes_top_n);
+                let sc =
+                    analyze::surprising_connections(&graph, &communities, self.config.surprises_top_n);
+                let qs = analyze::suggest_questions(
+                    &graph,
+                    &communities,
+                    &community_labels,
+                    self.config.questions_top_n,
+                );
+                (gn, sc, qs)
+            } else {
+                (vec![], vec![], vec![])
+            };
+
+            Some(AnalysisResult {
+                god_nodes,
+                surprising_connections,
+                questions,
+                communities,
+                community_labels,
+                cohesion_scores,
+            })
+        } else {
+            None
+        };
+
+        Ok(PipelineResult {
+            graph,
+            analysis,
+            stats,
+            detection,
+        })
+    }
+
+    /// Run the full pipeline on file paths (stub for Phase 1 integration).
+    pub fn run(&self, _paths: &[&Path]) -> Result<PipelineResult, GraphifyError> {
+        // Phase 1 will implement: detect files -> extract entities -> build graph
+        // For now, return an empty result
+        Err(GraphifyError::Pipeline(
+            "File-based pipeline not yet implemented. Use run_from_extractions() instead."
+                .to_owned(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::{DomainTag, EntityType, FileType};
+    use crate::relationship::{Confidence, RelationType};
+
+    fn extraction(entities: Vec<Entity>, rels: Vec<Relationship>) -> ExtractionResult {
+        ExtractionResult {
+            source_file: "test.py".to_owned(),
+            entities,
+            relationships: rels,
+            hyperedges: vec![],
+            input_tokens: 100,
+            output_tokens: 50,
+            errors: vec![],
+        }
+    }
+
+    fn entity(name: &str, source_file: &str) -> Entity {
+        Entity {
+            id: EntityId::new(&DomainTag::Code, &EntityType::Function, name, source_file),
+            entity_type: EntityType::Function,
+            label: name.to_owned(),
+            source_file: Some(source_file.to_owned()),
+            source_location: None,
+            file_type: FileType::Code,
+            metadata: serde_json::json!({}),
+            legacy_id: None,
+        }
+    }
+
+    fn rel(src_name: &str, src_file: &str, tgt_name: &str, tgt_file: &str) -> Relationship {
+        Relationship {
+            source: EntityId::new(&DomainTag::Code, &EntityType::Function, src_name, src_file),
+            target: EntityId::new(&DomainTag::Code, &EntityType::Function, tgt_name, tgt_file),
+            relation_type: RelationType::Calls,
+            confidence: Confidence::Extracted,
+            weight: 1.0,
+            source_file: None,
+            source_location: None,
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn pipeline_runs_from_extractions() {
+        let pipeline = Pipeline::new(PipelineConfig::default());
+        let ext = extraction(
+            vec![entity("a", "a.py"), entity("b", "b.py")],
+            vec![rel("a", "a.py", "b", "b.py")],
+        );
+        let detection = DetectionResult {
+            total_files: 2,
+            total_words: 500,
+            warning: None,
+        };
+        let result = pipeline.run_from_extractions(vec![ext], detection).unwrap();
+        assert_eq!(result.graph.node_count(), 2);
+        assert_eq!(result.graph.edge_count(), 1);
+        assert!(result.analysis.is_some());
+        let analysis = result.analysis.unwrap();
+        assert!(!analysis.communities.is_empty());
+    }
+
+    #[test]
+    fn pipeline_stats_track_counts() {
+        let pipeline = Pipeline::new(PipelineConfig::default());
+        let ext1 = extraction(
+            vec![entity("a", "a.py"), entity("b", "a.py")],
+            vec![rel("a", "a.py", "b", "a.py")],
+        );
+        let ext2 = extraction(
+            vec![entity("c", "c.py")],
+            vec![],
+        );
+        let detection = DetectionResult::default();
+        let result = pipeline
+            .run_from_extractions(vec![ext1, ext2], detection)
+            .unwrap();
+        assert_eq!(result.stats.files_processed, 2);
+        assert_eq!(result.stats.entities_extracted, 3);
+        assert_eq!(result.stats.relationships_extracted, 1);
+        assert_eq!(result.stats.input_tokens, 200);
+    }
+
+    #[test]
+    fn pipeline_handles_partial_failures() {
+        let pipeline = Pipeline::new(PipelineConfig::default());
+        let mut ext = extraction(vec![entity("a", "a.py")], vec![]);
+        ext.errors = vec!["parse error".to_owned()];
+        let detection = DetectionResult::default();
+        let result = pipeline.run_from_extractions(vec![ext], detection);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn pipeline_empty_extractions_ok() {
+        let pipeline = Pipeline::new(PipelineConfig::default());
+        let detection = DetectionResult::default();
+        let result = pipeline.run_from_extractions(vec![], detection).unwrap();
+        assert_eq!(result.graph.node_count(), 0);
+    }
+}

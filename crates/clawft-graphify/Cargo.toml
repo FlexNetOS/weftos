@@ -1,0 +1,69 @@
+[package]
+name = "clawft-graphify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["code-domain"]
+ast-extract = ["dep:tree-sitter"]
+semantic-extract = []
+vision-extract = []
+code-domain = []
+forensic-domain = []
+html-export = ["dep:html-escape"]
+neo4j-export = []
+kernel-bridge = ["dep:clawft-kernel", "dep:async-trait"]
+full = ["ast-extract", "semantic-extract", "vision-extract", "code-domain",
+        "forensic-domain", "html-export", "neo4j-export", "kernel-bridge",
+        "lang-all"]
+
+lang-python = ["ast-extract", "dep:tree-sitter-python"]
+lang-javascript = ["ast-extract", "dep:tree-sitter-javascript"]
+lang-typescript = ["ast-extract", "dep:tree-sitter-typescript"]
+lang-rust = ["ast-extract", "dep:tree-sitter-rust"]
+lang-go = ["ast-extract", "dep:tree-sitter-go"]
+lang-java = ["ast-extract", "dep:tree-sitter-java"]
+lang-c = ["ast-extract", "dep:tree-sitter-c"]
+lang-cpp = ["ast-extract", "dep:tree-sitter-cpp"]
+lang-ruby = ["ast-extract", "dep:tree-sitter-ruby"]
+lang-csharp = ["ast-extract", "dep:tree-sitter-c-sharp"]
+lang-all = ["lang-python", "lang-javascript", "lang-typescript", "lang-rust",
+            "lang-go", "lang-java", "lang-c", "lang-cpp", "lang-ruby", "lang-csharp"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+dashmap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+rayon = { workspace = true }
+petgraph = { workspace = true }
+walkdir = { workspace = true }
+
+# Optional
+tree-sitter = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-rust = { version = "0.23", optional = true }
+tree-sitter-go = { version = "0.23", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+tree-sitter-c = { version = "0.23", optional = true }
+tree-sitter-cpp = { version = "0.23", optional = true }
+tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-c-sharp = { version = "0.23", optional = true }
+html-escape = { version = "0.2", optional = true }
+async-trait = { workspace = true, optional = true }
+clawft-kernel = { workspace = true, optional = true, features = ["ecc"] }
+clawft-llm = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+tempfile = { workspace = true }

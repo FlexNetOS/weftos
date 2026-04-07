@@ -26,6 +26,7 @@ members = [
     "crates/clawft-weave",
     "crates/exo-resource-tree",
     "crates/weftos",
+    "crates/clawft-graphify",
 ]
 exclude = [
     "gui/src-tauri",
@@ -172,10 +173,16 @@ clawft-plugin-treesitter = { version = "0.5.0", path = "crates/clawft-plugin-tre
 clawft-plugin-browser = { version = "0.5.0", path = "crates/clawft-plugin-browser" }
 clawft-plugin-calendar = { version = "0.5.0", path = "crates/clawft-plugin-calendar" }
 clawft-plugin-containers = { version = "0.5.0", path = "crates/clawft-plugin-containers" }
+clawft-graphify = { version = "0.5.0", path = "crates/clawft-graphify", default-features = false }
 clawft-security = { version = "0.5.0", path = "crates/clawft-security" }
 clawft-kernel = { version = "0.5.0", path = "crates/clawft-kernel", default-features = false }
 exo-resource-tree = { version = "0.5.0", path = "crates/exo-resource-tree" }
 weftos = { version = "0.5.0", path = "crates/weftos", default-features = false }
+
+# Graph library
+petgraph = "0.7"
+rayon = "1.10"
+walkdir = "2"
 
 # Testing
 insta = { version = "1.39", features = ["json"] }

@@ -73,6 +73,9 @@ enum Commands {
     /// ECC cognitive substrate management (status, calibrate, search).
     Ecc(commands::ecc_cmd::EccArgs),
 
+    /// Knowledge graph extraction, query, and export (graphify).
+    Graphify(commands::graphify_cmd::GraphifyArgs),
+
     /// Initialize development environment (install skills, verify tools).
     Init(commands::init_cmd::InitArgs),
 
@@ -104,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(unix)]
         Commands::Console(args) => commands::console_cmd::run(args).await?,
         Commands::Ecc(args) => commands::ecc_cmd::run(args).await?,
+        Commands::Graphify(args) => commands::graphify_cmd::run(args).await?,
         Commands::Init(args) => commands::init_cmd::run(args).await?,
         Commands::Version => {
             println!("weaver {} (WeftOS)", env!("CARGO_PKG_VERSION"));
