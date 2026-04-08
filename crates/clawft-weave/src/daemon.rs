@@ -1855,6 +1855,105 @@ async fn dispatch(
                 }
             }
         }
+        // ── ECC methods ────────────────────────────────────────
+        #[cfg(feature = "ecc")]
+        "ecc.status" => {
+            let k = kernel.read().await;
+            let hnsw_count = k.ecc_hnsw().map(|h| h.len()).unwrap_or(0);
+            let tick_info = k.ecc_tick().map(|t| {
+                serde_json::json!({
+                    "interval_ms": 50,
+                    "running": true,
+                })
+            });
+            let causal_stats = k.ecc_causal().map(|g| {
+                serde_json::json!({
+                    "nodes": g.node_count(),
+                    "edges": g.edge_count(),
+                })
+            });
+            let crossref_count = k.ecc_crossrefs().map(|c| c.count()).unwrap_or(0);
+            Response::success(serde_json::json!({
+                "enabled": k.ecc_hnsw().is_some(),
+                "hnsw_entries": hnsw_count,
+                "cognitive_tick": tick_info,
+                "causal_graph": causal_stats,
+                "crossref_count": crossref_count,
+            }))
+        }
+        #[cfg(feature = "ecc")]
+        "ecc.calibrate" => {
+            let k = kernel.read().await;
+            if let Some(cal) = k.ecc_calibration() {
+                Response::success(serde_json::to_value(cal).unwrap_or_default())
+            } else {
+                Response::error("ECC not initialized or calibration not complete")
+            }
+        }
+        #[cfg(feature = "ecc")]
+        "ecc.search" => {
+            let k = kernel.read().await;
+            if let Some(hnsw) = k.ecc_hnsw() {
+                Response::success(serde_json::json!({
+                    "available": true,
+                    "entries": hnsw.len(),
+                    "search_count": hnsw.search_count(),
+                    "hint": "use agent tools (ecc/search) for semantic queries — vector embedding required"
+                }))
+            } else {
+                Response::error("HNSW not available")
+            }
+        }
+        #[cfg(feature = "ecc")]
+        "ecc.causal" => {
+            let node_id = params.get("node_id").and_then(|v| v.as_u64());
+            let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+            let k = kernel.read().await;
+            if let Some(graph) = k.ecc_causal() {
+                if let Some(id) = node_id {
+                    let neighbors = graph.traverse_forward(id, depth);
+                    Response::success(serde_json::json!({
+                        "node_id": id,
+                        "depth": depth,
+                        "reachable": neighbors.len(),
+                        "nodes": neighbors,
+                    }))
+                } else {
+                    Response::success(serde_json::json!({
+                        "nodes": graph.node_count(),
+                        "edges": graph.edge_count(),
+                        "components": graph.connected_components().len(),
+                    }))
+                }
+            } else {
+                Response::error("causal graph not available")
+            }
+        }
+        #[cfg(feature = "ecc")]
+        "ecc.tick" => {
+            let k = kernel.read().await;
+            let cal = k.ecc_calibration();
+            if k.ecc_tick().is_some() {
+                Response::success(serde_json::json!({
+                    "running": true,
+                    "interval_ms": cal.map(|c| c.tick_interval_ms).unwrap_or(50),
+                    "spectral_capable": cal.map(|c| c.spectral_capable).unwrap_or(false),
+                }))
+            } else {
+                Response::success(serde_json::json!({"running": false}))
+            }
+        }
+        #[cfg(feature = "ecc")]
+        "ecc.crossrefs" => {
+            let k = kernel.read().await;
+            if let Some(crossrefs) = k.ecc_crossrefs() {
+                Response::success(serde_json::json!({
+                    "count": crossrefs.count(),
+                }))
+            } else {
+                Response::error("crossref store not available")
+            }
+        }
         "ping" => Response::success(serde_json::json!("pong")),
         other => Response::error(format!("unknown method: {other}")),
     }

@@ -16,6 +16,11 @@ fn default_health_check_interval_secs() -> u64 {
     30
 }
 
+/// Kernel is enabled by default.
+fn default_enabled() -> bool {
+    true
+}
+
 /// Cluster networking configuration for distributed WeftOS nodes.
 ///
 /// Controls the ruvector-powered clustering layer that coordinates
@@ -114,9 +119,9 @@ impl Default for ClusterNetworkConfig {
 pub struct KernelConfig {
     /// Whether the kernel subsystem is enabled.
     ///
-    /// When `false` (the default), kernel subsystems do not activate
-    /// unless explicitly invoked via `weave kernel` CLI commands.
-    #[serde(default)]
+    /// When `false`, kernel subsystems do not activate unless explicitly
+    /// invoked via `weave kernel` CLI commands. Defaults to `true`.
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
 
     /// Maximum number of concurrent processes in the process table.
@@ -146,7 +151,7 @@ pub struct KernelConfig {
 impl Default for KernelConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             max_processes: default_max_processes(),
             health_check_interval_secs: default_health_check_interval_secs(),
             cluster: None,
