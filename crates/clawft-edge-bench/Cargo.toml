@@ -1,0 +1,28 @@
+[package]
+name = "clawft-edge-bench"
+version = "0.5.4"
+edition = "2021"
+description = "WeftOS edge benchmark for ESP32-S3"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+esp-idf-svc = "0.51"
+esp-idf-hal = "0.46"
+esp-idf-sys = { version = "0.36", features = ["binstart"] }
+embedded-svc = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+anyhow = "1"
+
+[build-dependencies]
+embuild = "0.33"
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[profile.dev]
+debug = true
+opt-level = "z"
