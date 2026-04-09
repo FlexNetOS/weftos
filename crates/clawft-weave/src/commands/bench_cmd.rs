@@ -112,7 +112,9 @@ async fn run_benchmark(format: &str, iterations: u32) -> anyhow::Result<()> {
         .and_then(|v| v.get("version").and_then(|v| v.as_str().map(String::from)))
         .unwrap_or_else(|| "unknown".to_string());
 
-    // Compute overall score (lower avg latency = higher score)
+    // Compute overall score using weighted sub-scores.
+    // Each test is scored individually against reference thresholds,
+    // then combined. This differentiates fast hardware from slow.
     let successful: Vec<&BenchResult> = results.iter()
         .filter(|r| r.status == "ok")
         .collect();
@@ -120,17 +122,60 @@ async fn run_benchmark(format: &str, iterations: u32) -> anyhow::Result<()> {
     let overall_score = if successful.is_empty() {
         0.0
     } else {
-        let avg_latency: f64 = successful.iter().map(|r| r.avg_us).sum::<f64>()
-            / successful.len() as f64;
-        // Score: 100 for <100us avg, 0 for >10ms avg, linear scale
-        ((10_000.0 - avg_latency) / 100.0).clamp(0.0, 100.0)
+        let mut total_score = 0.0;
+        let mut total_weight = 0.0;
+
+        for r in &successful {
+            // Weight: heavier tests (logs, causal) count more
+            let weight = match r.name.as_str() {
+                "ping" => 0.5,   // transport baseline, less interesting
+                "kernel.logs" => 2.0,  // payload-heavy
+                "ecc.causal" => 2.0,   // graph traversal
+                _ => 1.0,
+            };
+
+            // Score each test on a curve:
+            //   ≤5μs  = 100 (bare metal, optimized)
+            //   10μs  = 90  (fast server)
+            //   20μs  = 75  (good)
+            //   50μs  = 55  (decent)
+            //   100μs = 40  (acceptable)
+            //   500μs = 20  (slow)
+            //   1ms+  = 10  (needs optimization)
+            let test_score = if r.avg_us <= 5.0 {
+                100.0
+            } else if r.avg_us <= 10.0 {
+                90.0 + (10.0 - r.avg_us) * 2.0
+            } else if r.avg_us <= 20.0 {
+                75.0 + (20.0 - r.avg_us) * 1.5
+            } else if r.avg_us <= 50.0 {
+                55.0 + (50.0 - r.avg_us) * (20.0 / 30.0)
+            } else if r.avg_us <= 100.0 {
+                40.0 + (100.0 - r.avg_us) * (15.0 / 50.0)
+            } else if r.avg_us <= 500.0 {
+                20.0 + (500.0 - r.avg_us) * (20.0 / 400.0)
+            } else if r.avg_us <= 1000.0 {
+                10.0 + (1000.0 - r.avg_us) * (10.0 / 500.0)
+            } else {
+                (10.0 - (r.avg_us - 1000.0) / 1000.0).max(0.0)
+            };
+
+            total_score += test_score * weight;
+            total_weight += weight;
+        }
+
+        (total_score / total_weight).clamp(0.0, 100.0)
     };
 
     let grade = match overall_score as u32 {
-        90..=100 => "A+",
-        80..=89 => "A",
-        70..=79 => "B",
-        60..=69 => "C",
+        95..=100 => "A+",
+        90..=94 => "A",
+        85..=89 => "A-",
+        80..=84 => "B+",
+        75..=79 => "B",
+        70..=74 => "B-",
+        65..=69 => "C+",
+        60..=64 => "C",
         50..=59 => "D",
         _ => "F",
     };
