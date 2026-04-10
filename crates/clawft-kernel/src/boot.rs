@@ -83,6 +83,7 @@ pub struct EccSubsystem {
     pub(crate) crossrefs: Option<Arc<crate::crossref::CrossRefStore>>,
     pub(crate) impulses: Option<Arc<crate::impulse::ImpulseQueue>>,
     pub(crate) calibration: Option<crate::calibration::EccCalibration>,
+    pub(crate) vector_backend: Option<Arc<dyn crate::vector_backend::VectorBackend>>,
 }
 
 /// OS-patterns observability: metrics, structured logging, timers,
@@ -1090,13 +1091,17 @@ impl<P: Platform> Kernel<P> {
 
         // 8e. Initialize ECC cognitive substrate (when ecc feature is enabled)
         #[cfg(feature = "ecc")]
-        let (ecc_hnsw, ecc_causal, ecc_tick, ecc_crossrefs, ecc_impulses, ecc_calibration) = {
+        let (ecc_hnsw, ecc_causal, ecc_tick, ecc_crossrefs, ecc_impulses, ecc_calibration, ecc_vector_backend) = {
             use crate::calibration::{EccCalibrationConfig, run_calibration};
             use crate::causal::CausalGraph;
             use crate::cognitive_tick::{CognitiveTick, CognitiveTickConfig};
             use crate::crossref::CrossRefStore;
             use crate::hnsw_service::{HnswService, HnswServiceConfig};
             use crate::impulse::ImpulseQueue;
+            use crate::vector_backend::VectorBackend;
+            use crate::vector_hnsw::HnswBackend;
+            use crate::vector_diskann::{DiskAnnBackend, DiskAnnConfig};
+            use crate::vector_hybrid::{HybridBackend, HybridConfig};
 
             boot_log.push(BootEvent::info(BootPhase::Ecc, "Initializing ECC cognitive substrate"));
 
@@ -1104,6 +1109,67 @@ impl<P: Platform> Kernel<P> {
             let causal = Arc::new(CausalGraph::new());
             let crossrefs = Arc::new(CrossRefStore::new());
             let impulses = Arc::new(ImpulseQueue::new());
+
+            // Construct the vector backend based on kernel config.
+            let vector_config = kernel_config.vector.clone();
+            let vector_backend: Arc<dyn VectorBackend> = match vector_config.as_ref().map(|v| v.backend) {
+                Some(clawft_types::config::VectorBackendKind::DiskAnn) => {
+                    let da_cfg = vector_config.as_ref()
+                        .and_then(|v| v.diskann.as_ref())
+                        .map(|d| DiskAnnConfig {
+                            max_points: d.max_points,
+                            dimensions: d.dimensions,
+                            num_neighbors: d.num_neighbors,
+                            search_list_size: d.search_list_size,
+                            data_path: d.data_path.clone(),
+                            use_pq: d.use_pq,
+                            pq_num_chunks: d.pq_num_chunks,
+                        })
+                        .unwrap_or_default();
+                    boot_log.push(BootEvent::info(BootPhase::Ecc, "Vector backend: DiskANN (stub)"));
+                    Arc::new(DiskAnnBackend::new(da_cfg))
+                }
+                Some(clawft_types::config::VectorBackendKind::Hybrid) => {
+                    let hnsw_cfg = vector_config.as_ref()
+                        .and_then(|v| v.hnsw.as_ref())
+                        .map(|h| HnswServiceConfig {
+                            ef_construction: h.ef_construction,
+                            ef_search: 100,
+                            default_dimensions: 384,
+                        })
+                        .unwrap_or_default();
+                    let da_cfg = vector_config.as_ref()
+                        .and_then(|v| v.diskann.as_ref())
+                        .map(|d| DiskAnnConfig {
+                            max_points: d.max_points,
+                            dimensions: d.dimensions,
+                            num_neighbors: d.num_neighbors,
+                            search_list_size: d.search_list_size,
+                            data_path: d.data_path.clone(),
+                            use_pq: d.use_pq,
+                            pq_num_chunks: d.pq_num_chunks,
+                        })
+                        .unwrap_or_default();
+                    let hybrid_cfg = vector_config.as_ref()
+                        .and_then(|v| v.hybrid.as_ref())
+                        .map(|h| HybridConfig {
+                            hot_capacity: h.hot_capacity,
+                            promotion_threshold: h.promotion_threshold,
+                            eviction_policy: crate::vector_hybrid::EvictionPolicy::Lru,
+                        })
+                        .unwrap_or_default();
+                    boot_log.push(BootEvent::info(
+                        BootPhase::Ecc,
+                        format!("Vector backend: Hybrid (hot={}, threshold={})", hybrid_cfg.hot_capacity, hybrid_cfg.promotion_threshold),
+                    ));
+                    Arc::new(HybridBackend::new(hnsw_cfg, da_cfg, hybrid_cfg))
+                }
+                _ => {
+                    // Default: HNSW only.
+                    boot_log.push(BootEvent::info(BootPhase::Ecc, "Vector backend: HNSW (in-memory)"));
+                    Arc::new(HnswBackend::with_defaults())
+                }
+            };
 
             // Run boot-time calibration
             let cal_config = EccCalibrationConfig::default();
@@ -1153,10 +1219,11 @@ impl<P: Platform> Kernel<P> {
             boot_log.push(BootEvent::info(
                 BootPhase::Ecc,
                 format!(
-                    "ECC ready (hnsw={}, causal={} nodes, tick={}ms)",
+                    "ECC ready (hnsw={}, causal={} nodes, tick={}ms, vector={})",
                     hnsw.len(),
                     causal.node_count(),
                     calibration.tick_interval_ms,
+                    vector_backend.backend_name(),
                 ),
             ));
 
@@ -1167,6 +1234,7 @@ impl<P: Platform> Kernel<P> {
                 Some(crossrefs),
                 Some(impulses),
                 Some(calibration),
+                Some(vector_backend),
             )
         };
 
@@ -1293,6 +1361,7 @@ impl<P: Platform> Kernel<P> {
                 crossrefs: ecc_crossrefs,
                 impulses: ecc_impulses,
                 calibration: ecc_calibration,
+                vector_backend: ecc_vector_backend,
             },
             #[cfg(feature = "os-patterns")]
             observability: ObservabilitySubsystem {
@@ -1514,6 +1583,15 @@ impl<P: Platform> Kernel<P> {
         self.ecc.hnsw.as_ref()
     }
 
+    /// Get the ECC vector backend (if ecc feature enabled).
+    ///
+    /// Returns the configured vector search backend (HNSW, DiskANN,
+    /// or Hybrid) based on the `[kernel.vector]` configuration.
+    #[cfg(feature = "ecc")]
+    pub fn ecc_vector_backend(&self) -> Option<&Arc<dyn crate::vector_backend::VectorBackend>> {
+        self.ecc.vector_backend.as_ref()
+    }
+
     /// Get the ECC causal graph (if ecc feature enabled).
     #[cfg(feature = "ecc")]
     pub fn ecc_causal(&self) -> Option<&Arc<crate::causal::CausalGraph>> {
@@ -1608,6 +1686,7 @@ mod tests {
             cluster: None,
             chain: None,
             resource_tree: None,
+            vector: None,
         }
     }
 
@@ -1745,6 +1824,7 @@ mod tests {
                 enabled: true,
                 checkpoint_path: None,
             }),
+            vector: None,
         }
     }
 
@@ -2144,6 +2224,7 @@ mod tests {
                 enabled: true,
                 checkpoint_path: None,
             }),
+            vector: None,
         }
     }
 

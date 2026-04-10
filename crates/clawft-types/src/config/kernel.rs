@@ -146,6 +146,10 @@ pub struct KernelConfig {
     /// Resource tree configuration (exochain feature).
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "resourceTree")]
     pub resource_tree: Option<ResourceTreeConfig>,
+
+    /// Vector search backend configuration (ECC feature).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector: Option<VectorConfig>,
 }
 
 impl Default for KernelConfig {
@@ -157,6 +161,7 @@ impl Default for KernelConfig {
             cluster: None,
             chain: None,
             resource_tree: None,
+            vector: None,
         }
     }
 }
@@ -258,6 +263,220 @@ impl Default for ResourceTreeConfig {
     }
 }
 
+// ── Vector search backend configuration ──────────────────────────────────
+
+/// Which vector search backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VectorBackendKind {
+    /// In-memory HNSW (default, fast, suitable for <1M vectors).
+    #[default]
+    Hnsw,
+    /// SSD-backed DiskANN (large scale, 1M+ vectors).
+    DiskAnn,
+    /// Hot HNSW cache + cold DiskANN store.
+    Hybrid,
+}
+
+/// HNSW-specific vector configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorHnswConfig {
+    /// ef_construction parameter for index building.
+    #[serde(default = "default_ef_construction")]
+    pub ef_construction: usize,
+
+    /// Number of bi-directional links per node (M parameter).
+    #[serde(default = "default_m")]
+    pub m: usize,
+
+    /// Maximum number of elements the index can hold.
+    #[serde(default = "default_max_elements")]
+    pub max_elements: usize,
+}
+
+fn default_ef_construction() -> usize {
+    200
+}
+fn default_m() -> usize {
+    16
+}
+fn default_max_elements() -> usize {
+    100_000
+}
+
+impl Default for VectorHnswConfig {
+    fn default() -> Self {
+        Self {
+            ef_construction: default_ef_construction(),
+            m: default_m(),
+            max_elements: default_max_elements(),
+        }
+    }
+}
+
+/// DiskANN-specific vector configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorDiskAnnConfig {
+    /// Maximum number of points the index can hold.
+    #[serde(default = "default_diskann_max_points")]
+    pub max_points: usize,
+
+    /// Vector dimensionality.
+    #[serde(default = "default_diskann_dimensions")]
+    pub dimensions: usize,
+
+    /// Number of neighbors per node in the DiskANN graph.
+    #[serde(default = "default_diskann_num_neighbors")]
+    pub num_neighbors: usize,
+
+    /// Size of the search candidate list.
+    #[serde(default = "default_diskann_search_list_size")]
+    pub search_list_size: usize,
+
+    /// Directory path for SSD-backed data files.
+    #[serde(default = "default_diskann_data_path")]
+    pub data_path: String,
+
+    /// Whether to use product quantization for compression.
+    #[serde(default = "default_diskann_use_pq")]
+    pub use_pq: bool,
+
+    /// Number of PQ sub-quantizer chunks.
+    #[serde(default = "default_diskann_pq_num_chunks")]
+    pub pq_num_chunks: usize,
+}
+
+fn default_diskann_max_points() -> usize {
+    10_000_000
+}
+fn default_diskann_dimensions() -> usize {
+    384
+}
+fn default_diskann_num_neighbors() -> usize {
+    64
+}
+fn default_diskann_search_list_size() -> usize {
+    100
+}
+fn default_diskann_data_path() -> String {
+    ".weftos/diskann".to_owned()
+}
+fn default_diskann_use_pq() -> bool {
+    true
+}
+fn default_diskann_pq_num_chunks() -> usize {
+    48
+}
+
+impl Default for VectorDiskAnnConfig {
+    fn default() -> Self {
+        Self {
+            max_points: default_diskann_max_points(),
+            dimensions: default_diskann_dimensions(),
+            num_neighbors: default_diskann_num_neighbors(),
+            search_list_size: default_diskann_search_list_size(),
+            data_path: default_diskann_data_path(),
+            use_pq: default_diskann_use_pq(),
+            pq_num_chunks: default_diskann_pq_num_chunks(),
+        }
+    }
+}
+
+/// Eviction policy for the hybrid backend's hot tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VectorEvictionPolicy {
+    /// Least Recently Used.
+    #[default]
+    Lru,
+}
+
+/// Hybrid backend-specific configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorHybridConfig {
+    /// Maximum number of vectors in the hot (HNSW) tier.
+    #[serde(default = "default_hybrid_hot_capacity")]
+    pub hot_capacity: usize,
+
+    /// Access count threshold before a cold vector is promoted to hot.
+    #[serde(default = "default_hybrid_promotion_threshold")]
+    pub promotion_threshold: u32,
+
+    /// Eviction policy when the hot tier is full.
+    #[serde(default)]
+    pub eviction_policy: VectorEvictionPolicy,
+}
+
+fn default_hybrid_hot_capacity() -> usize {
+    50_000
+}
+fn default_hybrid_promotion_threshold() -> u32 {
+    3
+}
+
+impl Default for VectorHybridConfig {
+    fn default() -> Self {
+        Self {
+            hot_capacity: default_hybrid_hot_capacity(),
+            promotion_threshold: default_hybrid_promotion_threshold(),
+            eviction_policy: VectorEvictionPolicy::default(),
+        }
+    }
+}
+
+/// Unified vector search backend configuration.
+///
+/// Controls which backend is used for the ECC cognitive substrate's
+/// vector search layer.
+///
+/// # Example TOML
+///
+/// ```toml
+/// [kernel.vector]
+/// backend = "hybrid"
+///
+/// [kernel.vector.hnsw]
+/// ef_construction = 200
+/// max_elements = 100000
+///
+/// [kernel.vector.diskann]
+/// max_points = 10000000
+/// data_path = ".weftos/diskann"
+///
+/// [kernel.vector.hybrid]
+/// hot_capacity = 50000
+/// promotion_threshold = 3
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorConfig {
+    /// Which backend to use.
+    #[serde(default)]
+    pub backend: VectorBackendKind,
+
+    /// HNSW-specific settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hnsw: Option<VectorHnswConfig>,
+
+    /// DiskANN-specific settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diskann: Option<VectorDiskAnnConfig>,
+
+    /// Hybrid-specific settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hybrid: Option<VectorHybridConfig>,
+}
+
+impl Default for VectorConfig {
+    fn default() -> Self {
+        Self {
+            backend: VectorBackendKind::default(),
+            hnsw: None,
+            diskann: None,
+            hybrid: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,10 +513,47 @@ mod tests {
             cluster: None,
             chain: None,
             resource_tree: None,
+            vector: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: KernelConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.enabled, cfg.enabled);
         assert_eq!(restored.max_processes, cfg.max_processes);
+    }
+
+    #[test]
+    fn vector_config_defaults() {
+        let cfg = VectorConfig::default();
+        assert_eq!(cfg.backend, VectorBackendKind::Hnsw);
+        assert!(cfg.hnsw.is_none());
+        assert!(cfg.diskann.is_none());
+        assert!(cfg.hybrid.is_none());
+    }
+
+    #[test]
+    fn vector_config_deserialize_hybrid() {
+        let json = r#"{"backend": "hybrid", "hybrid": {"hot_capacity": 1000, "promotion_threshold": 5}}"#;
+        let cfg: VectorConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.backend, VectorBackendKind::Hybrid);
+        let h = cfg.hybrid.unwrap();
+        assert_eq!(h.hot_capacity, 1000);
+        assert_eq!(h.promotion_threshold, 5);
+    }
+
+    #[test]
+    fn vector_config_deserialize_diskann() {
+        let json = r#"{"backend": "diskann", "diskann": {"max_points": 5000000}}"#;
+        let cfg: VectorConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.backend, VectorBackendKind::DiskAnn);
+        let d = cfg.diskann.unwrap();
+        assert_eq!(d.max_points, 5_000_000);
+    }
+
+    #[test]
+    fn kernel_config_with_vector() {
+        let json = r#"{"vector": {"backend": "hnsw"}}"#;
+        let cfg: KernelConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.vector.is_some());
+        assert_eq!(cfg.vector.unwrap().backend, VectorBackendKind::Hnsw);
     }
 }

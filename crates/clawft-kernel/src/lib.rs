@@ -80,6 +80,14 @@ pub mod impulse;
 #[cfg(feature = "ecc")]
 pub mod persistence;
 #[cfg(feature = "ecc")]
+pub mod vector_backend;
+#[cfg(feature = "ecc")]
+pub mod vector_hnsw;
+#[cfg(feature = "ecc")]
+pub mod vector_diskann;
+#[cfg(feature = "ecc")]
+pub mod vector_hybrid;
+#[cfg(feature = "ecc")]
 pub mod weaver;
 
 #[cfg(feature = "native")]
@@ -227,7 +235,10 @@ pub use democritus::{DemocritusConfig, DemocritusLoop, DemocritusTickResult};
 pub use gate::{CapabilityGate, GateBackend, GateDecision, GovernanceGate};
 #[cfg(feature = "exochain")]
 pub use tree_manager::{TreeManager, TreeStats};
-pub use clawft_types::config::{ClusterNetworkConfig, KernelConfig};
+pub use clawft_types::config::{
+    ClusterNetworkConfig, KernelConfig, VectorConfig, VectorBackendKind as VectorBackendKindConfig,
+    VectorDiskAnnConfig, VectorHnswConfig, VectorHybridConfig, VectorEvictionPolicy,
+};
 pub use cluster::{
     ClusterConfig, ClusterError, ClusterMembership, NodeId, NodePlatform, NodeState, PeerNode,
 };
@@ -257,6 +268,14 @@ pub use governance::{
 pub use health::{HealthStatus, HealthSystem, OverallHealth};
 #[cfg(feature = "ecc")]
 pub use hnsw_service::{HnswSearchResult, HnswService, HnswServiceConfig};
+#[cfg(feature = "ecc")]
+pub use vector_backend::{SearchResult as VectorSearchResult, VectorBackend, VectorBackendKind, VectorError, VectorResult};
+#[cfg(feature = "ecc")]
+pub use vector_hnsw::HnswBackend;
+#[cfg(feature = "ecc")]
+pub use vector_diskann::{DiskAnnBackend, DiskAnnConfig};
+#[cfg(feature = "ecc")]
+pub use vector_hybrid::{EvictionPolicy, HybridBackend, HybridConfig};
 #[cfg(feature = "ecc")]
 pub use impulse::{ImpulseQueue, ImpulseType};
 #[cfg(feature = "ecc")]

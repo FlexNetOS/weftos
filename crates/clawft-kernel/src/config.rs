@@ -45,6 +45,7 @@ mod tests {
             cluster: None,
             chain: None,
             resource_tree: None,
+            vector: None,
         };
         let ext = KernelConfigExt::from(base.clone());
         assert_eq!(ext.base.enabled, true);

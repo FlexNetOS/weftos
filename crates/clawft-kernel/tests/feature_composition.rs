@@ -33,6 +33,7 @@ fn minimal_kernel_config() -> KernelConfig {
         cluster: None,
         chain: None,
         resource_tree: None,
+        vector: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn exochain_kernel_config() -> KernelConfig {
             enabled: true,
             checkpoint_path: None,
         }),
+        vector: None,
     }
 }
 
