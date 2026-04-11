@@ -22,6 +22,7 @@
 
 mod client;
 mod protocol;
+pub mod version_check;
 
 pub use client::{is_daemon_running, DaemonClient};
 pub use protocol::{

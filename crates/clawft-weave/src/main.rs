@@ -107,6 +107,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Check for updates (non-blocking, cached 24h)
+    clawft_rpc::version_check::check_for_updates();
+
     match cli.command {
         Commands::Kernel(args) => commands::kernel_cmd::run(args).await?,
         Commands::Agent(args) => commands::agent_cmd::run(args).await?,
