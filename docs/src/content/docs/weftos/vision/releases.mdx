@@ -5,6 +5,28 @@ description: Complete version history for WeftOS from initial development throug
 
 # Release Notes
 
+## v0.6.1 — Graphify Pipeline + Workspace RPC + ECC Calibration
+
+*2026-04-04*
+
+### Graphify Extraction Pipeline
+
+- **`weaver graphify rebuild` now functional**: Runs the full detect -> extract -> build -> cluster -> analyze -> export -> report pipeline, producing `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md`
+- **`weaver graphify ingest <dir>` delegates to the full pipeline** for local directories (equivalent to `rebuild`)
+- **`weaver graphify export <format>` now functional**: Loads the graph JSON, deserializes into a `KnowledgeGraph`, and exports to JSON, HTML, GraphML, Obsidian, Wiki, Cypher, or SVG
+- **Two extraction modes**: Default (file detection + co-location edges, no tree-sitter required) and full AST extraction (with `--features ast-extract`)
+
+### Workspace RPC
+
+- **`weft workspace create/list/load/status/delete` now functional**: Workspace management commands connected to daemon RPC
+
+### Kernel Boot
+
+- **Cognitive tick auto-started** during kernel boot sequence
+- **ECC tick auto-computed** from calibration bands (0.01ms to 1000ms, was hardcoded at 50ms)
+
+---
+
 ## v0.5.5 — Hybrid Vector Search + DiskANN
 
 *2026-04-04*

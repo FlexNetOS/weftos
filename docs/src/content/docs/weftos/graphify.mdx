@@ -21,27 +21,75 @@ Both domains share the same underlying graph infrastructure: BLAKE3-hashed entit
 ## Quick Start
 
 ```bash
-# Ingest a local project
-weaver graphify ingest /path/to/project
+# Scan a project and build the knowledge graph
+weaver graphify rebuild /path/to/project
+
+# View the report
+cat graphify-out/GRAPH_REPORT.md
+
+# Export to interactive HTML
+weaver graphify export html
+
+# Search the graph
+weaver graphify query "authentication"
 
 # Ingest a URL (tweet, arXiv paper, webpage)
 weaver graphify ingest https://arxiv.org/abs/2301.12345
-
-# Query the graph
-weaver graphify query "authentication service"
-
-# Export as interactive HTML
-weaver graphify export html
-
-# Export as Obsidian vault
-weaver graphify export obsidian
 ```
+
+### Example Output
+
+Running `weaver graphify rebuild` on a project produces output like this:
+
+```
+Rebuilding knowledge graph from: /path/to/project
+Scanning files...
+Detected 247 files (189 code, 31 doc, 4 paper, 23 image)
+Skipped 2 sensitive file(s)
+Wrote /path/to/project/graphify-out/graph.json
+Wrote /path/to/project/graphify-out/GRAPH_REPORT.md
+
+Graph summary:
+  Nodes: 247
+  Edges: 1,042
+  Communities: 14
+  Top god node: lib (38 edges)
+  Files processed: 247
+```
+
+The pipeline runs six stages: **detect** (scan files) -> **extract** (build entities) -> **build** (construct graph) -> **cluster** (community detection) -> **analyze** (god nodes, surprising connections, questions) -> **export** (JSON + GRAPH_REPORT.md).
+
+## What Gets Extracted
+
+Graphify operates in two modes depending on available features.
+
+### Default (no tree-sitter)
+
+Without the `ast-extract` feature, the pipeline uses file detection and builds a file-level knowledge graph:
+
+- **File detection**: Scans the project tree for code, document, paper, and image files (30+ extensions). Sensitive files (`.env`, credentials) are skipped automatically.
+- **File-level entities**: Each detected file becomes a node in the graph, typed by category (`Module` for code files, `document`/`paper`/`image` custom types for others).
+- **Co-location edges**: Files in the same directory are connected via `RelatedTo` edges with `Inferred` confidence, using a star topology (first file in each directory becomes the hub). Directories with fewer than 2 or more than 50 files are excluded to reduce noise.
+- **Analysis output**: The report includes file counts by type, community clustering via label propagation, and god nodes (the most-connected files that represent coupling hotspots).
+
+This mode requires no tree-sitter dependencies and works on any project.
+
+### With tree-sitter (`--features ast-extract`)
+
+With the `ast-extract` feature (and one or more `lang-*` features), the pipeline performs full AST extraction:
+
+- **Structural AST walk**: Extracts classes, structs, functions, interfaces, enums, imports, and constants from source files using tree-sitter grammars.
+- **Call graph inference**: Second pass connects function calls across files, building `Calls`, `Imports`, `ImportsFrom`, `Extends`, `Implements`, and `MethodOf` relationships.
+- **Rationale comments**: Extracts TODO, FIXME, and doc comments as metadata on entities.
+- **Supported languages**: Python, JavaScript/TypeScript, Rust, Go (plus Java, C, C++, Ruby, C# with their respective feature flags).
+
+See the [Supported Languages](#supported-languages) table for the full list of languages and extracted entity types.
 
 ## CLI Reference
 
 ### `weaver graphify ingest <path|url>`
 
-Ingest a local path or URL into the knowledge graph. Local paths run the extraction pipeline (tree-sitter AST + call graph inference). URLs are fetched, classified, and saved as annotated markdown for re-extraction.
+Ingest a local path or URL into the knowledge graph. Local directories delegate to the full extraction pipeline (detect, extract, build, cluster, analyze, export) — equivalent to `weaver graphify rebuild <dir>`. URLs are fetched, classified, and saved as annotated markdown for re-extraction.
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -84,7 +132,7 @@ Matching nodes:
 
 ### `weaver graphify export <format> [output]`
 
-Export the knowledge graph to a file or directory.
+Export the knowledge graph to a file or directory. Loads the graph from JSON, deserializes it into a `KnowledgeGraph`, and writes the output in the requested format. Supported formats: `json`, `html`, `graphml`, `obsidian`, `wiki`, `cypher`, `svg`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
