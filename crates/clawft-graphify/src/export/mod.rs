@@ -29,6 +29,20 @@ pub enum ExportFormat {
 }
 
 impl ExportFormat {
+    /// Parse a format string into an `ExportFormat`.
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "json" => Some(Self::Json),
+            "graphml" => Some(Self::GraphMl),
+            "cypher" => Some(Self::Cypher),
+            "html" => Some(Self::Html),
+            "obsidian" => Some(Self::Obsidian),
+            "svg" => Some(Self::Svg),
+            "wiki" => Some(Self::Wiki),
+            _ => None,
+        }
+    }
+
     /// File extension for this format.
     pub fn extension(&self) -> &str {
         match self {
@@ -54,6 +68,14 @@ pub fn export(
 ) -> Result<(), GraphifyError> {
     match format {
         ExportFormat::Json => json::to_json(kg, output),
+        ExportFormat::Obsidian => {
+            obsidian::to_obsidian_vault(kg, output)?;
+            Ok(())
+        }
+        ExportFormat::Wiki => {
+            wiki::to_wiki(kg, output, &[], None)?;
+            Ok(())
+        }
         _ => Err(GraphifyError::ExportError(format!(
             "Export format {:?} not yet implemented",
             format,

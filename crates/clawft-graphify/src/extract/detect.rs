@@ -11,7 +11,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-use crate::model::FileType;
+use crate::entity::FileType;
 use crate::GraphifyError;
 
 // ── Extension sets ──────────────────────────────────────────────────────────

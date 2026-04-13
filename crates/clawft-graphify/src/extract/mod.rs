@@ -1,8 +1,16 @@
 //! Extraction pipeline: file discovery, AST extraction, semantic extraction.
 //!
-//! This module is gated behind the `ast-extract` feature. Semantic and vision
-//! extraction live in sibling modules gated behind their own features.
+//! The `detect` sub-module is always available (filesystem scanning only).
+//! AST extraction (`ast`) and cross-file analysis (`cross_file`) are gated
+//! behind the `ast-extract` feature.
 
-// Re-export sub-modules as they are implemented.
-// Phase 1-3 modules (AST, detect, lang, cross_file) will live here.
-// For now we just declare the module structure.
+pub mod detect;
+
+#[cfg(feature = "ast-extract")]
+pub mod ast;
+
+#[cfg(feature = "ast-extract")]
+pub mod cross_file;
+
+#[cfg(feature = "ast-extract")]
+pub mod lang;

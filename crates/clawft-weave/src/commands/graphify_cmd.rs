@@ -10,6 +10,7 @@
 //! - `weaver graphify hooks install|uninstall|status` -- manage git hooks
 
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Knowledge graph management subcommand.
@@ -191,8 +192,12 @@ async fn run_ingest(
         if !path.exists() {
             anyhow::bail!("Path does not exist: {target}");
         }
-        println!("Local path ingestion: would run extraction pipeline on {target}");
-        println!("(Full pipeline integration pending -- use `weaver graphify rebuild` for now)");
+        if path.is_dir() {
+            run_graphify_pipeline(path)?;
+        } else {
+            println!("Single-file ingestion not yet supported. Pass a directory.");
+            println!("Hint: use `weaver graphify rebuild` to scan from the project root.");
+        }
     }
     Ok(())
 }
@@ -288,16 +293,40 @@ async fn run_export(
     println!("Exporting graph as {format} to {}", output.display());
     println!("Source: {}", graph_path.display());
 
-    match format_lower.as_str() {
-        "obsidian" | "wiki" => {
-            println!("Directory export: would create {}", output.display());
+    // Parse the export format
+    let export_format = clawft_graphify::export::ExportFormat::from_str_loose(&format_lower)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Unknown export format: {format}. Supported: json, graphml, cypher, html, obsidian, svg, wiki"
+        ))?;
+
+    // Load the graph JSON and deserialize into a KnowledgeGraph
+    let data = std::fs::read_to_string(graph_path)?;
+    let json_value: serde_json::Value = serde_json::from_str(&data)?;
+
+    // build_from_json expects "nodes" and "edges" keys, but our export uses
+    // "nodes" and "links". Remap "links" -> "edges" if needed.
+    let json_for_build = if json_value.get("edges").is_none() && json_value.get("links").is_some() {
+        let mut obj = json_value.clone();
+        if let Some(links) = obj.get("links").cloned() {
+            obj.as_object_mut().unwrap().insert("edges".to_string(), links);
         }
-        _ => {
-            println!("File export: would write to {}", output.display());
-        }
+        obj
+    } else {
+        json_value
+    };
+
+    let kg = clawft_graphify::build::build_from_json(&json_for_build)
+        .map_err(|e| anyhow::anyhow!("Failed to load graph: {e}"))?;
+
+    // Ensure parent directory exists for the output
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
     }
 
-    println!("(Export pipeline integration pending)");
+    clawft_graphify::export::export(&kg, export_format, output)
+        .map_err(|e| anyhow::anyhow!("Export failed: {e}"))?;
+
+    println!("Export complete: {}", output.display());
     Ok(())
 }
 
@@ -347,10 +376,218 @@ async fn run_rebuild(root: &std::path::Path, clean: bool) -> anyhow::Result<()> 
         }
     }
 
-    println!("(Full extraction pipeline integration pending)");
-    println!("Would scan {} for code and document files, extract entities and relationships,", root.display());
-    println!("build the graph, cluster into communities, and write graphify-out/.");
+    run_graphify_pipeline(root)
+}
+
+/// Shared extraction pipeline used by both `rebuild` and local `ingest`.
+fn run_graphify_pipeline(root: &std::path::Path) -> anyhow::Result<()> {
+    use clawft_graphify::extract::detect;
+    use clawft_graphify::pipeline::{Pipeline, PipelineConfig};
+    use clawft_graphify::export;
+    use clawft_graphify::report;
+
+    // 1. Detect files
+    println!("Scanning files...");
+    let detection = detect::detect(root)
+        .map_err(|e| anyhow::anyhow!("Detection failed: {e}"))?;
+
+    println!(
+        "Detected {} files ({} code, {} doc, {} paper, {} image)",
+        detection.total_files,
+        detection.files.get("code").map(|v| v.len()).unwrap_or(0),
+        detection.files.get("document").map(|v| v.len()).unwrap_or(0),
+        detection.files.get("paper").map(|v| v.len()).unwrap_or(0),
+        detection.files.get("image").map(|v| v.len()).unwrap_or(0),
+    );
+
+    if !detection.skipped_sensitive.is_empty() {
+        println!(
+            "Skipped {} sensitive file(s)",
+            detection.skipped_sensitive.len()
+        );
+    }
+
+    if let Some(ref warning) = detection.warning {
+        println!("Note: {warning}");
+    }
+
+    // 2. Build extraction results from detected files.
+    //    Without tree-sitter (ast-extract feature), we create file-level
+    //    entities from detection results rather than parsing ASTs.
+    let extractions = build_extractions_from_detection(&detection);
+
+    // Convert detect::DetectionResult -> model::DetectionResult for pipeline
+    let pipeline_detection = clawft_graphify::model::DetectionResult {
+        total_files: detection.total_files,
+        total_words: detection.total_words,
+        warning: detection.warning.clone(),
+    };
+
+    // 3. Run the pipeline: build -> cluster -> analyze
+    let config = PipelineConfig::default();
+    let pipeline = Pipeline::new(config);
+    let result = pipeline
+        .run_from_extractions(extractions, pipeline_detection.clone())
+        .map_err(|e| anyhow::anyhow!("Pipeline failed: {e}"))?;
+
+    // 4. Ensure output directory exists
+    let out_dir = root.join("graphify-out");
+    std::fs::create_dir_all(&out_dir)?;
+
+    // 5. Store community assignments on the graph for export
+    let mut graph = result.graph;
+    if let Some(ref analysis) = result.analysis {
+        graph.communities = Some(analysis.communities.clone());
+    }
+
+    // 6. Export to JSON
+    let json_path = out_dir.join("graph.json");
+    export::export(
+        &graph,
+        export::ExportFormat::Json,
+        &json_path,
+    )
+    .map_err(|e| anyhow::anyhow!("JSON export failed: {e}"))?;
+    println!("Wrote {}", json_path.display());
+
+    // 7. Generate GRAPH_REPORT.md
+    if let Some(ref analysis) = result.analysis {
+        let token_cost = report::TokenCost {
+            input: result.stats.input_tokens as usize,
+            output: result.stats.output_tokens as usize,
+        };
+        let root_str = root.to_string_lossy();
+        let report_content =
+            report::generate(&graph, analysis, &pipeline_detection, &token_cost, &root_str);
+        let report_path = out_dir.join("GRAPH_REPORT.md");
+        std::fs::write(&report_path, &report_content)?;
+        println!("Wrote {}", report_path.display());
+    }
+
+    // 8. Print summary
+    println!("\nGraph summary:");
+    println!("  Nodes: {}", graph.node_count());
+    println!("  Edges: {}", graph.edge_count());
+    if let Some(ref analysis) = result.analysis {
+        println!("  Communities: {}", analysis.communities.len());
+        if !analysis.god_nodes.is_empty() {
+            println!(
+                "  Top god node: {} ({} edges)",
+                analysis.god_nodes[0].label, analysis.god_nodes[0].edges
+            );
+        }
+    }
+    println!("  Files processed: {}", result.stats.files_processed);
+
     Ok(())
+}
+
+/// Build `ExtractionResult`s from file detection without requiring tree-sitter.
+///
+/// Creates one entity per detected file, with relationships between files in
+/// the same directory (co-location relationship). This gives a useful graph
+/// structure even without AST parsing.
+fn build_extractions_from_detection(
+    detection: &clawft_graphify::extract::detect::DetectionResult,
+) -> Vec<clawft_graphify::ExtractionResult> {
+    use clawft_graphify::entity::{DomainTag, EntityId, EntityType, FileType};
+    use clawft_graphify::model::{Entity, ExtractionResult};
+    use clawft_graphify::relationship::{Confidence, RelationType, Relationship};
+
+    let mut extractions: Vec<ExtractionResult> = Vec::new();
+
+    // Map of directory -> list of entity IDs in that directory (for co-location edges)
+    let mut dir_entities: HashMap<String, Vec<(EntityId, String)>> = HashMap::new();
+
+    let type_map: &[(&str, FileType, EntityType)] = &[
+        ("code", FileType::Code, EntityType::Module),
+        ("document", FileType::Document, EntityType::Custom("document".into())),
+        ("paper", FileType::Paper, EntityType::Custom("paper".into())),
+        ("image", FileType::Image, EntityType::Custom("image".into())),
+    ];
+
+    for &(key, ref file_type, ref entity_type) in type_map {
+        let files = match detection.files.get(key) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        for file_path in files {
+            let label = std::path::Path::new(file_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(file_path)
+                .to_string();
+
+            let domain = match file_type {
+                FileType::Code => DomainTag::Code,
+                _ => DomainTag::Forensic,
+            };
+
+            let id = EntityId::new(&domain, entity_type, &label, file_path);
+
+            // Track directory for co-location relationships
+            let dir = std::path::Path::new(file_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            dir_entities
+                .entry(dir)
+                .or_default()
+                .push((id.clone(), label.clone()));
+
+            let entity = Entity {
+                id,
+                entity_type: entity_type.clone(),
+                label,
+                source_file: Some(file_path.clone()),
+                source_location: None,
+                file_type: file_type.clone(),
+                metadata: serde_json::json!({}),
+                legacy_id: Some(file_path.clone()),
+            };
+
+            extractions.push(ExtractionResult {
+                source_file: file_path.clone(),
+                entities: vec![entity],
+                relationships: vec![],
+                hyperedges: vec![],
+                input_tokens: 0,
+                output_tokens: 0,
+                errors: vec![],
+            });
+        }
+    }
+
+    // Add co-location relationships: files in the same directory are related.
+    // Only create edges within reasonably-sized directories to avoid noise.
+    for (_, entities) in &dir_entities {
+        if entities.len() < 2 || entities.len() > 50 {
+            continue;
+        }
+        // Connect first entity to all others in the directory (star topology)
+        let (hub_id, _) = &entities[0];
+        for (other_id, _) in entities.iter().skip(1) {
+            let rel = Relationship {
+                source: hub_id.clone(),
+                target: other_id.clone(),
+                relation_type: RelationType::RelatedTo,
+                confidence: Confidence::Inferred,
+                weight: 0.5,
+                source_file: None,
+                source_location: None,
+                metadata: serde_json::json!({"co_located": true}),
+            };
+            // Append to the first extraction for this directory's hub
+            if let Some(ext) = extractions.iter_mut().find(|e| {
+                e.entities.first().map(|ent| &ent.id) == Some(hub_id)
+            }) {
+                ext.relationships.push(rel);
+            }
+        }
+    }
+
+    extractions
 }
 
 async fn run_watch(root: &std::path::Path, debounce: f64) -> anyhow::Result<()> {
