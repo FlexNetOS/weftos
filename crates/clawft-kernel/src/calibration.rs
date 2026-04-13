@@ -291,7 +291,7 @@ mod tests {
     fn default_config() {
         let cfg = EccCalibrationConfig::default();
         assert_eq!(cfg.calibration_ticks, 30);
-        assert_eq!(cfg.tick_interval_ms, 50);
+        assert_eq!(cfg.tick_interval_ms, 0); // 0 = auto-computed from calibration
         assert!((cfg.tick_budget_ratio - 0.3).abs() < f32::EPSILON);
         assert_eq!(cfg.vector_dimensions, 384);
     }

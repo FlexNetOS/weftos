@@ -1114,6 +1114,7 @@ impl<P: Platform> Kernel<P> {
             use crate::calibration::{EccCalibrationConfig, run_calibration};
             use crate::causal::CausalGraph;
             use crate::cognitive_tick::{CognitiveTick, CognitiveTickConfig};
+            use crate::service::SystemService;
             use crate::crossref::CrossRefStore;
             use crate::hnsw_service::{HnswService, HnswServiceConfig};
             use crate::impulse::ImpulseQueue;
@@ -1218,6 +1219,13 @@ impl<P: Platform> Kernel<P> {
             }
             if let Err(e) = service_registry.register(tick.clone()) {
                 tracing::debug!(error = %e, "failed to register cognitive tick service");
+            }
+
+            // Start the cognitive tick service explicitly -- start_all() ran
+            // before ECC init so this service was never started, which caused
+            // health checks to report "degraded - cognitive tick not running".
+            if let Err(e) = tick.start().await {
+                tracing::warn!(error = %e, "failed to start cognitive tick service");
             }
 
             // Log calibration to chain

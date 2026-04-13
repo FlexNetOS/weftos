@@ -2065,6 +2065,225 @@ async fn dispatch(
         }
 
         "ping" => Response::success(serde_json::json!("pong")),
+
+        // ── Workspace methods ─────────────────────────────────────────
+        "workspace.create" => {
+            use clawft_core::workspace::WorkspaceManager;
+
+            let name = match params["name"].as_str() {
+                Some(n) => n,
+                None => return Response::error("missing required param: name"),
+            };
+            let dir = params["dir"]
+                .as_str()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
+            match WorkspaceManager::new() {
+                Ok(mut mgr) => match mgr.create(name, &dir) {
+                    Ok(path) => Response::success(serde_json::json!({
+                        "name": name,
+                        "path": path.display().to_string(),
+                    })),
+                    Err(e) => Response::error(format!("workspace create failed: {e}")),
+                },
+                Err(e) => Response::error(format!("workspace manager init failed: {e}")),
+            }
+        }
+        "workspace.list" => {
+            use clawft_core::workspace::WorkspaceManager;
+
+            match WorkspaceManager::new() {
+                Ok(mgr) => {
+                    let entries: Vec<serde_json::Value> = mgr
+                        .list()
+                        .iter()
+                        .map(|e| {
+                            let exists = e.path.join(".clawft").is_dir();
+                            serde_json::json!({
+                                "name": e.name,
+                                "path": e.path.display().to_string(),
+                                "status": if exists { "ok" } else { "MISSING" },
+                                "last_accessed": e.last_accessed
+                                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                                    .unwrap_or_else(|| "-".into()),
+                            })
+                        })
+                        .collect();
+                    Response::success(serde_json::to_value(entries).unwrap())
+                }
+                Err(e) => Response::error(format!("workspace manager init failed: {e}")),
+            }
+        }
+        "workspace.load" => {
+            use clawft_core::workspace::WorkspaceManager;
+
+            let name_or_path = params["name_or_path"]
+                .as_str()
+                .or_else(|| params["name"].as_str());
+            let name_or_path = match name_or_path {
+                Some(n) => n,
+                None => return Response::error("missing required param: name_or_path"),
+            };
+
+            match WorkspaceManager::new() {
+                Ok(mut mgr) => match mgr.load(name_or_path) {
+                    Ok(path) => Response::success(serde_json::json!({
+                        "path": path.display().to_string(),
+                    })),
+                    Err(e) => Response::error(format!("workspace load failed: {e}")),
+                },
+                Err(e) => Response::error(format!("workspace manager init failed: {e}")),
+            }
+        }
+        "workspace.status" => {
+            use clawft_core::workspace::{WorkspaceManager, discover_workspace};
+
+            let ws_path = match discover_workspace() {
+                Some(p) => p,
+                None => return Response::error("no workspace found"),
+            };
+
+            match WorkspaceManager::new() {
+                Ok(mgr) => match mgr.status(&ws_path) {
+                    Ok(status) => Response::success(serde_json::json!({
+                        "name": status.name,
+                        "path": status.path.display().to_string(),
+                        "session_count": status.session_count,
+                        "has_config": status.has_config,
+                        "has_clawft_md": status.has_clawft_md,
+                    })),
+                    Err(e) => Response::error(format!("workspace status failed: {e}")),
+                },
+                Err(e) => Response::error(format!("workspace manager init failed: {e}")),
+            }
+        }
+        "workspace.delete" => {
+            use clawft_core::workspace::WorkspaceManager;
+
+            let name = match params["name"].as_str() {
+                Some(n) => n,
+                None => return Response::error("missing required param: name"),
+            };
+
+            match WorkspaceManager::new() {
+                Ok(mut mgr) => match mgr.delete(name) {
+                    Ok(()) => Response::success(serde_json::json!({ "deleted": name })),
+                    Err(e) => Response::error(format!("workspace delete failed: {e}")),
+                },
+                Err(e) => Response::error(format!("workspace manager init failed: {e}")),
+            }
+        }
+        "workspace.config.set" => {
+            use clawft_core::workspace::discover_workspace;
+
+            let key = match params["key"].as_str() {
+                Some(k) => k,
+                None => return Response::error("missing required param: key"),
+            };
+            let value = match params["value"].as_str() {
+                Some(v) => v,
+                None => return Response::error("missing required param: value"),
+            };
+
+            let ws_path = match discover_workspace() {
+                Some(p) => p,
+                None => return Response::error("no workspace found"),
+            };
+
+            let config_path = ws_path.join(".clawft").join("config.json");
+            let mut config: serde_json::Value = if config_path.exists() {
+                match std::fs::read_to_string(&config_path) {
+                    Ok(content) => serde_json::from_str(&content).unwrap_or(serde_json::json!({})),
+                    Err(_) => serde_json::json!({}),
+                }
+            } else {
+                serde_json::json!({})
+            };
+
+            // Navigate/create nested keys using dot notation
+            let parts: Vec<&str> = key.split('.').collect();
+            let mut current = &mut config;
+            for part in &parts[..parts.len() - 1] {
+                if !current.is_object() {
+                    *current = serde_json::json!({});
+                }
+                current = current
+                    .as_object_mut()
+                    .unwrap()
+                    .entry(*part)
+                    .or_insert_with(|| serde_json::json!({}));
+            }
+            let last = parts[parts.len() - 1];
+            // Parse value as JSON primitive
+            let json_value = if value == "true" {
+                serde_json::Value::Bool(true)
+            } else if value == "false" {
+                serde_json::Value::Bool(false)
+            } else if let Ok(n) = value.parse::<i64>() {
+                serde_json::Value::Number(n.into())
+            } else {
+                serde_json::Value::String(value.into())
+            };
+            if !current.is_object() {
+                *current = serde_json::json!({});
+            }
+            current.as_object_mut().unwrap().insert(last.into(), json_value);
+
+            match std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()) {
+                Ok(()) => Response::success(serde_json::json!({ "key": key, "value": value })),
+                Err(e) => Response::error(format!("failed to write config: {e}")),
+            }
+        }
+        "workspace.config.get" => {
+            use clawft_core::workspace::discover_workspace;
+
+            let key = match params["key"].as_str() {
+                Some(k) => k,
+                None => return Response::error("missing required param: key"),
+            };
+
+            let ws_path = match discover_workspace() {
+                Some(p) => p,
+                None => return Response::error("no workspace found"),
+            };
+
+            let config_path = ws_path.join(".clawft").join("config.json");
+            if !config_path.exists() {
+                return Response::success(serde_json::Value::Null);
+            }
+
+            match std::fs::read_to_string(&config_path) {
+                Ok(content) => {
+                    let config: serde_json::Value =
+                        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+                    let mut current = &config;
+                    for part in key.split('.') {
+                        match current.get(part) {
+                            Some(v) => current = v,
+                            None => return Response::success(serde_json::Value::Null),
+                        }
+                    }
+                    Response::success(current.clone())
+                }
+                Err(e) => Response::error(format!("failed to read config: {e}")),
+            }
+        }
+        "workspace.config.reset" => {
+            use clawft_core::workspace::discover_workspace;
+
+            let ws_path = match discover_workspace() {
+                Some(p) => p,
+                None => return Response::error("no workspace found"),
+            };
+
+            let config_path = ws_path.join(".clawft").join("config.json");
+            match std::fs::write(&config_path, "{}\n") {
+                Ok(()) => Response::success(serde_json::json!({ "reset": true })),
+                Err(e) => Response::error(format!("failed to reset config: {e}")),
+            }
+        }
+
         other => Response::error(format!("unknown method: {other}")),
     }
 }
