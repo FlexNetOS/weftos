@@ -23,9 +23,11 @@ use crate::hnsw_service::HnswService;
 pub struct EccCalibrationConfig {
     /// Number of synthetic ticks to execute during calibration.
     pub calibration_ticks: u32,
-    /// Initial tick interval in milliseconds (may be auto-raised).
+    /// Minimum tick interval in milliseconds. The auto-computed band
+    /// will never go below this floor. Set to 0 for fully auto mode.
     pub tick_interval_ms: u32,
     /// Target compute-time / tick-interval ratio (e.g. 0.3 = 30%).
+    /// Lower = more headroom but slower ticks. Higher = tighter but faster.
     pub tick_budget_ratio: f32,
     /// Dimensionality of synthetic test vectors.
     pub vector_dimensions: usize,
@@ -35,7 +37,7 @@ impl Default for EccCalibrationConfig {
     fn default() -> Self {
         Self {
             calibration_ticks: 30,
-            tick_interval_ms: 50,
+            tick_interval_ms: 0, // 0 = fully auto-computed from calibration
             tick_budget_ratio: 0.3,
             vector_dimensions: 384,
         }
@@ -172,15 +174,66 @@ pub fn run_calibration(
     hnsw.clear();
     causal.clear();
 
-    // Auto-adjust tick interval: ensure at least config.tick_interval_ms,
-    // but raise it if p95 / budget_ratio exceeds the configured value.
+    // Auto-compute tick interval from calibration results.
+    //
+    // Select the tightest band from the standard set that gives the
+    // ECC at least `tick_budget_ratio` headroom:
+    //
+    //   required = p95 / budget_ratio
+    //   tick     = smallest band >= required
+    //
+    // Bands (ms): 0.01, 0.05, 0.1, 0.25, 0.5, 1, 10, 25, 50, 100, 500, 1000
+    //
+    // Example: p95=24μs, budget=30% → required=0.08ms → band=0.1ms (10,000 Hz)
+    const TICK_BANDS_US: &[u64] = &[
+        10,      // 0.01ms — 100,000 Hz (extreme real-time)
+        50,      // 0.05ms —  20,000 Hz
+        100,     // 0.1ms  —  10,000 Hz
+        250,     // 0.25ms —   4,000 Hz (hard real-time)
+        500,     // 0.5ms  —   2,000 Hz
+        1_000,   // 1ms    —   1,000 Hz (servo control)
+        10_000,  // 10ms   —     100 Hz (fast planning)
+        25_000,  // 25ms   —      40 Hz
+        50_000,  // 50ms   —      20 Hz (default planning)
+        100_000, // 100ms  —      10 Hz
+        500_000, // 500ms  —       2 Hz (slow/constrained)
+        1_000_000, // 1000ms —     1 Hz (minimal)
+    ];
+
     let p95_ms = p95 as f32 / 1000.0;
-    let required_ms = (p95_ms / config.tick_budget_ratio) as u32;
-    let tick_interval_ms = config.tick_interval_ms.max(required_ms);
+    let required_us = (p95 as f64 / config.tick_budget_ratio as f64) as u64;
+
+    // Find the smallest band that fits the required interval.
+    let tick_us = TICK_BANDS_US
+        .iter()
+        .copied()
+        .find(|&band| band >= required_us)
+        .unwrap_or(1_000_000); // fallback: 1s
+
+    // Apply configured floor if set (non-zero).
+    let tick_us = if config.tick_interval_ms > 0 {
+        tick_us.max(config.tick_interval_ms as u64 * 1000)
+    } else {
+        tick_us
+    };
+
+    // Convert to ms for the result (floor at 1ms for the u32 field).
+    let tick_interval_ms = (tick_us / 1000).max(1) as u32;
+
+    // Log the auto-computed band for diagnostics.
+    let tick_hz = if tick_us > 0 { 1_000_000 / tick_us } else { 0 };
+    tracing::info!(
+        p95_us = p95,
+        required_us = required_us,
+        tick_us = tick_us,
+        tick_hz = tick_hz,
+        "ECC tick auto-computed: {}μs ({}Hz), p95={}μs, budget={:.0}%",
+        tick_us, tick_hz, p95, config.tick_budget_ratio * 100.0
+    );
 
     // Headroom ratio: what fraction of the tick interval does p95 consume?
-    let headroom_ratio = if tick_interval_ms > 0 {
-        p95_ms / (tick_interval_ms as f32)
+    let headroom_ratio = if tick_us > 0 {
+        p95 as f32 / tick_us as f32
     } else {
         1.0
     };
