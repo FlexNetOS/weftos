@@ -1,0 +1,125 @@
+---
+title: "ExoChain Compliance & Governance"
+description: "Coverage report for ExoChain audit logging and governance gate certification across all WeftOS subsystems."
+---
+
+Every state-modifying operation in WeftOS is chain-witnessed through the ExoChain append-only hash chain. Security-critical paths pass through governance gates that evaluate an EffectVector before allowing execution. This page documents the compliance audit results and certification status.
+
+## Overview
+
+The ExoChain compliance program ensures that:
+
+1. **Every mutation is logged**: No state change escapes the audit trail
+2. **Security paths are gated**: Governance gates enforce constitutional rules on sensitive operations
+3. **Events are typed**: 75+ `EVENT_KIND` constants provide structured audit data
+4. **Gaps are tracked**: A systematic audit identified and closed all 66 gaps
+
+## Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| EVENT_KIND constants | 75+ |
+| Governance gate locations | 21 |
+| Gaps identified | 66 |
+| Gaps closed | 66 (100%) |
+| Critical items | 5/5 pass |
+| High items | 16/16 pass |
+| Independent auditors | 4 |
+
+## Critical Items
+
+All 5 critical audit items have been verified and pass:
+
+| ID | Subsystem | Issue | Resolution | Status |
+|----|-----------|-------|------------|--------|
+| C-1 | ExoChain | Missing chain witness on kernel boot phases | Added EVENT_KIND for INIT, CONFIG, SERVICES, NETWORK, READY | PASS |
+| C-2 | Governance | EffectVector bypass on emergency restart | Emergency path now logs with elevated priority + post-hoc gate | PASS |
+| C-3 | WASM Sandbox | Tool execution not chain-logged | Every tool invocation produces a ChainLoggable entry | PASS |
+| C-4 | Agent Supervisor | Process spawn/kill missing provenance | Process table mutations emit chain events with actor ID | PASS |
+| C-5 | EML Models | Training events not chain-witnessed | EmlEvent types (Trained, Drift, Saved, Loaded) forwarded to chain | PASS |
+
+## High Items
+
+All 16 high-priority audit items pass:
+
+| ID | Subsystem | Issue | Status |
+|----|-----------|-------|--------|
+| H-1 | CausalGraph | Edge creation not chain-logged | PASS |
+| H-2 | CausalGraph | Node removal missing provenance | PASS |
+| H-3 | HNSW Service | Vector insert/delete not audited | PASS |
+| H-4 | CrossRefStore | Cross-reference creation unlogged | PASS |
+| H-5 | ImpulseQueue | Impulse emission not witnessed | PASS |
+| H-6 | CognitiveTick | Tick interval changes unlogged | PASS |
+| H-7 | Mesh Networking | Peer connection/disconnection events | PASS |
+| H-8 | Discovery | mDNS/seed peer changes | PASS |
+| H-9 | Clustering | Cluster membership changes | PASS |
+| H-10 | Config Service | Runtime configuration mutations | PASS |
+| H-11 | Auth Service | Authentication/authorization decisions | PASS |
+| H-12 | Cron Service | Schedule creation/deletion/execution | PASS |
+| H-13 | Skills | Skill registration and invocation | PASS |
+| H-14 | Assessment | Assessment run start/complete/findings | PASS |
+| H-15 | Workspace | Workspace create/load/delete operations | PASS |
+| H-16 | Graphify | Knowledge graph mutations and exports | PASS |
+
+## Governance Gate Inventory
+
+21 governance gates enforce EffectVector evaluation on security-critical paths:
+
+| Gate | Location | EffectVector Dimensions | Purpose |
+|------|----------|------------------------|---------|
+| tool.execute | tool_registry.rs | risk=0.3, privacy=0.1 | Tool execution authorization |
+| tool.sign | tool_registry.rs | security=0.5 | Tool signature verification |
+| agent.spawn | supervisor.rs | risk=0.2, novelty=0.3 | Agent process creation |
+| agent.kill | supervisor.rs | risk=0.4 | Agent process termination |
+| agent.elevate | supervisor.rs | risk=0.6, security=0.5 | Capability elevation |
+| wasm.load | wasm_sandbox.rs | risk=0.3, security=0.4 | WASM module loading |
+| wasm.fuel | wasm_sandbox.rs | risk=0.1 | Fuel budget allocation |
+| mesh.connect | mesh.rs | risk=0.2, privacy=0.3 | Peer connection |
+| mesh.disconnect | mesh.rs | risk=0.1 | Peer disconnection |
+| config.mutate | config_service.rs | risk=0.3, fairness=0.2 | Runtime config change |
+| auth.grant | auth_service.rs | security=0.7, privacy=0.5 | Permission grant |
+| auth.revoke | auth_service.rs | security=0.5 | Permission revocation |
+| cron.create | cron_service.rs | risk=0.2, novelty=0.2 | Scheduled task creation |
+| cron.execute | cron_service.rs | risk=0.3 | Scheduled task execution |
+| chain.emergency | exochain.rs | risk=0.8, security=0.8 | Emergency chain operation |
+| governance.amend | governance.rs | risk=0.9, fairness=0.7 | Constitutional amendment |
+| governance.veto | governance.rs | risk=0.5, fairness=0.8 | Judicial veto |
+| assess.run | assessment.rs | risk=0.1, novelty=0.1 | Assessment execution |
+| workspace.delete | workspace.rs | risk=0.4 | Workspace deletion |
+| eml.train | eml_kernel.rs | novelty=0.2 | EML model retraining |
+| eml.load | eml_kernel.rs | risk=0.1 | EML model loading from disk |
+
+Each gate evaluates the EffectVector against the current governance policy. If any dimension exceeds its threshold, the operation requires elevated authorization or is rejected.
+
+## Non-Kernel Chain Events
+
+Crates outside the kernel (eml-core, clawft-graphify, clawft-weave) cannot directly access the ExoChain. They use a tracing-based bridge:
+
+1. **eml-core**: Accumulates `EmlEvent` in a per-model event log. The kernel drains events via `model.drain_events()` and appends them to the chain.
+
+2. **clawft-graphify**: Knowledge graph mutations emit structured tracing spans. The kernel's tracing subscriber captures these and forwards to the ExoChain.
+
+3. **clawft-weave**: Weaver session lifecycle events are forwarded through the `WeaverCommand`/`WeaverResponse` IPC protocol, which is chain-logged at the kernel boundary.
+
+This architecture keeps non-kernel crates chain-agnostic while ensuring complete audit coverage.
+
+## Certification Process
+
+The compliance audit was conducted by 4 independent auditors:
+
+1. **Static analysis auditor**: Scanned all `pub fn` signatures in kernel modules for missing chain logging calls. Identified 42 gaps.
+
+2. **Runtime trace auditor**: Ran the full test suite with chain logging enabled and verified that every mutation path produced at least one chain entry. Identified 18 gaps not caught by static analysis.
+
+3. **Governance gate auditor**: Enumerated all security-critical code paths and verified that each passes through a governance gate with appropriate EffectVector dimensions. Identified 6 missing gates.
+
+4. **Cross-crate auditor**: Verified that non-kernel crates (eml-core, graphify, weave) have bridging mechanisms for their events. Confirmed all 3 crates are covered.
+
+All 66 identified gaps have been closed and verified. The certification applies to WeftOS v0.6.5.
+
+## See Also
+
+- [ExoChain](/docs/weftos/exochain) -- append-only hash chain architecture
+- [Governance](/docs/weftos/governance) -- three-branch constitutional engine
+- [EML](/docs/weftos/eml) -- self-learning functions with chain-witnessed lifecycle
+- [Security](/docs/weftos/security) -- overall security architecture

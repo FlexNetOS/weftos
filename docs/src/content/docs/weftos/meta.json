@@ -16,6 +16,7 @@
     "exochain",
     "governance",
     "ecc",
+    "eml",
     "democritus",
     "mesh-networking",
     "discovery",

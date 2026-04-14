@@ -5,6 +5,39 @@ description: Complete version history for WeftOS from initial development throug
 
 # Release Notes
 
+## v0.6.5 — EML Self-Learning Stack + ExoChain Certification
+
+*2026-04-04*
+
+### EML Self-Learning Functions
+
+- **eml-core standalone crate**: Zero-dep (just serde), configurable depth 2-5, multi-head outputs, coordinate descent training (36 tests)
+- **16 EML models across 4 crates**: Coherence, governance scoring, restart strategy, health thresholds, dead letter policy, gossip timing, complexity limits, HNSW distance/ef/path/rebuild, causal collapse, surprise scoring, cluster thresholds, layout tuning, forensic coherence
+- **Two-tier pattern**: O(1) EML prediction every tick (~100ns), exact ground truth periodically, continuous self-improvement
+- **Causal collapse prediction**: `rank_evidence_by_impact()` ranks candidate edges by predicted coherence impact using perturbation theory (delta_lambda_2 = w * (phi[u] - phi[v])^2)
+- **Conversation cycle detection**: `detect_conversation_cycle()` identifies stuck/oscillating conversations via lambda_2 stagnation
+
+### ExoChain Compliance
+
+- **66 gaps identified and closed**: Systematic audit of all mutation paths
+- **75+ EVENT_KIND constants**: Structured audit data across all subsystems
+- **21 governance gates**: EffectVector evaluation on all security-critical paths
+- **EML ExoChain integration**: EmlEvent types (Trained, Drift, Saved, Loaded) chain-witnessed via drain bridge
+- **Certification**: 4 independent auditors verified all critical (5/5) and high (16/16) items pass
+
+### HNSW EML Training Infrastructure
+
+- **4 models**: Distance (dimension selection), AdaptiveEf (per-query beam width), Path (entry-point prediction), Rebuild (recall-based scheduling)
+- **33 tests**, all passing
+- **Configurable via HnswEmlConfig**: train_every_n, recall_check_every_n, min_training_samples, distance_selected_dims
+
+### Pull Requests
+
+- RuView PR #387: 5 EML improvements (governance scorer, health thresholds, dead letter, gossip timing, complexity)
+- ruvector PR #353: 6 HNSW EML optimizations (distance model, adaptive ef, path prediction, rebuild trigger, training infra, persistence)
+
+---
+
 ## v0.6.3 — O(1) EML Coherence Approximation
 
 *2026-04-14*

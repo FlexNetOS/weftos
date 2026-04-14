@@ -1,0 +1,281 @@
+---
+title: "EML — Self-Learning Functions"
+description: "How WeftOS uses the EML operator (exp(x) - ln(y)) for O(1) learned functions that replace hardcoded heuristics across the entire stack."
+---
+
+WeftOS replaces hardcoded heuristics with learned functions that improve during operation. Every threshold, scoring formula, and tuning parameter that was once a magic constant is now a trainable EML model that converges toward the optimal function for the domain it runs in.
+
+**Feature**: `ecc`
+**Source**: `crates/eml-core/` (standalone) + 16 domain-specific wrappers across 4 crates
+**Phase**: K3c
+
+## What is EML?
+
+The EML operator is the continuous-mathematics analog of the NAND gate:
+
+```
+eml(x, y) = exp(x) - ln(y)
+```
+
+Combined with the constant 1, this single operator can reconstruct **all elementary mathematical functions** -- arithmetic, exponentials, logarithms, trigonometry, roots. Any computable expression forms a binary tree under the grammar `S -> 1 | eml(S, S)`.
+
+**Reference**: Odrzywolel, A. "All elementary functions from a single operator." arXiv:2603.21852v2 [cs.SC], April 2026. Jagiellonian University, Krakow.
+
+### Key Properties
+
+- **Weight snapping**: During training, softmax-constrained weights at level-0 nodes push toward exact {0, 1} values. This means trained models are interpretable -- you can read off the closed-form expression the model has learned.
+- **Composability**: Any EML tree can be nested inside another. A depth-3 tree is just 7 EML nodes arranged hierarchically.
+- **Gradient-free training**: Coordinate descent with random restarts works well for the modest parameter counts (30-80 params), avoiding the need for automatic differentiation.
+- **Deterministic evaluation**: No randomness at inference time. Same inputs always produce same outputs.
+
+## The eml-core Crate
+
+`eml-core` is a standalone, zero-dependency crate (only `serde` for serialization). It provides the generic EML machinery that all domain-specific models build on.
+
+### Creating a Model
+
+```rust
+use eml_core::EmlModel;
+
+// Create a depth-4 model with 3 inputs and 1 output head
+let mut model = EmlModel::new(4, 3, 1);
+
+// Record training data
+for i in 0..100 {
+    let x = [i as f64 / 100.0, i as f64 / 50.0, i as f64 / 200.0];
+    let y = x[0] + x[1] + x[2];
+    model.record(&x, &[Some(y)]);
+}
+
+// Train
+let converged = model.train();
+
+// Predict
+let prediction = model.predict_primary(&[0.5, 1.0, 0.25]);
+```
+
+### Architecture
+
+```text
+Level 0: 8 affine combinations of input features (24 params)
+  a_i = softmax(alpha, beta, gamma) . (1, x_j, x_k)
+
+Level 1: 4 EML nodes (no params -- pure EML pairing)
+  b_0 = eml(a_0, a_1), b_1 = eml(a_2, a_3), ...
+
+Level 2: mixing + EML (depth-dependent params)
+
+Level D: multi-head output (2 params per head)
+```
+
+Supported depths: 2, 3, 4, 5. Each depth adds more representational capacity at the cost of more parameters and slightly slower inference.
+
+### API
+
+| Method | Description |
+|--------|-------------|
+| `EmlModel::new(depth, inputs, heads)` | Create untrained model |
+| `model.record(&inputs, &targets)` | Add training sample |
+| `model.train() -> bool` | Train via coordinate descent; returns convergence |
+| `model.predict(&inputs) -> Vec<f64>` | Multi-head prediction |
+| `model.predict_primary(&inputs) -> f64` | First-head prediction |
+| `model.is_trained() -> bool` | Check training status |
+| `model.training_sample_count() -> usize` | Number of recorded samples |
+| `model.mean_error() -> f64` | Current MSE |
+| `model.drain_events() -> Vec<EmlEvent>` | Drain lifecycle events for ExoChain |
+| `model.to_json() / from_json()` | Persistence |
+
+### FeatureVector Trait
+
+Types that implement `FeatureVector` can be passed directly to EML models without manual conversion:
+
+```rust
+pub trait FeatureVector {
+    fn as_features(&self) -> &[f64];
+}
+```
+
+## Where EML is Used
+
+16 EML models span 4 crates, replacing hardcoded heuristics across the entire WeftOS stack:
+
+### Kernel: Coherence (eml_coherence.rs)
+
+| Model | Depth | Inputs | Outputs | What It Learns | Replaces |
+|-------|-------|--------|---------|---------------|----------|
+| `EmlCoherenceModel` (full) | 4 | 7 graph features | 3 (lambda_2, fiedler_norm, uncertainty) | Algebraic connectivity prediction | O(k*m) Lanczos iteration |
+| `EmlCoherenceModel` (fast) | 3 | 7 graph features | 1 (lambda_2) | Quick coherence check | O(k*m) Lanczos iteration |
+
+### Kernel: Governance and Operations (eml_kernel.rs)
+
+| Model | Depth | Inputs | Outputs | What It Learns | Replaces |
+|-------|-------|--------|---------|---------------|----------|
+| `GovernanceScorerModel` | 3 | 5 EffectVector dims | 1 composite score | Dimension importance weighting | L2 norm |
+| `RestartStrategyModel` | 2 | 4 failure features | 2 (delay, should_retry) | Optimal restart delay | Fixed backoff |
+| `HealthThresholdModel` | 2 | 3 health features | 2 (degraded, failed) | Adaptive probe thresholds | Fixed thresholds |
+| `DeadLetterModel` | 2 | 3 retry features | 2 (delay, should_discard) | Smart retry policy | Fixed retry policy |
+| `GossipTimingModel` | 2 | 3 network features | 1 interval | Network-adaptive gossip interval | Fixed gossip interval |
+| `ComplexityModel` | 2 | 3 code features | 1 threshold | Context-sensitive complexity limits | 500-line threshold |
+
+### Kernel: HNSW Search Optimization (hnsw_eml.rs)
+
+| Model | Depth | Inputs | Outputs | What It Learns | Replaces |
+|-------|-------|--------|---------|---------------|----------|
+| `DistanceModel` | 3 | 4 selected dims | 1 distance | Domain-specific dimension selection | Full cosine similarity |
+| `AdaptiveEfModel` | 3 | 4 query features | 1 beam width | Per-query optimal beam width | Fixed ef=100 |
+| `PathModel` | 3 | 4 query features | 1 entry point | Search entry-point prediction | Random entry |
+| `RebuildModel` | 3 | 4 recall features | 1 rebuild signal | When to rebuild HNSW graph | Fixed schedule |
+
+### Kernel: Causal Prediction (causal_predict.rs)
+
+| Model | Depth | Inputs | Outputs | What It Learns | Replaces |
+|-------|-------|--------|---------|---------------|----------|
+| `CausalCollapseModel` | 3 | 9 edge features | 1 correction | Higher-order correction to delta_lambda_2 | Analytical-only prediction |
+
+### Graphify: Knowledge Graph (eml_models.rs)
+
+| Model | Depth | Inputs | Outputs | What It Learns | Replaces |
+|-------|-------|--------|---------|---------------|----------|
+| `SurpriseScorerModel` | 3 | 7 edge features | 1 surprise score | Non-linear surprise factors | Linear weighted scoring |
+| `ClusterThresholdModel` | 2 | 3 topology features | 3 thresholds | Optimal community detection params | Fixed constants |
+| `LayoutModel` | 3 | 3 graph features | 6 physics params | ForceAtlas2 physics tuning | Hardcoded physics |
+| `ForensicCoherenceModel` | 3 | 4 graph stats | 1 coherence | Domain-specific coherence | density * avg_confidence |
+
+## The Two-Tier Pattern
+
+Every EML model in WeftOS follows the same two-tier pattern:
+
+```text
++-----------------------+       +-----------------------+
+|  FAST PATH (every op) |       |  GROUND TRUTH (periodic)|
+|                       |       |                       |
+|  EML prediction       |       |  Exact computation    |
+|  ~100ns               |       |  ~500us               |
+|                       |       |                       |
+|  if drift > threshold ------->|  result feeds back    |
+|                       |       |  into training buffer |
++-----------------------+       +-----------+-----------+
+                                            |
+                                            v
+                                +-----------+-----------+
+                                |  RETRAIN (every N)    |
+                                |                       |
+                                |  Coordinate descent   |
+                                |  ~1ms for 34 params   |
+                                +-----------------------+
+```
+
+1. **Every tick/operation**: The EML model provides an O(1) prediction (~100ns). If the result is within acceptable bounds, no further work is needed.
+
+2. **On drift detection**: When the fast prediction diverges from expected behavior beyond a threshold, the system falls back to the exact (expensive) computation. The exact result is recorded as a training sample.
+
+3. **Periodic retraining**: After enough exact samples accumulate (typically 50+), `model.train()` refines parameters via random restart + coordinate descent.
+
+This pattern is self-improving: models train on the actual data the system processes during operation. As the system encounters more cases from its operational domain, predictions become increasingly accurate. No manual tuning is required.
+
+## Causal Collapse Prediction
+
+The causal collapse prediction module (`causal_predict.rs`) is one of the most impactful applications of EML. It predicts how adding a new edge will change the causal graph's algebraic connectivity (lambda_2) without recomputing the expensive eigenvalue decomposition.
+
+### The Core Formula
+
+First-order eigenvalue perturbation theory gives:
+
+```
+delta_lambda_2 = w * (phi[u] - phi[v])^2
+```
+
+where `phi` is the Fiedler vector and `w` is the edge weight. Edges that bridge the spectral partition (phi[u] and phi[v] have opposite signs) produce the largest coherence gains.
+
+### `rank_evidence_by_impact()`
+
+Ranks candidate edges by their predicted coherence impact without actually adding any edges:
+
+```rust
+let rankings = rank_evidence_by_impact(&graph, &fiedler, &candidates);
+// rankings sorted by predicted_delta descending (biggest impact first)
+for r in &rankings {
+    println!("{}: {} -> {}, delta={:.4}, {}",
+        r.weight, r.source, r.target, r.predicted_delta, r.explanation);
+}
+```
+
+### EML-Enhanced Prediction
+
+The `CausalCollapseModel` adds a learned correction term to the analytical formula:
+
+```
+predicted = analytical_delta + eml_correction(9 features)
+```
+
+The 9 input features are: fiedler_u, fiedler_v, edge_weight, current_lambda2, spectral_gap, graph_density, node_count, degree_u, degree_v. The EML tree learns the higher-order corrections that the first-order perturbation formula misses.
+
+### Applications
+
+- **Cold case analysis**: Identify which evidence, if discovered, would most strengthen the causal model
+- **Robotics**: Predict which sensor readings would most improve the world model before acquiring them
+- **Conversation**: `detect_conversation_cycle()` identifies stuck/oscillating conversations by monitoring lambda_2 stagnation
+
+## ExoChain Integration
+
+EML lifecycle events are chain-witnessed through the ExoChain audit trail. Each `EmlModel` accumulates events internally; the kernel drains and appends them to the chain.
+
+### EmlEvent Types
+
+```rust
+pub enum EmlEvent {
+    Trained { model_name, samples_used, mse_before, mse_after, converged, param_count },
+    Prediction { model_name, inputs_hash, output },
+    Drift { model_name, predicted, actual, drift_pct },
+    Saved { model_name, path, param_count },
+    Loaded { model_name, path, param_count },
+}
+```
+
+Every training event, significant prediction, drift detection, and persistence operation is chain-logged with full provenance. This means you can audit:
+
+- When a model was trained and whether it converged
+- What the MSE was before and after training
+- When drift was detected and by how much
+- When model state was saved/loaded and from where
+
+### Persistence
+
+Trained model parameters persist to `.weftos/eml-models/` as JSON files. Models are automatically saved after successful training and loaded during kernel boot. The ExoChain records both save and load events.
+
+## Performance
+
+EML inference is dominated by `exp()` and `ln()` calls at each tree node. Benchmark results on aarch64:
+
+| Depth | Parameters | Inference Time | Per-Output |
+|-------|-----------|---------------|------------|
+| 2 | ~20 | ~80ns | ~80ns |
+| 3 | ~34 | ~149ns | ~91ns (3-head) |
+| 4 | ~52 | ~272ns | ~272ns |
+| 5 | ~80 | ~450ns | ~450ns |
+
+For comparison:
+- Lanczos eigenvalue iteration: ~500us (O(k*m))
+- Full cosine similarity: ~2us (O(d))
+- EML coherence prediction: ~149ns (O(1))
+
+The 5000x speedup over Lanczos enables coherence checking at the 10,000 Hz ECC tick rate required for robotics workloads, with three orders of magnitude of headroom.
+
+## Configuration
+
+All EML models are fully automatic -- no manual configuration is required.
+
+- Models initialize untrained and use hardcoded fallbacks until enough data accumulates
+- Training happens in-band when the caller invokes `model.train()` after 50+ samples
+- Trained models persist to `.weftos/eml-models/` and reload at boot
+- Convergence criterion: MSE < 0.01 over the training set
+- Training uses 100 random restarts followed by coordinate descent with 6 step sizes
+
+There are no knobs to turn. The system learns the right function from operational data.
+
+## See Also
+
+- [ECC Cognitive Substrate](/docs/weftos/ecc) -- the cognitive layer where EML coherence models run
+- [DEMOCRITUS](/docs/weftos/democritus) -- the cognitive loop that drives two-tier coherence
+- [ExoChain Compliance](/docs/weftos/guides/exochain-compliance) -- audit coverage for EML events
+- [Persistence](/docs/weftos/persistence) -- file layout for saved EML models

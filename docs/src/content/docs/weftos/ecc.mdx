@@ -396,6 +396,7 @@ weaver ecc meta export-kb --output weaver-kb.json
 
 **Source**: `crates/clawft-kernel/src/eml_coherence.rs` (16 tests)
 **Phase**: K3c
+**See also**: [EML -- Self-Learning Functions](/docs/weftos/eml) for the full EML system covering all 16 models across the stack.
 
 The EML coherence model replaces the expensive O(k*m) Lanczos eigenvalue iteration with a 34-parameter depth-3 master formula that predicts algebraic connectivity (lambda_2) from cheap graph statistics in O(1) time. This converts coherence checking from ~500us to ~100ns -- roughly a 5000x speedup -- enabling coherence evaluation at the 10,000 Hz tick rate required for robotics workloads.
 
@@ -448,7 +449,7 @@ The model predicts lambda_2 from 7 statistics extracted in O(n) time:
 
 ### Two-Tier Coherence Pattern
 
-The EML model integrates into the DEMOCRITUS cognitive loop via a two-tier pattern:
+The EML model integrates into the DEMOCRITUS cognitive loop via a [two-tier pattern](/docs/weftos/eml#the-two-tier-pattern):
 
 1. **Every tick**: `CausalGraph::coherence_fast(&model)` runs the O(1) EML prediction (~100ns). If the predicted coherence is within acceptable bounds, no further work is needed.
 
@@ -489,6 +490,16 @@ model.mean_error();
 // Direct prediction from features
 let lambda_2 = model.predict(&features);
 ```
+
+### Causal Collapse Prediction
+
+The causal collapse module (`crates/clawft-kernel/src/causal_predict.rs`) extends the coherence system with predictive edge ranking. Using first-order eigenvalue perturbation theory:
+
+```
+delta_lambda_2 = w * (phi[u] - phi[v])^2
+```
+
+The `CausalCollapseModel` adds a learned EML correction term (depth-3, 9 inputs) to the analytical formula, learning higher-order effects from operational data. See the full [Causal Collapse Prediction](/docs/weftos/eml#causal-collapse-prediction) section for details on `rank_evidence_by_impact()` and conversation cycle detection.
 
 ### Configuration
 
