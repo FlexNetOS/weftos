@@ -40,12 +40,14 @@
 //! assert!(prediction.is_finite());
 //! ```
 
+pub mod events;
 pub mod features;
 pub mod model;
 pub mod operator;
 pub mod tree;
 
 // Re-export public API
+pub use events::{EmlEvent, EmlEventLog};
 pub use features::FeatureVector;
 pub use model::EmlModel;
 pub use operator::{eml, eml_safe, softmax3};

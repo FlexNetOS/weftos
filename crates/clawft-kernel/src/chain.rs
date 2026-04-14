@@ -289,6 +289,26 @@ pub const EVENT_KIND_TOOL_SIGNED: &str = "tool.signed";
 /// The payload should include `command`, `exit_code`, `execution_time_ms`.
 pub const EVENT_KIND_SHELL_EXEC: &str = "shell.exec";
 
+/// EML model trained event.
+///
+/// Emitted when an EML model completes a training cycle.
+/// The payload should include `model_name`, `samples_used`, `mse_before`,
+/// `mse_after`, `converged`, `param_count`.
+pub const EVENT_KIND_EML_TRAINED: &str = "eml.trained";
+
+/// EML model drift detected event.
+///
+/// Emitted when an EML model's prediction diverges significantly
+/// from the ground truth. The payload includes `model_name`,
+/// `predicted`, `actual`, `drift_pct`.
+pub const EVENT_KIND_EML_DRIFT: &str = "eml.drift";
+
+/// EML model saved event.
+pub const EVENT_KIND_EML_SAVED: &str = "eml.saved";
+
+/// EML model loaded event.
+pub const EVENT_KIND_EML_LOADED: &str = "eml.loaded";
+
 /// Local chain state.
 struct LocalChain {
     chain_id: u32,

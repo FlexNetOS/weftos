@@ -29,6 +29,7 @@ use crate::causal::CausalGraph;
 
 // Re-export the core operator for callers that used it directly.
 pub use eml_core::{eml, eml_safe, softmax3};
+pub use eml_core::EmlEvent;
 
 // ---------------------------------------------------------------------------
 // CoherencePrediction
@@ -182,18 +183,27 @@ impl Default for EmlCoherenceModel {
 impl EmlCoherenceModel {
     /// Create a new untrained depth-4 multi-head model with zeroed parameters.
     pub fn new() -> Self {
+        let mut inner = eml_core::EmlModel::new(4, 7, 3);
+        inner.set_model_name("coherence");
         Self {
-            inner: eml_core::EmlModel::new(4, 7, 3),
+            inner,
             error_history: Vec::new(),
         }
     }
 
     /// Create a new untrained depth-3 legacy model (34 params).
     pub fn new_v1() -> Self {
+        let mut inner = eml_core::EmlModel::new(3, 7, 1);
+        inner.set_model_name("coherence_v1");
         Self {
-            inner: eml_core::EmlModel::new(3, 7, 1),
+            inner,
             error_history: Vec::new(),
         }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether this model uses the depth-4 multi-head architecture.

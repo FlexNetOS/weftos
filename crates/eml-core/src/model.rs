@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::events::{EmlEvent, EmlEventLog};
 use crate::operator::{eml_safe, random_params, softmax3};
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,12 @@ pub struct EmlModel {
     /// Training data buffer.
     #[serde(skip)]
     training_data: Vec<TrainingPoint>,
+    /// Accumulated lifecycle events for ExoChain logging.
+    #[serde(skip)]
+    event_log: EmlEventLog,
+    /// Model name used in event logging (set by the wrapper).
+    #[serde(skip)]
+    model_name: String,
 }
 
 impl EmlModel {
@@ -85,6 +92,8 @@ impl EmlModel {
             params: vec![0.0; param_count],
             trained: false,
             training_data: Vec::new(),
+            event_log: EmlEventLog::new(),
+            model_name: String::new(),
         }
     }
 
@@ -116,6 +125,40 @@ impl EmlModel {
     /// Number of output heads.
     pub fn head_count(&self) -> usize {
         self.head_count
+    }
+
+    // -------------------------------------------------------------------
+    // Event logging
+    // -------------------------------------------------------------------
+
+    /// Set the model name used in emitted events.
+    ///
+    /// Should be called once by the domain-specific wrapper after creation.
+    pub fn set_model_name(&mut self, name: impl Into<String>) {
+        self.model_name = name.into();
+    }
+
+    /// Get the model name.
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    /// Drain all accumulated lifecycle events, returning them.
+    ///
+    /// The caller is responsible for forwarding these to the ExoChain
+    /// or other audit sinks.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.event_log.drain()
+    }
+
+    /// Push a custom event into the event log.
+    pub fn push_event(&mut self, event: EmlEvent) {
+        self.event_log.push(event);
+    }
+
+    /// Number of pending (undrained) events.
+    pub fn pending_event_count(&self) -> usize {
+        self.event_log.len()
     }
 
     // -------------------------------------------------------------------
@@ -429,7 +472,8 @@ impl EmlModel {
 
         let param_count = self.params.len();
         let mut best_params = self.params.clone();
-        let mut best_mse = self.evaluate_mse(&self.params);
+        let mse_before = self.evaluate_mse(&self.params);
+        let mut best_mse = mse_before;
 
         // Phase 1: random restarts
         let restart_count = if param_count > 40 { 200 } else { 100 };
@@ -466,6 +510,22 @@ impl EmlModel {
 
         self.params = best_params;
         self.trained = best_mse < 0.01;
+
+        // Emit a Trained event for ExoChain logging.
+        let name = if self.model_name.is_empty() {
+            format!("eml_d{}x{}x{}", self.depth, self.input_count, self.head_count)
+        } else {
+            self.model_name.clone()
+        };
+        self.event_log.push(EmlEvent::Trained {
+            model_name: name,
+            samples_used: self.training_data.len(),
+            mse_before,
+            mse_after: best_mse,
+            converged: self.trained,
+            param_count: self.params.len(),
+        });
+
         self.trained
     }
 

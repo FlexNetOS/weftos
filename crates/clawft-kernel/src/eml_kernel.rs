@@ -15,7 +15,7 @@
 //! | [`GossipTimingModel`] | Fixed gossip intervals | 3 features | 1 interval |
 //! | [`ComplexityModel`] | 500-line threshold | 3 features | 1 threshold |
 
-use eml_core::EmlModel;
+use eml_core::{EmlEvent, EmlModel};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -42,9 +42,14 @@ impl Default for GovernanceScorerModel {
 impl GovernanceScorerModel {
     /// Create a new untrained governance scorer.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(3, 5, 1),
-        }
+        let mut inner = EmlModel::new(3, 5, 1);
+        inner.set_model_name("governance_scorer");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.
@@ -122,9 +127,14 @@ impl Default for RestartStrategyModel {
 impl RestartStrategyModel {
     /// Create a new untrained restart strategy model.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(2, 4, 2),
-        }
+        let mut inner = EmlModel::new(2, 4, 2);
+        inner.set_model_name("restart_strategy");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.
@@ -226,9 +236,14 @@ impl Default for HealthThresholdModel {
 impl HealthThresholdModel {
     /// Create a new untrained health threshold model.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(2, 3, 2),
-        }
+        let mut inner = EmlModel::new(2, 3, 2);
+        inner.set_model_name("health_threshold");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.
@@ -322,9 +337,14 @@ impl Default for DeadLetterModel {
 impl DeadLetterModel {
     /// Create a new untrained dead letter policy model.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(2, 3, 2),
-        }
+        let mut inner = EmlModel::new(2, 3, 2);
+        inner.set_model_name("dead_letter");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.
@@ -417,9 +437,14 @@ impl Default for GossipTimingModel {
 impl GossipTimingModel {
     /// Create a new untrained gossip timing model.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(2, 3, 1),
-        }
+        let mut inner = EmlModel::new(2, 3, 1);
+        inner.set_model_name("gossip_timing");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.
@@ -504,9 +529,14 @@ impl Default for ComplexityModel {
 impl ComplexityModel {
     /// Create a new untrained complexity threshold model.
     pub fn new() -> Self {
-        Self {
-            inner: EmlModel::new(2, 3, 1),
-        }
+        let mut inner = EmlModel::new(2, 3, 1);
+        inner.set_model_name("complexity");
+        Self { inner }
+    }
+
+    /// Drain accumulated EML lifecycle events for ExoChain forwarding.
+    pub fn drain_events(&mut self) -> Vec<EmlEvent> {
+        self.inner.drain_events()
     }
 
     /// Whether the model has been trained.

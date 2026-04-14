@@ -286,7 +286,8 @@ impl SystemService for CognitiveTick {
 /// 3. **DETECT DRIFT** -- compare prediction against last exact value.
 /// 4. **THINK (exact)** -- O(k*m) Lanczos spectral analysis (only when drift
 ///    exceeds threshold, or periodically to maintain calibration).
-/// 5. **COMMIT** -- record timing in the adaptive tick system.
+/// 5. **LOG** -- drain EML events and append to ExoChain.
+/// 6. **COMMIT** -- record timing in the adaptive tick system.
 ///
 /// The EML model is retrained periodically from accumulated exact samples so
 /// the fast path becomes more accurate over time.
@@ -296,6 +297,21 @@ pub async fn run_democritus_loop(
     causal: std::sync::Arc<crate::causal::CausalGraph>,
     hnsw: std::sync::Arc<crate::hnsw_service::HnswService>,
     eml: std::sync::Arc<Mutex<crate::eml_coherence::EmlCoherenceModel>>,
+) {
+    run_democritus_loop_with_chain(tick, causal, hnsw, eml, None).await;
+}
+
+/// Run the DEMOCRITUS loop with optional ExoChain logging.
+///
+/// When `chain_manager` is `Some`, EML lifecycle events (training,
+/// drift detection) are appended to the ExoChain audit trail.
+#[cfg(feature = "ecc")]
+pub async fn run_democritus_loop_with_chain(
+    tick: std::sync::Arc<CognitiveTick>,
+    causal: std::sync::Arc<crate::causal::CausalGraph>,
+    hnsw: std::sync::Arc<crate::hnsw_service::HnswService>,
+    eml: std::sync::Arc<Mutex<crate::eml_coherence::EmlCoherenceModel>>,
+    chain_manager: Option<std::sync::Arc<crate::chain::ChainManager>>,
 ) {
     use crate::eml_coherence::GraphFeatures;
     use std::time::Instant;
@@ -403,6 +419,20 @@ pub async fn run_democritus_loop(
                         "DEMOCRITUS loop: EML model lock poisoned during record, exiting"
                     );
                     break;
+                }
+            }
+        }
+
+        // ── LOG (ExoChain) ─────────────────────────────────────────────
+        // Drain EML lifecycle events and append to the chain.
+        if let Some(ref cm) = chain_manager {
+            if let Ok(mut model) = eml.lock() {
+                for event in model.drain_events() {
+                    cm.append(
+                        "eml",
+                        event.event_type(),
+                        Some(serde_json::to_value(&event).unwrap_or_default()),
+                    );
                 }
             }
         }
