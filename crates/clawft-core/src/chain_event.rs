@@ -35,10 +35,58 @@ pub const EVENT_KIND_WORKSPACE_CONFIG: &str = "workspace.config";
 /// Tool registered in the ToolRegistry.
 pub const EVENT_KIND_TOOL_REGISTER: &str = "tool.register";
 
-/// Emit a structured tracing event on the `chain_event` target.
+/// A pending chain event record for the tracing-to-ChainManager bridge.
 ///
-/// The daemon's tracing subscriber can filter on
-/// `target == "chain_event"` and forward to `ChainManager::append`.
+/// Non-kernel crates cannot call `ChainManager::append()` directly.
+/// Instead, they push records into the static [`PENDING_CHAIN_EVENTS`]
+/// buffer via [`push_chain_event`]. The daemon periodically drains the
+/// buffer via [`drain_pending_chain_events`] and forwards each record
+/// to the real `ChainManager`.
+#[derive(Debug, Clone)]
+pub struct PendingChainEvent {
+    /// Source subsystem (e.g. "session", "workspace", "wasm_fs").
+    pub source: String,
+    /// Event kind constant (e.g. "session.create").
+    pub kind: String,
+    /// Optional JSON payload.
+    pub payload: Option<serde_json::Value>,
+}
+
+use std::sync::Mutex;
+
+/// Global buffer of chain events emitted by non-kernel crates.
+static PENDING_CHAIN_EVENTS: Mutex<Vec<PendingChainEvent>> = Mutex::new(Vec::new());
+
+/// Push a chain event into the global pending buffer.
+///
+/// This is safe to call from any thread. The daemon drains this buffer
+/// periodically and forwards events to `ChainManager::append()`.
+pub fn push_chain_event(source: &str, kind: &str, payload: Option<serde_json::Value>) {
+    if let Ok(mut buf) = PENDING_CHAIN_EVENTS.lock() {
+        buf.push(PendingChainEvent {
+            source: source.to_string(),
+            kind: kind.to_string(),
+            payload,
+        });
+    }
+}
+
+/// Drain all pending chain events from the global buffer.
+///
+/// Returns the accumulated events and clears the buffer. The daemon
+/// calls this periodically to forward events to `ChainManager`.
+pub fn drain_pending_chain_events() -> Vec<PendingChainEvent> {
+    match PENDING_CHAIN_EVENTS.lock() {
+        Ok(mut buf) => std::mem::take(&mut *buf),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Emit a structured tracing event on the `chain_event` target AND
+/// push a record into the pending chain event buffer.
+///
+/// The daemon's chain event bridge drains the pending buffer and
+/// forwards matching events to `ChainManager::append`.
 ///
 /// # Usage
 ///
@@ -48,13 +96,20 @@ pub const EVENT_KIND_TOOL_REGISTER: &str = "tool.register";
 #[macro_export]
 macro_rules! chain_event {
     ($source:expr, $kind:expr, { $($key:tt : $val:expr),* $(,)? }) => {
-        tracing::info!(
-            target: "chain_event",
-            source = $source,
-            kind = $kind,
-            $( $key = %$val, )*
-            "chain"
-        );
+        {
+            tracing::info!(
+                target: "chain_event",
+                source = $source,
+                kind = $kind,
+                $( $key = %$val, )*
+                "chain"
+            );
+            $crate::chain_event::push_chain_event(
+                $source,
+                $kind,
+                Some(serde_json::json!({ $( stringify!($key): format!("{}", $val) ),* })),
+            );
+        }
     };
 }
 
@@ -73,8 +128,32 @@ mod tests {
     }
 
     #[test]
-    fn macro_compiles() {
-        // Just verify the macro expands without errors.
+    fn macro_compiles_and_pushes_event() {
+        // Drain any stale events from previous tests.
+        drain_pending_chain_events();
+
+        // Verify the macro expands and pushes to the buffer.
         chain_event!("test", "test.event", { "foo": "bar" });
+
+        let events = drain_pending_chain_events();
+        assert!(!events.is_empty(), "macro should push to pending buffer");
+        assert_eq!(events[0].source, "test");
+        assert_eq!(events[0].kind, "test.event");
+    }
+
+    #[test]
+    fn push_and_drain_chain_events() {
+        drain_pending_chain_events();
+
+        push_chain_event("src", "kind.test", Some(serde_json::json!({"a": 1})));
+        push_chain_event("src2", "kind.test2", None);
+
+        let events = drain_pending_chain_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].source, "src");
+        assert_eq!(events[1].kind, "kind.test2");
+
+        // Drain again should be empty.
+        assert!(drain_pending_chain_events().is_empty());
     }
 }

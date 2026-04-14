@@ -377,12 +377,35 @@ impl ConfigService {
     }
 
     /// Delete a typed configuration entry. Returns `true` if it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::GovernanceDenied` if the governance gate
+    /// rejects the deletion (only when the `exochain` feature is enabled
+    /// and a gate is attached).
     pub fn delete_typed(
         &self,
         namespace: &str,
         key: &str,
         changed_by: Pid,
-    ) -> bool {
+    ) -> Result<bool, KernelError> {
+        // Governance gate: typed config deletion is gated.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = self.governance_gate {
+            use crate::gate::GateDecision;
+            let ctx = serde_json::json!({
+                "namespace": namespace,
+                "key": key,
+                "changed_by": changed_by,
+            });
+            let decision = gate.check("config-service", "config.delete_typed", &ctx);
+            if let GateDecision::Deny { reason, .. } = decision {
+                return Err(KernelError::GovernanceDenied(format!(
+                    "config delete_typed denied: {reason}"
+                )));
+            }
+        }
+
         let config_key = format!("{namespace}/{key}");
         let removed = self.entries.remove(&config_key).is_some();
         // Also remove from legacy store.
@@ -397,7 +420,7 @@ impl ConfigService {
             timestamp: Utc::now(),
         };
         self.notify_subscribers(namespace, &change);
-        removed
+        Ok(removed)
     }
 
     // ── Subscription ──────────────────────────────────────────────
@@ -740,10 +763,10 @@ mod tests {
     fn typed_delete_removes_entry() {
         let svc = ConfigService::new_default();
         svc.set_typed("ns", "k", ConfigValue::Boolean(true), pid(1)).unwrap();
-        assert!(svc.delete_typed("ns", "k", pid(1)));
+        assert!(svc.delete_typed("ns", "k", pid(1)).unwrap());
         assert!(svc.get_typed("ns", "k").is_none());
         // Second delete returns false.
-        assert!(!svc.delete_typed("ns", "k", pid(1)));
+        assert!(!svc.delete_typed("ns", "k", pid(1)).unwrap());
     }
 
     #[test]

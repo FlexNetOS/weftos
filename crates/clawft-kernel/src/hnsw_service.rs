@@ -222,8 +222,10 @@ impl HnswService {
         }
 
         let mut store = self.store.lock().expect("HnswStore lock poisoned");
+        #[cfg(feature = "exochain")]
+        let entries_destroyed = store.len();
         *store = HnswStore::with_params(self.config.ef_search, self.config.ef_construction);
-        self.epoch.fetch_add(1, Ordering::SeqCst);
+        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst);
 
         // Chain logging: hnsw.clear
         #[cfg(feature = "exochain")]
@@ -231,7 +233,10 @@ impl HnswService {
             cm.append(
                 "hnsw_service",
                 crate::chain::EVENT_KIND_HNSW_CLEAR,
-                Some(serde_json::json!({})),
+                Some(serde_json::json!({
+                    "entries_destroyed": entries_destroyed,
+                    "epoch": epoch + 1,
+                })),
             );
         }
 

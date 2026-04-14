@@ -327,6 +327,21 @@ impl AuthService {
         name: &str,
         new_value: &[u8],
     ) -> Result<(), KernelError> {
+        // Governance gate: credential rotation is a critical security action.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = self.governance_gate {
+            use crate::gate::GateDecision;
+            let ctx = serde_json::json!({
+                "credential_name": name,
+            });
+            let decision = gate.check("auth-service", "auth.credential.rotate", &ctx);
+            if let GateDecision::Deny { reason, .. } = decision {
+                return Err(KernelError::GovernanceDenied(format!(
+                    "credential rotation denied: {reason}"
+                )));
+            }
+        }
+
         let mut cred = self
             .credentials
             .get_mut(name)
@@ -355,6 +370,23 @@ impl AuthService {
         &self,
         request: &CredentialRequest,
     ) -> Result<IssuedToken, KernelError> {
+        // Governance gate: token issuance is governed by policy.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = self.governance_gate {
+            use crate::gate::GateDecision;
+            let ctx = serde_json::json!({
+                "credential_name": &request.credential_name,
+                "agent_id": &request.agent_id,
+                "ttl_secs": request.ttl_secs,
+            });
+            let decision = gate.check("auth-service", "auth.token.issue", &ctx);
+            if let GateDecision::Deny { reason, .. } = decision {
+                return Err(KernelError::GovernanceDenied(format!(
+                    "token issuance denied: {reason}"
+                )));
+            }
+        }
+
         let cred = self
             .credentials
             .get(&request.credential_name)

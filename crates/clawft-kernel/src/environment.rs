@@ -224,6 +224,13 @@ pub enum EnvironmentError {
         /// The invalid value.
         value: f64,
     },
+
+    /// Governance gate denied the operation.
+    #[error("governance denied environment operation: {reason}")]
+    GovernanceDenied {
+        /// Reason for denial.
+        reason: String,
+    },
 }
 
 /// Environment manager.
@@ -322,7 +329,9 @@ impl EnvironmentManager {
                 }),
             );
             if decision.is_deny() {
-                return Err(EnvironmentError::NotFound { id: id.to_owned() });
+                return Err(EnvironmentError::GovernanceDenied {
+                    reason: format!("environment switch to '{id}' denied by governance policy"),
+                });
             }
         }
 

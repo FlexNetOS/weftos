@@ -524,7 +524,7 @@ async fn handle_message(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             match cron.remove_job(id) {
-                Some(job) => {
+                Ok(Some(job)) => {
                     #[cfg(feature = "exochain")]
                     if let Some(cm) = chain {
                         cm.append(
@@ -539,7 +539,8 @@ async fn handle_message(
                     }
                     serde_json::json!({"removed": true, "job_id": job.id})
                 }
-                None => serde_json::json!({"removed": false, "error": "job not found"}),
+                Ok(None) => serde_json::json!({"removed": false, "error": "job not found"}),
+                Err(e) => serde_json::json!({"removed": false, "error": format!("{e}")}),
             }
         }
         "exec" => {

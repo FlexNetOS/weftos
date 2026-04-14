@@ -163,6 +163,15 @@ impl BuiltinTool for FsWriteFileTool {
         } else {
             std::fs::write(path, content).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         }
+
+        // Chain event: log filesystem write
+        #[cfg(feature = "exochain")]
+        clawft_core::chain_event::push_chain_event(
+            "wasm_fs",
+            "wasm.fs.write",
+            Some(serde_json::json!({"path": path_str, "bytes_written": content.len(), "append": append})),
+        );
+
         Ok(serde_json::json!({"written": content.len(), "path": path_str}))
     }
 }
@@ -242,6 +251,15 @@ impl BuiltinTool for FsCreateDirTool {
         } else {
             std::fs::create_dir(path).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         }
+
+        // Chain event: log directory creation
+        #[cfg(feature = "exochain")]
+        clawft_core::chain_event::push_chain_event(
+            "wasm_fs",
+            "wasm.fs.create_dir",
+            Some(serde_json::json!({"path": path_str, "recursive": recursive})),
+        );
+
         Ok(serde_json::json!({"created": path_str}))
     }
 }
@@ -282,6 +300,15 @@ impl BuiltinTool for FsRemoveTool {
         } else {
             std::fs::remove_file(path).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         }
+
+        // Chain event: log filesystem removal
+        #[cfg(feature = "exochain")]
+        clawft_core::chain_event::push_chain_event(
+            "wasm_fs",
+            "wasm.fs.remove",
+            Some(serde_json::json!({"path": path_str, "recursive": recursive})),
+        );
+
         Ok(serde_json::json!({"removed": path_str}))
     }
 }
@@ -316,6 +343,15 @@ impl BuiltinTool for FsCopyTool {
             return Err(ToolError::FileNotFound(src.display().to_string()));
         }
         let bytes = std::fs::copy(src, dst).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+
+        // Chain event: log filesystem copy
+        #[cfg(feature = "exochain")]
+        clawft_core::chain_event::push_chain_event(
+            "wasm_fs",
+            "wasm.fs.copy",
+            Some(serde_json::json!({"src": src_str, "dst": dst_str, "bytes_copied": bytes})),
+        );
+
         Ok(serde_json::json!({"copied": bytes, "src": src_str, "dst": dst_str}))
     }
 }
@@ -350,6 +386,15 @@ impl BuiltinTool for FsMoveTool {
             return Err(ToolError::FileNotFound(src.display().to_string()));
         }
         std::fs::rename(src, dst).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+
+        // Chain event: log filesystem move
+        #[cfg(feature = "exochain")]
+        clawft_core::chain_event::push_chain_event(
+            "wasm_fs",
+            "wasm.fs.move",
+            Some(serde_json::json!({"src": src_str, "dst": dst_str})),
+        );
+
         Ok(serde_json::json!({"moved": true, "src": src_str, "dst": dst_str}))
     }
 }

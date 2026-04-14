@@ -174,7 +174,29 @@ impl CronService {
     }
 
     /// Remove a job by ID. Returns the removed job if it existed.
-    pub fn remove_job(&self, id: &str) -> Option<CronJob> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `CronError::GovernanceDenied` if the governance gate
+    /// rejects the job removal (only when the `exochain` feature is
+    /// enabled and a gate is attached).
+    pub fn remove_job(&self, id: &str) -> Result<Option<CronJob>, CronError> {
+        // Governance gate -- block job removal if policy denies it.
+        #[cfg(feature = "exochain")]
+        if let Some(ref gate) = self.governance_gate {
+            let context = serde_json::json!({
+                "job_id": id,
+                "effect": { "risk": 0.2, "security": 0.1 },
+            });
+            let decision = gate.check("kernel", "cron.remove", &context);
+            if decision.is_deny() {
+                return Err(CronError::GovernanceDenied {
+                    action: "cron.remove".into(),
+                    reason: format!("governance denied removing cron job '{id}'"),
+                });
+            }
+        }
+
         let mut jobs = self.jobs.lock().unwrap();
         let removed = jobs.remove(id);
         if let Some(ref j) = removed {
@@ -193,7 +215,7 @@ impl CronService {
                 );
             }
         }
-        removed
+        Ok(removed)
     }
 
     /// List all registered jobs.
@@ -340,13 +362,13 @@ mod tests {
         let svc = CronService::new();
         let job = svc.add_job("temp".into(), 5, "check".into(), None).unwrap();
 
-        let removed = svc.remove_job(&job.id);
+        let removed = svc.remove_job(&job.id).unwrap();
         assert!(removed.is_some());
         assert_eq!(removed.unwrap().name, "temp");
         assert_eq!(svc.job_count(), 0);
 
         // Remove again returns None
-        assert!(svc.remove_job(&job.id).is_none());
+        assert!(svc.remove_job(&job.id).unwrap().is_none());
     }
 
     #[test]

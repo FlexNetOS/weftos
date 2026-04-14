@@ -218,6 +218,48 @@ pub async fn run(config: Config, kernel_config: KernelConfig) -> anyhow::Result<
         }
     });
 
+    // Chain event bridge — drains non-kernel chain events and forwards to ChainManager
+    #[cfg(feature = "exochain")]
+    {
+        let bridge_kernel = Arc::clone(&kernel);
+        let mut bridge_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let pending = clawft_core::chain_event::drain_pending_chain_events();
+                        if pending.is_empty() {
+                            continue;
+                        }
+                        let k = bridge_kernel.read().await;
+                        if let Some(cm) = k.chain_manager() {
+                            for evt in pending {
+                                cm.append(&evt.source, &evt.kind, evt.payload);
+                            }
+                        }
+                    }
+                    _ = bridge_shutdown_rx.changed() => {
+                        if *bridge_shutdown_rx.borrow() {
+                            // Final drain before shutdown
+                            let pending = clawft_core::chain_event::drain_pending_chain_events();
+                            if !pending.is_empty() {
+                                let k = bridge_kernel.read().await;
+                                if let Some(cm) = k.chain_manager() {
+                                    for evt in pending {
+                                        cm.append(&evt.source, &evt.kind, evt.payload);
+                                    }
+                                }
+                            }
+                            debug!("chain event bridge shutting down");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Health monitor loop — periodic aggregate() with chain logging
     //
     // We access the kernel inside the loop but drop the RwLock guard before
@@ -1445,7 +1487,7 @@ async fn dispatch(
             };
             let k = kernel.read().await;
             match k.cron_service().remove_job(&remove_params.id) {
-                Some(job) => {
+                Ok(Some(job)) => {
                     #[cfg(feature = "exochain")]
                     if let Some(cm) = k.chain_manager() {
                         cm.append(
@@ -1460,7 +1502,8 @@ async fn dispatch(
                     k.event_log().info("cron", format!("job removed: {}", job.name));
                     Response::success(serde_json::json!({"removed": true, "job_id": job.id}))
                 }
-                None => Response::error(format!("cron job not found: {}", remove_params.id)),
+                Ok(None) => Response::error(format!("cron job not found: {}", remove_params.id)),
+                Err(e) => Response::error(format!("cron remove denied: {e}")),
             }
         }
         "ipc.topics" => {

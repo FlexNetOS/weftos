@@ -306,8 +306,9 @@ impl BuiltinTool for SysCronRemoveTool {
         let id = args.get("id").and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidArgs("missing 'id'".into()))?;
         match self.cron.remove_job(id) {
-            Some(job) => Ok(serde_json::json!({"removed": true, "job_id": job.id})),
-            None => Err(ToolError::NotFound(format!("cron job: {id}"))),
+            Ok(Some(job)) => Ok(serde_json::json!({"removed": true, "job_id": job.id})),
+            Ok(None) => Err(ToolError::NotFound(format!("cron job: {id}"))),
+            Err(e) => Err(ToolError::PermissionDenied(format!("{e}"))),
         }
     }
 }

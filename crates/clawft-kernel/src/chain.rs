@@ -404,6 +404,21 @@ pub const EVENT_KIND_PROCESS_STATE: &str = "process.state";
 /// WASM module executed.
 pub const EVENT_KIND_WASM_EXECUTE: &str = "wasm.execute";
 
+/// WASM filesystem: file written.
+pub const EVENT_KIND_WASM_FS_WRITE: &str = "wasm.fs.write";
+
+/// WASM filesystem: file or directory removed.
+pub const EVENT_KIND_WASM_FS_REMOVE: &str = "wasm.fs.remove";
+
+/// WASM filesystem: directory created.
+pub const EVENT_KIND_WASM_FS_CREATE_DIR: &str = "wasm.fs.create_dir";
+
+/// WASM filesystem: file copied.
+pub const EVENT_KIND_WASM_FS_COPY: &str = "wasm.fs.copy";
+
+/// WASM filesystem: file moved.
+pub const EVENT_KIND_WASM_FS_MOVE: &str = "wasm.fs.move";
+
 /// Agent hierarchy: child added.
 pub const EVENT_KIND_AGENT_HIERARCHY_ADD: &str = "agent.hierarchy.add_child";
 
