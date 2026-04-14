@@ -506,6 +506,69 @@ Hooks are marker-delimited (`# graphify-hook-start` / `# graphify-hook-end`) so 
 | `kernel-bridge` | `clawft-kernel`, `async-trait` | CausalGraph, HNSW, CrossRef bridge |
 | `full` | All of the above | Enable everything |
 
+## Sprint 17: Knowledge Graph Intelligence
+
+Sprint 17 adds advanced graph analysis, exploration, and maintenance capabilities to Graphify.
+
+### Community Summaries (KG-002)
+
+GraphRAG-style summary generation produces human-readable descriptions of each detected community. The summarizer analyzes member entities, their relationships, and structural patterns to generate a narrative summary suitable for reports and conversational answers.
+
+```bash
+weaver graphify rebuild   # summaries generated automatically
+cat graphify-out/GRAPH_REPORT.md  # includes community summaries
+```
+
+### Data Flow Tracing (KG-006)
+
+BFS dependency flow tracing follows data through call chains from a source entity to all reachable sinks. Useful for understanding how a configuration value propagates through the system or how a security-sensitive input reaches storage.
+
+```rust
+let flows = trace_data_flow(&graph, source_id, max_depth);
+// Returns ordered list of paths with edge types
+```
+
+### Entity Deduplication (KG-008)
+
+Detects and merges duplicate entities using a combination of Levenshtein string distance on labels and structural similarity (shared neighbors, same community). Configurable similarity threshold (default 0.85) controls aggressiveness.
+
+### Entity Alignment (KG-015)
+
+Cross-graph entity matching for merging knowledge graphs from different sources. Uses label similarity (normalized Levenshtein) combined with structural similarity (Jaccard index on neighbor sets) to find corresponding entities across graphs.
+
+```rust
+let alignments = align_entities(&graph_a, &graph_b, threshold);
+// Returns Vec<(EntityId, EntityId, f64)> — matched pairs with confidence
+```
+
+### Conversational Exploration (KG-016)
+
+Stateful multi-turn dialogue interface for exploring knowledge graphs interactively. Maintains conversation context (visited nodes, active filters, current community focus) across turns. Supports natural-language queries that are translated into graph traversals.
+
+### MCTS Graph Exploration (KG-007)
+
+Monte Carlo Tree Search for knowledge graph exploration. Uses UCB1 for node selection and random rollouts to discover non-obvious paths and structural patterns. Useful for hypothesis generation in forensic and research domains.
+
+### Multi-hop Beam Search (KG-010)
+
+Prioritized multi-hop traversal with edge-type priors. Unlike BFS which explores uniformly, beam search maintains a priority queue weighted by relationship types and confidence levels, finding the most relevant paths first.
+
+### Incremental Updates
+
+Efficient delta-based graph rebuilds that only re-extract changed files and update affected edges. Combined with the file watcher and git hooks, this enables near-real-time graph maintenance on large codebases without full rebuilds.
+
+### Newman Modularity (KG-018)
+
+Global partition quality metric (Q score) measuring how well the detected communities reflect the actual graph structure. Ranges from -0.5 to 1.0, where values above 0.3 indicate meaningful community structure.
+
+### EML Score Fusion (KG-001)
+
+Hybrid query scoring that combines four signals: keyword match (TF-IDF on entity labels), graph proximity (shortest path distance), community membership (same-community bonus), and entity type matching. Produces a unified relevance score for search results.
+
+### Sonobuoy Sensor Graph (KG-013)
+
+Specialized graph construction for time-series sensor data using GraphSAGE-style neighbor aggregation and temporal features. Designed for IoT and edge deployments where sensor readings flow through the knowledge graph with time-decay weighting.
+
 ## Integration with WeftOS
 
 ### CausalGraph Bridge

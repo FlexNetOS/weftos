@@ -6,7 +6,7 @@ description: "How WeftOS uses the EML operator (exp(x) - ln(y)) for O(1) learned
 WeftOS replaces hardcoded heuristics with learned functions that improve during operation. Every threshold, scoring formula, and tuning parameter that was once a magic constant is now a trainable EML model that converges toward the optimal function for the domain it runs in.
 
 **Feature**: `ecc`
-**Source**: `crates/eml-core/` (standalone) + 16 domain-specific wrappers across 4 crates
+**Source**: `crates/eml-core/` (standalone) + 17 domain-specific wrappers across 4 crates
 **Phase**: K3c
 
 ## What is EML?
@@ -97,7 +97,7 @@ pub trait FeatureVector {
 
 ## Where EML is Used
 
-16 EML models span 4 crates, replacing hardcoded heuristics across the entire WeftOS stack:
+17 EML models span 4 crates, replacing hardcoded heuristics across the entire WeftOS stack:
 
 ### Kernel: Coherence (eml_coherence.rs)
 
@@ -140,6 +140,21 @@ pub trait FeatureVector {
 | `ClusterThresholdModel` | 2 | 3 topology features | 3 thresholds | Optimal community detection params | Fixed constants |
 | `LayoutModel` | 3 | 3 graph features | 6 physics params | ForceAtlas2 physics tuning | Hardcoded physics |
 | `ForensicCoherenceModel` | 3 | 4 graph stats | 1 coherence | Domain-specific coherence | density * avg_confidence |
+| `QueryFusionModel` | 3 | 4 scoring dims | 1 relevance | Hybrid keyword+graph+community+type scoring | Linear weighted sum |
+
+## EML Distillation (KG-017)
+
+Model distillation compresses a trained depth-4 EML model into a depth-2 model with minimal accuracy loss. The distillation process generates synthetic training data by evaluating the teacher model across the input space, then trains the student model on those predictions. This is useful for deploying EML models on resource-constrained edge devices (T0/T1 kernel profiles) where inference latency must be minimized.
+
+```rust
+use eml_core::distill;
+
+let teacher = EmlModel::from_json(&saved_depth4)?;
+let student = distill(&teacher, 2, 1000);  // depth-2 student, 1000 synthetic samples
+// student.predict() runs ~3x faster than teacher
+```
+
+Typical accuracy retention: 95-98% of teacher MSE for well-conditioned models. The distilled model preserves the two-tier pattern -- it just runs the fast path even faster.
 
 ## The Two-Tier Pattern
 

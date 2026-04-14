@@ -5,6 +5,198 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-04-14
+
+### Added
+
+- **18 Knowledge Graph tasks** (KG-001 through KG-018) completing Sprint 17
+- **EML Score Fusion** (KG-001): Hybrid query combining keyword, graph, community, and type scoring
+- **Community Summaries** (KG-002): GraphRAG-style summary generation for detected communities
+- **Causal Chain Tracing** (KG-003): Typed BFS with natural-language explanations
+- **RFF Spectral Analysis** (KG-004): O(m) approximate spectral analysis using random Fourier features
+- **Info Gain Pruning** (KG-005): Redundant evidence filtering based on information gain
+- **Data Flow Tracing** (KG-006): BFS dependency flow tracing through call chains
+- **MCTS Graph Exploration** (KG-007): UCB1 + random rollout for knowledge graph traversal
+- **Entity Dedup** (KG-008): Levenshtein + structural similarity deduplication
+- **Geometric Shadowing** (KG-009): Age-aware decay with per-edge volatility
+- **Multi-hop Beam Search** (KG-010): Prioritized traversal with edge priors
+- **Sonobuoy Sensor Graph** (KG-013): GraphSAGE aggregation + temporal features
+- **VQ Codebook Cold-Start** (KG-014): K-means++ initialization for new entities
+- **Entity Alignment** (KG-015): Cross-graph matching via label + structural similarity
+- **Conversational Exploration** (KG-016): Stateful multi-turn dialogue over knowledge graphs
+- **EML Distillation** (KG-017): Depth-4 to depth-2 model compression
+- **Newman Modularity** (KG-018): Global partition quality metric
+- **Incremental graph updates** and **multi-key HNSW indexing**
+- New modules: `summary.rs`, `alignment.rs`, `conversation.rs`, `sensor_graph.rs`, `vector_quantization.rs`
+- 170+ new tests (1,770 total)
+
+## [0.6.5] - 2026-04-04
+
+### Added
+
+- **eml-core standalone crate**: Zero-dep (just serde), configurable depth 2-5, multi-head outputs, coordinate descent training (36 tests)
+- **12 EML models across 4 crates**: Coherence, governance scoring, restart strategy, health thresholds, dead letter policy, gossip timing, complexity limits, HNSW (distance/ef/path/rebuild), causal collapse, surprise scoring, cluster thresholds, layout tuning
+- **Causal collapse prediction**: `rank_evidence_by_impact()` ranks candidate edges by predicted coherence impact via perturbation theory
+- **Conversation cycle detection**: `detect_conversation_cycle()` identifies stuck/oscillating conversations via lambda_2 stagnation
+- **HNSW EML training infrastructure**: HnswEmlManager with 4 models (distance, adaptive ef, path prediction, rebuild trigger), 33 tests
+
+### Fixed
+
+- **66 ExoChain compliance gaps closed**: Systematic audit of all mutation paths
+- 75+ EVENT_KIND constants, 21 governance gates, EmlEvent types (Trained, Drift, Saved, Loaded) chain-witnessed
+- 7 ExoChain/governance certification failures resolved
+
+## [0.6.4] - 2026-04-04
+
+### Added
+
+- **EML depth-4 multi-head coherence**: 50 parameters, 3 output heads (lambda_2, fiedler_norm, uncertainty), 24 tests
+- Two-tier DEMOCRITUS tick loop wired with EML coherence
+
+## [0.6.3] - 2026-04-04
+
+### Added
+
+- **O(1) EML coherence approximation**: 34-parameter depth-3 master formula predicting algebraic connectivity from graph statistics
+- Based on Odrzywolel 2026, "All elementary functions from a single operator" (arXiv:2603.21852v2)
+- ~100ns prediction vs ~500us Lanczos iteration (5000x speedup), enabling 10,000 Hz tick rate for robotics
+- Self-training: accumulates data during operation, retrains at 50+ samples
+- Convergence verified on 5 standard graph families (K_n, star, cycle, path, Erdos-Renyi)
+- 16 new tests
+
+## [0.6.2] - 2026-04-04
+
+### Added
+
+- **Graphify extraction pipeline wired into CLI**: Full detect -> extract -> build -> cluster -> analyze -> export pipeline functional
+- `weaver graphify rebuild` produces `graphify-out/graph.json` and `GRAPH_REPORT.md`
+- `weaver graphify export` loads graph JSON and exports to 7 formats
+
+## [0.6.1] - 2026-04-04
+
+### Added
+
+- **Workspace RPC**: `weft workspace create/list/load/status/delete` connected to daemon RPC
+- **Cognitive tick auto-started** during kernel boot sequence
+- **ECC tick auto-computed** from calibration bands (0.01ms to 1000ms, was hardcoded at 50ms)
+- `weaver graphify ingest` delegates to the full pipeline for local directories
+
+### Fixed
+
+- Workspace RPC dispatch routing
+- Cognitive tick startup sequencing
+
+## [0.6.0] - 2026-04-04
+
+### Added
+
+- **Cognitum Seed gap sprint**: 11 gaps identified and closed across the kernel
+- **Tiered kernel profiles** (T0-T4): Boot-time calibration selects appropriate resource tier from embedded microcontroller (T0) through GPU server (T4)
+- Auto update check and universal install script
+
+## [0.5.5] - 2026-04-04
+
+### Added
+
+- **VectorBackend trait**: Pluggable vector search with insert/search/remove/flush interface
+- **HNSW backend** (default): In-memory approximate nearest neighbor via `instant-distance`
+- **DiskANN backend**: SSD-backed vector search via `ruvector-diskann` v2.1, Vamana graph with product quantization and mmap persistence
+- **Hybrid backend**: Hot HNSW cache + cold DiskANN store with access-counted promotion, LRU eviction, and merged search results
+- Configurable via `[kernel.vector]` in `weave.toml`
+
+## [0.5.4] - 2026-04-04
+
+### Added
+
+- **Benchmark v3**: 6-phase comprehensive performance suite (1,342 LOC)
+- **ESP32-S3 edge benchmark**: Compatible with `weaver benchmark` v3 for edge devices
+
+### Fixed
+
+- Benchmark method names and parameter formats
+
+## [0.5.3] - 2026-04-04
+
+### Fixed
+
+- **Benchmark scoring recalibrated**: Pi 5 was incorrectly graded A+, now correctly scores B/C
+
+## [0.5.2] - 2026-04-04
+
+### Added
+
+- **`weaver benchmark`**: Standardized kernel performance test
+- **Benchmark v2**: Three-tier testing (RPC, compute, stress)
+
+### Changed
+
+- **Kernel enabled by default**: No longer requires explicit `--features kernel` flag
+- **ECC RPC dispatch endpoints** wired for all ECC commands
+- **Per-project kernel runtime directory**: Prevents state collision across projects
+
+## [0.5.1] - 2026-04-04
+
+### Added
+
+- **clawft-graphify** (new crate): 11,896 lines of Rust across 35 modules with 88 tests
+- AST extraction via tree-sitter for Python, JavaScript/TypeScript, Rust, Go
+- Community detection via label propagation with oversized splitting
+- Analysis: god nodes, surprising connections (5-factor scoring), question generation (5 strategies), graph diff
+- 7 export formats: JSON, HTML/vis.js, GraphML, Obsidian vault+canvas, Wiki, Cypher, SVG
+- URL ingestion (tweet, arXiv, PDF, webpage) with SSRF protection
+- CausalGraph bridge, 9th assessment analyzer, HNSW indexing
+- Forensic domain: 14 entity types, 13 edge types, gap analysis, coherence scoring
+- CLI: `weaver graphify` with 7 subcommands (ingest, query, export, diff, rebuild, watch, hooks)
+
+## [0.5.0] - 2026-04-04
+
+### Added
+
+- **Sprint 16 architecture sprint**: wasmtime v33 upgrade, security audit
+- **ServiceApi**: Unified kernel service registration and lifecycle
+- **wasip2**: Full `wasm32-wasip2` target support across all crates
+- **Playground phase 3-4**: Browser WASM sandbox improvements
+- **Browser WASM features**: Enhanced client-side execution
+
+### Changed
+
+- Renamed `ui/` to `clawft-ui/` for workspace clarity
+
+### Fixed
+
+- Docker tarball directory component stripping
+
+## [0.4.3] - 2026-04-04
+
+### Added
+
+- Sprint 14-15 documentation coverage pass: assessment, GUI, browser, plugins
+- Docker Alpine optimization: Build time from ~30min to ~2min, image ~50MB to ~15MB
+
+### Fixed
+
+- `clawft-plugin-treesitter` added to crates.io publish pipeline
+- `clawft-services` added to crates.io publish pipeline
+- Handle 'already exists' error gracefully in crates.io publish
+
+## [0.4.2] - 2026-04-04
+
+### Added
+
+- **Full boot sequence in ExoChain log**: INIT, CONFIG, SERVICES, NETWORK, READY phases visible
+- **Rich markdown rendering**: Headings, bold, italic, code blocks, links, lists in chat bubbles
+- **Document preview panel**: Click internal doc links to open in a side panel
+- **Plugin marketplace scaffold**: `create-weftos-plugin` CLI for authoring new plugins
+- **Rustdoc JSON-to-MDX converter**: Generates native Fumadocs API pages from Rust documentation
+- **clawft-plugin-npm**: Node.js dependency parsing via package.json and lockfiles
+- **clawft-plugin-ci**: GitHub Actions and Vercel config parsing
+- **MeshCoordinator**: Real mesh coordination with AssessmentMessage protocol and gossip discovery
+- 25 crates in workspace, 48 ADRs
+
+### Fixed
+
+- crates.io pipeline: 12 crates now publish automatically on tag
+
 ## [0.4.1] - 2026-04-03
 
 ### Added
@@ -12,7 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pluggable Analyzer Registry**: `AnalyzerRegistry` with `Analyzer` trait for extensible assessment
 - **5 Built-in Analyzers**: ComplexityAnalyzer, DependencyAnalyzer (Cargo.toml/package.json), SecurityAnalyzer (secrets, .env, unsafe), TopologyAnalyzer (Docker, K8s), DataSourceAnalyzer (connection strings, S3, APIs)
 - **Assessment Diff**: Compare current vs. previous assessment (files added/removed, findings new/resolved)
-- **Assessment Hooks**: `weft assess hooks` — install/uninstall post-commit and pre-push git hooks
+- **Assessment Hooks**: `weft assess hooks` -- install/uninstall post-commit and pre-push git hooks
 - **Assessment Dashboard**: `/assess` route with project stats, findings list, peer comparison
 - **Assessment Config**: Load trigger configuration from `.weftos/weave.toml`
 - **Multi-project Namespace**: `[project]` section in weave.toml with org isolation
@@ -25,7 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Browser WASM CI**: Pinned wasm-bindgen-cli to v0.2.108 (matches Cargo.lock)
-- **Wrong URLs**: Fixed all `github.com/clawft/clawft` → `weave-logic-ai/weftos` and `ghcr.io/clawft/clawft` → `weave-logic-ai/weftos` across 6 doc files
+- **Wrong URLs**: Fixed all `github.com/clawft/clawft` to `weave-logic-ai/weftos` and `ghcr.io/clawft/clawft` to `weave-logic-ai/weftos` across 6 doc files
 - **Test badge**: Updated from 3,300+ to 3,900+ on homepage
 - **Crate count**: Updated from 22 to 23 (added clawft-rpc)
 - **Glossary**: Added entries for clawft-rpc, AssessmentService, Analyzer/AnalyzerRegistry
@@ -82,142 +274,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context Compression** (`crates/clawft-core/src/agent/context.rs`): Sliding-window context management with configurable `max_context_tokens` (default 8192). First-sentence summarization for older messages. Opt-in via `builder.with_compression(config)`.
 - **GEPA Prompt Evolution** (`crates/clawft-core/src/pipeline/`): `TrajectoryLearner` replacing `NoopLearner` with trajectory collection, pattern extraction, and 4 prompt mutation strategies (rephrase, add examples, remove ineffective, emphasize). `FitnessScorer` replacing `NoopScorer` with 4-dimension weighted scoring (relevance, coherence, completeness, conciseness).
 - **Local LLM Provider** (`crates/clawft-llm/src/local_provider.rs`): OpenAI-compatible provider for Ollama, vLLM, llama.cpp, and LM Studio. Key-optional auth, streaming, model listing. Factory methods: `LocalProvider::ollama()`, `::vllm()`, `::llamacpp()`, `::lmstudio()`.
-
-## [Unreleased]
-
-### Added
-
-#### Kernel Foundation (K0-K6) — Sprints 6-8
-
-- WeftOS kernel crate (`clawft-kernel`) with 7 layered phases: K0 boot, K1 supervisor, K2 IPC, K3 WASM sandbox, K4 containers, K5 app framework, K6 mesh/agency
-- K0: Kernel boot sequence, process table, capability registry, interactive REPL console
-- K1: AgentSupervisor with RBAC capability enforcement, end-to-end agent lifecycle, ExoChain integration
-- K2: A2A IPC with topic pub/sub, inbox routing, request-response messaging, delegation wiring, IPC tools
-- K2.1: SpawnBackend, ServiceEntry, GovernanceGate from symposium implementation; chain-logged lifecycle signals (ipc.recv, ipc.ack, agent.spawn, suspend/resume)
-- K2-ext: RVF deep integration with signing, witness chains, governance hooks, lineage tracking
-- K3: WASM tool sandbox with Wasmtime execution, fuel metering, and tool registry integration
-- K3c: ECC cognitive substrate with 6 kernel modules (causal_graph, hnsw, impulse_queue, embedding, cognitive_tick, cross_ref), boot wiring, and CLI commands
-- K4: Container types, config, lifecycle manager, ServiceApi, dual governance gate, chain contracts, shell pipeline
-- K5: Application framework with manifest parsing (`weftapp.toml`), CLI commands, lifecycle management, namespace isolation
-- K6a: Cluster, environment, and governance types for mesh networking
-- K6b: Agent-first architecture with roles, agency model, and autonomous operation
-- ML-DSA-65 dual signing: Ed25519 primary + post-quantum ML-KEM-768 placeholder
-- Chain-anchored genesis rules for immutable constitutional governance (22 rules)
-- AI-SDLC SOPs as chain-anchored constitutional rules
-- 19 genesis rule enforcement tests verifying all 22 rules
-- K0-K5 full-stack integration tests: native agent + WASM + container + ECC
-- K5 app lifecycle integration tests with multi-service apps and namespace isolation
-- Standalone `weftos` crate as drop-in AI kernel for any Rust project
-
-#### Weaver Operator CLI — Sprint 7
-
-- `weaver` binary (renamed from `weave`) as WeftOS operator CLI
-- Persistent kernel daemon with Unix socket RPC
-- Kernel event log with `weaver kernel logs`
-- Enriched CLI display: agent inspect, chain detail, resource scoring
-- Signal-based stop/restart for systemd compatibility
-
-#### ECC Weaver — Sprints 8-9
-
-- ECC Weaver v2: self-evolving cognitive modeler running as a kernel process
-- Codebase analysis pipeline: 12 conversation sources identified and ingested
-- Graph ingestion: 408 causal nodes, 1,597 edges from 3 data sources
-- ECC graph gap analysis traversing 408 nodes and 1,597 edges
-- Cognitive tick integration with live git polling and file watching
-- Weaver self-evolution loop: 41/41 TODO items resolved automatically
-- Session log ingestion: 29,029 nodes extracted from 88 conversation files
-- ONNX embedding backend with sentence-transformer and AST-aware modes
-- Spectral analysis: lambda_2 algebraic connectivity for graph health
-- Community detection via label propagation
-- Predictive change analysis: burst detection and coupling-based prediction
-
-#### OS Gap-Filling (08a/08b/08c) — Sprint 8
-
-- 08a self-healing: restart strategies, process links, reconciliation
-- 08b reliable IPC: dead letter handling, delivery guarantees
-- 08c content operations: Weaver K3c integration gates
-- 12 specialized agent definitions in `agents/` directory
-- `weave init` command for project bootstrapping
-
-#### Sprint 9: Test Coverage and Integration Polish
-
-- 1,328 tests passing across 20/20 gate checks
-- 45 new boot path tests covering error paths and partial recovery
-- 09-weftos-gaps sprint completing 4 sub-sprints with 61 gate checkboxes
-
-#### Sprint 10: Operational Hardening
-
-- Self-healing supervisor: RestartStrategy enum (OneForOne, OneForAll, RestForOne, Escalate, Custom), restart budget with max_restarts/window_secs, exponential backoff (100ms base, 30s cap), ProcessLink and ProcessMonitor
-- Persistence: SQLite backend for ExoChain, CausalGraph save/load to disk, HNSW index persistence, recovery-after-restart verification
-- Observability: DeadLetterQueue with capture/query/retry, ReliableDelivery with ack tracking, MetricsRegistry, LogService, TimerService, wired into boot sequence
-- MeshRuntime: bind/accept/handshake/dispatch, A2A bridge (local KernelMessage to MeshIpcEnvelope and back), mDNS discovery, 2-node LAN communication demonstrated
-- DEMOCRITUS continuous cognitive loop: Sense (git/file/IPC events) -> Embed (ONNX vectors) -> Search (HNSW nearest-neighbor) -> Update (causal edges) -> Commit (ExoChain event); CognitiveTick with budget-aware pacing, ImpulseQueue for inter-tick events
-- ConfigService and AuthService as kernel services
-- 10 new extended tools in `tools_extended.rs`
-- Tool signing: ToolSignature with Ed25519, register_signed(), require_signatures mode
-- WASM shell execution: ShellCommand/ShellResult types, execute_shell(), shell.exec tool running in Wasmtime sandbox
-- K8 GUI prototype: Tauri 2.0 wrapper, Dashboard view, Admin Forms, Knowledge Graph visualization (Cytoscape.js), Component Generator
-- Docker packaging with multi-stage build
-- E2E integration tests for full kernel boot path
-- External codebase analysis validated on ruvector (109 crates analyzed, 16 gaps identified)
-- 983 new kernel tests (613 to 1,596 kernel tests; 5,040 total test annotations)
-
-#### clawft Framework — Sprint 6
-
-- Gemini LLM provider
-- xAI LLM provider
-- Tiered router with multi-provider dispatch
-- K4 ClawHub install/publish for skill distribution
-- K5 MVP skills: prompt-log, skill-vetting, discord
-- IRC channel adapter
-- Permission re-prompt on plugin version upgrade
-- Pipeline and LLM reliability improvements (D1-D11)
-- Workstream A critical fixes (A1-A9)
-- `weft tools` CLI subcommand for tool discovery and management
-- Unified `scripts/build.sh` build script (native, wasi, browser, gate)
-
-#### Documentation
-
-- Fumadocs Next.js documentation site with 38 MDX pages
-- 25 WeftOS kernel subsystem pages (architecture through self-healing)
-- 13 clawft framework pages (getting-started through browser)
-- SPARC architecture plans: 14 documents covering K0-K6 phases (ADR-028)
-- K6 mesh networking SPARC plan with 15 planning documents
-- 4 symposium series (K2, K3, K5, ECC) with synthesized decisions
-- Comprehensive kernel governance reference (1,057 lines)
-- VISION.md documenting the arc from agency to cognitive OS
-- Knowledge graph data: 122 commits, 182 modules, 500 edges indexed
-
-### Changed
-
-- Workspace expanded from 9 crates to 22 crates
-- Test count grew from 1,029 to 5,040 annotations
-- Feature flags grew from initial set to 93 across 20 crates
-- `weave` binary renamed to `weaver` to avoid conflict with TeX `weave` tool
-- IPC API breaking changes from K2.1 symposium: SpawnBackend enum replaces direct spawn, ServiceEntry wraps service registration, GovernanceGate gates all cross-process calls
-- README rewritten to lead with problems solved and deployment patterns
-- ruvector distributed crates integrated into WeftOS cluster topology
-
-### Fixed
-
-- DashMap deadlock in A2ARouter under concurrent message dispatch
-- Chain persistence defaults not applied on first boot
-- Agent send CLI output not displaying response
-- SkillToolProvider not wired into MCP server
-- Delegation config fallback missing when no config file present
-- Anthropic API compatibility: serialize tool-call assistant messages with null content
-- Multi-provider LLM routing bug causing incorrect provider selection
-- LLM permission handling for provider-specific auth
-- 2 clippy warnings in llm_adapter.rs
-- Rustdoc warning in topic.rs
-
-### Security
-
-- 6 vulnerabilities from phase-5 security review addressed
-- C2 security tests (T30/T42) for input validation and access control
-- Tool signing with Ed25519 for tamper detection on registered tools
-- WASM sandbox fuel metering to prevent runaway tool execution
-- Chain-anchored governance preventing unsigned process mutations
 
 ## [0.1.0] - 2026-02-17
 
@@ -280,7 +336,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release profile with LTO, strip, single codegen unit, and abort-on-panic
 - 1,029 tests across the workspace
 
-[Unreleased]: https://github.com/weave-logic-ai/weftos/compare/v0.3.0...HEAD
+[0.6.6]: https://github.com/weave-logic-ai/weftos/compare/v0.6.5...v0.6.6
+[0.6.5]: https://github.com/weave-logic-ai/weftos/compare/v0.6.4...v0.6.5
+[0.6.4]: https://github.com/weave-logic-ai/weftos/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/weave-logic-ai/weftos/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/weave-logic-ai/weftos/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/weave-logic-ai/weftos/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/weave-logic-ai/weftos/compare/v0.5.5...v0.6.0
+[0.5.5]: https://github.com/weave-logic-ai/weftos/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/weave-logic-ai/weftos/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/weave-logic-ai/weftos/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/weave-logic-ai/weftos/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/weave-logic-ai/weftos/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/weave-logic-ai/weftos/compare/v0.4.3...v0.5.0
+[0.4.3]: https://github.com/weave-logic-ai/weftos/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/weave-logic-ai/weftos/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/weave-logic-ai/weftos/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/weave-logic-ai/weftos/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/weave-logic-ai/weftos/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/weave-logic-ai/weftos/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/weave-logic-ai/weftos/releases/tag/v0.1.0

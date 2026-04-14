@@ -299,6 +299,37 @@ In hybrid mode, the backend tracks an access counter per vector. When a vector s
 | DiskANN | Large corpora, memory-constrained hosts | 1M+ vectors | Low milliseconds |
 | Hybrid | Mixed workloads with hot/cold access | Any size | Sub-ms (hot), low-ms (cold) |
 
+## Sprint 17: ECC Enhancements
+
+### RFF Spectral Analysis (KG-004)
+
+Random Fourier Feature (RFF) spectral analysis provides an O(m) approximation to the full eigenvalue decomposition. Instead of computing exact eigenvalues via Lanczos iteration, RFF projects the graph Laplacian into a random feature space and estimates spectral properties from the projection. This is faster than Lanczos for large graphs while providing sufficient accuracy for coherence monitoring and community detection.
+
+### Geometric Shadowing (KG-009)
+
+Age-aware edge weight decay with per-edge volatility tracking. Edges that have not been reinforced by new evidence decay geometrically over time, with the decay rate proportional to the edge's historical volatility. High-volatility edges (frequently created and removed) decay faster than stable edges. This prevents stale causal relationships from dominating the graph.
+
+```rust
+// Decay is applied during each cognitive tick
+let decayed_weight = original_weight * base_decay.powf(age * volatility);
+```
+
+### VQ Codebook Cold-Start (KG-014)
+
+Vector Quantization codebook initialization using K-means++ for new entities entering the HNSW index. When a new domain or entity type is encountered without pre-existing embeddings, the VQ codebook bootstraps initial cluster centroids from the first batch of entities, providing reasonable search quality before the full embedding model has accumulated enough training data.
+
+### Info Gain Pruning (KG-005)
+
+Information-gain-based pruning removes redundant evidence edges that contribute minimal new information to the causal graph. Each edge is scored by its marginal information gain relative to existing paths between the same endpoints. Edges below the pruning threshold are candidates for removal, reducing graph density without losing meaningful causal structure.
+
+### Causal Chain Tracing (KG-003)
+
+Typed BFS traversal that follows specific edge types through the causal graph, producing natural-language explanations of causal chains. Given a source event and target outcome, it enumerates all causal paths up to a configurable depth, filtering by edge type (Causes, Enables, TriggeredBy) and producing human-readable explanations of each chain.
+
+```bash
+weaver ecc trace --from event_123 --to outcome_456 --depth 5 --types causes,enables
+```
+
 ## Resource Tree Namespaces
 
 6 namespaces under `/kernel/services/ecc/`:

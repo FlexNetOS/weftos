@@ -1,9 +1,44 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.5.1.
+description: Complete version history for WeftOS from initial development through v0.6.6.
 ---
 
 # Release Notes
+
+## v0.6.6 — Sprint 17: Knowledge Graph Intelligence
+
+*2026-04-14*
+
+### 18 Knowledge Graph Tasks
+
+Sprint 17 delivers the full knowledge graph intelligence stack across 5,252 new lines and 170+ tests.
+
+- **EML Score Fusion** (KG-001): Hybrid query combining keyword, graph proximity, community, and type scoring
+- **Community Summaries** (KG-002): GraphRAG-style summary generation for detected communities
+- **Causal Chain Tracing** (KG-003): Typed BFS with natural-language explanations
+- **RFF Spectral Analysis** (KG-004): O(m) approximate spectral analysis using random Fourier features
+- **Info Gain Pruning** (KG-005): Redundant evidence filtering based on information gain
+- **Data Flow Tracing** (KG-006): BFS dependency flow tracing through call chains
+- **MCTS Graph Exploration** (KG-007): UCB1 + random rollout for knowledge graph traversal
+- **Entity Dedup** (KG-008): Levenshtein + structural similarity deduplication
+- **Geometric Shadowing** (KG-009): Age-aware decay with per-edge volatility
+- **Multi-hop Beam Search** (KG-010): Prioritized traversal with edge priors
+- **Sonobuoy Sensor Graph** (KG-013): GraphSAGE aggregation + temporal features
+- **VQ Codebook Cold-Start** (KG-014): K-means++ initialization for new entities
+- **Entity Alignment** (KG-015): Cross-graph matching via label + structural similarity
+- **Conversational Exploration** (KG-016): Stateful multi-turn dialogue over knowledge graphs
+- **EML Distillation** (KG-017): Depth-4 to depth-2 model compression
+- **Newman Modularity** (KG-018): Global partition quality metric
+
+### Infrastructure
+
+- **Incremental graph updates**: Efficient delta-based graph rebuilds
+- **Multi-key HNSW indexing**: Multiple embedding keys per entity for richer semantic search
+- **Shaal synergy stubs** (KG-011/012): LogQuantized + SIMD distance configs
+- New modules: `summary.rs`, `alignment.rs`, `conversation.rs`, `sensor_graph.rs`, `vector_quantization.rs`
+- 1,770 tests passing
+
+---
 
 ## v0.6.5 — EML Self-Learning Stack + ExoChain Certification
 
@@ -38,6 +73,16 @@ description: Complete version history for WeftOS from initial development throug
 
 ---
 
+## v0.6.4 — EML Depth-4 Multi-Head Coherence
+
+*2026-04-04*
+
+- **Depth-4 multi-head EML coherence model**: 50 parameters, 3 output heads (lambda_2, fiedler_norm, uncertainty)
+- Two-tier DEMOCRITUS tick loop wired with EML coherence fast path
+- 24 new tests
+
+---
+
 ## v0.6.3 — O(1) EML Coherence Approximation
 
 *2026-04-14*
@@ -53,13 +98,23 @@ description: Complete version history for WeftOS from initial development throug
 
 ---
 
+## v0.6.2 — Graphify Pipeline Wired
+
+*2026-04-04*
+
+- **`weaver graphify rebuild` now functional**: Runs the full detect -> extract -> build -> cluster -> analyze -> export pipeline
+- **`weaver graphify export` now functional**: Loads graph JSON, deserializes into `KnowledgeGraph`, exports to 7 formats
+- Outputs `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md`
+
+---
+
 ## v0.6.1 — Graphify Pipeline + Workspace RPC + ECC Calibration
 
 *2026-04-04*
 
 ### Graphify Extraction Pipeline
 
-- **`weaver graphify rebuild` now functional**: Runs the full detect -> extract -> build -> cluster -> analyze -> export -> report pipeline, producing `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md`
+- **`weaver graphify rebuild` now functional**: Runs the full detect -> extract -> build -> cluster -> analyze -> export pipeline, producing `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md`
 - **`weaver graphify ingest <dir>` delegates to the full pipeline** for local directories (equivalent to `rebuild`)
 - **`weaver graphify export <format>` now functional**: Loads the graph JSON, deserializes into a `KnowledgeGraph`, and exports to JSON, HTML, GraphML, Obsidian, Wiki, Cypher, or SVG
 - **Two extraction modes**: Default (file detection + co-location edges, no tree-sitter required) and full AST extraction (with `--features ast-extract`)
@@ -72,6 +127,17 @@ description: Complete version history for WeftOS from initial development throug
 
 - **Cognitive tick auto-started** during kernel boot sequence
 - **ECC tick auto-computed** from calibration bands (0.01ms to 1000ms, was hardcoded at 50ms)
+
+---
+
+## v0.6.0 — Cognitum Seed Gap Sprint + Tiered Kernel Profiles
+
+*2026-04-04*
+
+- **11 gaps identified and closed** across the kernel via Cognitum Seed analysis
+- **Tiered kernel profiles** (T0-T4): Boot-time calibration selects the appropriate resource tier from embedded microcontroller (T0) through GPU server (T4)
+- **Auto update check**: `weaver update` / `weft update` commands
+- **Universal install script**: Single-command installation for all platforms
 
 ---
 
@@ -95,6 +161,36 @@ description: Complete version history for WeftOS from initial development throug
 
 ---
 
+## v0.5.4 — Benchmark v3 + ESP32 Edge Benchmark
+
+*2026-04-04*
+
+- **Benchmark v3**: 6-phase comprehensive performance suite (1,342 LOC) covering RPC latency, compute throughput, memory, persistence, concurrency, and stress
+- **ESP32-S3 edge benchmark**: Compatible with `weaver benchmark` v3 for edge devices
+- Fixed benchmark method names and parameter formats
+
+---
+
+## v0.5.3 — Benchmark Scoring Recalibration
+
+*2026-04-04*
+
+- **Scoring recalibrated**: Pi 5 was incorrectly graded A+ due to overly generous thresholds, now correctly scores B/C
+
+---
+
+## v0.5.2 — Kernel Default + Benchmark v1
+
+*2026-04-04*
+
+- **Kernel enabled by default**: No longer requires explicit `--features kernel` flag
+- **`weaver benchmark`**: Standardized kernel performance test (RPC, compute, stress)
+- **ECC RPC dispatch**: All ECC commands wired to daemon endpoints
+- **Per-project kernel runtime directory**: Prevents state collision across projects
+- **`weaver update` / `weft update`**: Unified update command
+
+---
+
 ## v0.5.1 — Knowledge Graph Builder
 
 *2026-04-07*
@@ -112,6 +208,30 @@ description: Complete version history for WeftOS from initial development throug
 - **Forensic domain**: 14 entity types, 13 edge types, gap analysis, coherence scoring, counterfactual delta
 - **CLI**: `weaver graphify` with 7 subcommands (ingest, query, export, diff, rebuild, watch, hooks)
 - **File watcher** + **git hooks** for continuous graph updates
+
+---
+
+## v0.5.0 — Sprint 16 Architecture
+
+*2026-04-04*
+
+- **wasmtime v33 upgrade**: Latest WASM runtime with performance improvements
+- **Security audit**: Full review of kernel service boundaries
+- **ServiceApi**: Unified kernel service registration and lifecycle management
+- **wasip2**: Full `wasm32-wasip2` target support finalized across all crates
+- **Playground phase 3-4**: Browser WASM sandbox improvements
+- **Mesh K6 benchmarks**: Performance baseline for mesh networking
+- **Browser WASM features**: Enhanced client-side execution capabilities
+
+---
+
+## v0.4.3 — Docs Coverage + Docker Optimization
+
+*2026-04-04*
+
+- **Documentation coverage pass**: Sprint 14-15 docs for assessment, GUI, browser, and plugins
+- **Docker Alpine optimization**: Alpine + pre-built musl binaries, build time from ~30min to ~2min, image ~50MB to ~15MB
+- **crates.io pipeline fixes**: Added `clawft-plugin-treesitter` and `clawft-services` to publish pipeline, handle duplicate-version errors gracefully
 
 ---
 
@@ -140,7 +260,7 @@ description: Complete version history for WeftOS from initial development throug
 
 ### Infrastructure
 
-- **Docker optimization**: Alpine + pre-built musl binaries — build time from ~30min to ~2min, image ~50MB to ~15MB
+- **Docker optimization**: Alpine + pre-built musl binaries -- build time from ~30min to ~2min, image ~50MB to ~15MB
 - **crates.io pipeline fixed**: 12 crates now publish automatically on tag (was broken by missing deps)
 - **25 crates** in workspace (added clawft-plugin-npm, clawft-plugin-ci)
 - **48 ADRs** (unchanged)
@@ -174,8 +294,8 @@ description: Complete version history for WeftOS from initial development throug
 
 ### Documentation Fixes
 
-- Fixed all incorrect URLs (github.com/clawft/clawft → weave-logic-ai/weftos, ghcr.io same)
-- Updated test badge (3,300+ → 3,900+), crate count (22 → 23)
+- Fixed all incorrect URLs (github.com/clawft/clawft to weave-logic-ai/weftos, ghcr.io same)
+- Updated test badge (3,300+ to 3,900+), crate count (22 to 23)
 - Added glossary entries: clawft-rpc, AssessmentService, Analyzer/AnalyzerRegistry
 - WITNESS chain verification footer in ExoChain log panel
 
@@ -192,7 +312,7 @@ Sprint 14 ships the browser WASM sandbox, assessment framework, CLI kernel compl
 - **Live in your browser**: clawft-wasm runs entirely client-side, loaded from CDN via GitHub Releases
 - **RVF Knowledge Base**: 1,160 documentation segments with keyword search, acronym detection, and RAG-powered answers
 - **Two modes**: Local (no API key, pure KB retrieval) and LLM (connect any provider via OpenRouter, Anthropic, OpenAI, etc.)
-- **ExoChain Log Panel**: Live audit trail showing every operation — KB search, queries, responses — with linked hashes
+- **ExoChain Log Panel**: Live audit trail showing every operation -- KB search, queries, responses -- with linked hashes
 - **Runtime Introspection**: Users can inspect their own WASM instance (memory, exports, KB stats, browser environment)
 
 ### Assessment Framework
@@ -205,7 +325,7 @@ Sprint 14 ships the browser WASM sandbox, assessment framework, CLI kernel compl
 
 ### CLI Kernel Compliance (ADR-021)
 
-- **New crate: `clawft-rpc`** — shared RPC client for both `weft` and `weaver` CLIs
+- **New crate: `clawft-rpc`** -- shared RPC client for both `weft` and `weaver` CLIs
 - **32 commands migrated**: All bypassing commands now use daemon-first RPC with graceful local fallback
 - **Categories**: cron (6), assess (4), security (1), skills (7), tools (6), agents (3), workspace (8)
 - **Security**: Every operation can now be audited via ExoChain when the daemon is running
@@ -241,7 +361,7 @@ Sprint 14 ships the browser WASM sandbox, assessment framework, CLI kernel compl
 Sprint 13 wires everything together and adds Paperclip-inspired orchestration patterns.
 
 ### GUI Integration
-- **KernelDataProvider**: Real Tauri data bridge replacing mock WebSocket — polls kernel_status, metrics, processes, cost in parallel
+- **KernelDataProvider**: Real Tauri data bridge replacing mock WebSocket -- polls kernel_status, metrics, processes, cost in parallel
 - **ThemeSwitcher**: Runtime theme selection dropdown with localStorage/Tauri persistence
 - **BudgetBlock**: Per-agent cost tracking dashboard with budget bar and agent table
 
@@ -252,9 +372,9 @@ Sprint 13 wires everything together and adds Paperclip-inspired orchestration pa
 
 ### Paperclip Patterns (Rust-native)
 - **Company/OrgChart**: `Company`, `OrgRole` (Ceo/Manager/Worker), `OrgNode`, `OrgChart` with traversal helpers
-- **HeartbeatScheduler**: Multi-agent wake/sleep cycle manager with 5-phase lifecycle (Wake→CheckQueue→Execute→Sleep→Report)
+- **HeartbeatScheduler**: Multi-agent wake/sleep cycle manager with 5-phase lifecycle (Wake->CheckQueue->Execute->Sleep->Report)
 - **GoalTree**: Hierarchical goal tracking with status filtering (Pending/Active/Complete/Failed)
-- **HTTP API**: Execute/govern/health endpoints behind `http-api` feature flag — Paperclip adapter bridge
+- **HTTP API**: Execute/govern/health endpoints behind `http-api` feature flag -- Paperclip adapter bridge
 
 ### Platform
 - **Full WASI**: All 10 publishable crates compile for `wasm32-wasip2` (kernel + facade added)
@@ -315,7 +435,7 @@ Sprint 13 wires everything together and adds Paperclip-inspired orchestration pa
 
 *2026-04-01*
 
-- **musl static builds**: `x86_64-unknown-linux-musl` + `aarch64-unknown-linux-musl` — statically linked, runs on any Linux
+- **musl static builds**: `x86_64-unknown-linux-musl` + `aarch64-unknown-linux-musl` -- statically linked, runs on any Linux
 - **WASI binary**: `clawft-wasm` for `wasm32-wasip2` (57KB raw, 24KB gzip)
 - **vendored-openssl**: Fixed musl cross-compilation (git2 crate)
 - **7 native + 2 WASM = 9 targets**
@@ -346,9 +466,9 @@ Sprint 13 wires everything together and adds Paperclip-inspired orchestration pa
 
 *2026-03-31*
 
-First public release of WeftOS. 3 binaries × 5 platforms.
+First public release of WeftOS. 3 binaries x 5 platforms.
 
-- **weft**: Agent CLI (primary user interface) — 18 commands, 10 built-in tools
+- **weft**: Agent CLI (primary user interface) -- 18 commands, 10 built-in tools
 - **weaver**: Kernel operator CLI (daemon management, kernel lifecycle)
 - **weftos**: Kernel daemon binary
 - GitHub Releases with shell + PowerShell installers
@@ -358,17 +478,17 @@ First public release of WeftOS. 3 binaries × 5 platforms.
 
 ## Pre-release Development
 
-### Sprint 11 Symposium (2026-03-28 — 2026-03-31)
+### Sprint 11 Symposium (2026-03-28 -- 2026-03-31)
 
 9-track symposium producing 11 documents, 55 work items, 15 technology decisions.
 
-**P0 fixes (9/9)**: opt-level z→3, publish=false on 13 crates, version.workspace on 22 crates, HNSW O(1) lookup, unimplemented!()→Err, #[non_exhaustive] on 118 enums, CHANGELOG rebuilt (134 commits), README fixed, rvf-crypto inlined.
+**P0 fixes (9/9)**: opt-level z->3, publish=false on 13 crates, version.workspace on 22 crates, HNSW O(1) lookup, unimplemented!()->Err, #[non_exhaustive] on 118 enums, CHANGELOG rebuilt (134 commits), README fixed, rvf-crypto inlined.
 
-**P1 core (8/8)**: ONNX WordPiece tokenizer, sparse Lanczos spectral analysis (200x improvement), HNSW deferred rebuild, cargo-dist configuration, Registry trait (4 implementations), ChainLoggable trait (3 audit gaps closed), feature gate coarsening (18→3 fields), wasm_runner decomposition (5,046→8 files).
+**P1 core (8/8)**: ONNX WordPiece tokenizer, sparse Lanczos spectral analysis (200x improvement), HNSW deferred rebuild, cargo-dist configuration, Registry trait (4 implementations), ChainLoggable trait (3 audit gaps closed), feature gate coarsening (18->3 fields), wasm_runner decomposition (5,046->8 files).
 
 **Documentation**: Fumadocs unified (65+ pages), 20 ADRs, agent guide (448 lines), Hermes integration analysis, GEPA prompt evolution research.
 
-### Sprint 10 (2026-03-01 — 2026-03-27)
+### Sprint 10 (2026-03-01 -- 2026-03-27)
 
 6 weeks of kernel hardening and operational maturity.
 
@@ -383,16 +503,16 @@ First public release of WeftOS. 3 binaries × 5 platforms.
 - **Tool signing**: Ed25519 signatures on tool definitions
 - **WASM shell execution**: Sandbox environment for tool execution
 
-### Sprint 9 (2026-02-25 — 2026-02-28)
+### Sprint 9 (2026-02-25 -- 2026-02-28)
 
 Spectral analysis and cognitive substrate.
 
 - **ECC cognitive substrate**: Causal DAG, HNSW semantic search, BLAKE3 cross-references
-- **DEMOCRITUS loop**: Continuous cognitive processing (Sense→Embed→Search→Update→CrossRef→Prune→Report)
+- **DEMOCRITUS loop**: Continuous cognitive processing (Sense->Embed->Search->Update->CrossRef->Prune->Report)
 - **Spectral analysis**: Community detection, predictive change analysis
 - **Impulse queue**: Ephemeral signal processing with configurable decay
 
-### Sprints 6-8 (2026-02-19 — 2026-02-24)
+### Sprints 6-8 (2026-02-19 -- 2026-02-24)
 
 Kernel foundation (K0-K6).
 
@@ -407,7 +527,7 @@ Kernel foundation (K0-K6).
 - **Governance**: Three-branch constitutional engine (Legislative/Executive/Judicial)
 - **Weaver CLI**: Kernel operator interface with daemon mode
 
-### Sprints 1-5 (2026-02-17 — 2026-02-18)
+### Sprints 1-5 (2026-02-17 -- 2026-02-18)
 
 Initial framework development.
 
