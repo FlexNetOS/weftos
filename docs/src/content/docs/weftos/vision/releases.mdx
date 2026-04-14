@@ -5,6 +5,21 @@ description: Complete version history for WeftOS from initial development throug
 
 # Release Notes
 
+## v0.6.3 — O(1) EML Coherence Approximation
+
+*2026-04-14*
+
+- **EML coherence model**: 34-parameter depth-3 master formula predicting algebraic connectivity from graph statistics
+- Based on Odrzywolel 2026, "All elementary functions from a single operator" (arXiv:2603.21852v2)
+- O(1) prediction (~100ns) vs O(k*m) Lanczos iteration (~500us) -- ~5000x speedup
+- Enables coherence checking at 10,000 Hz ECC tick rate for robotics
+- Self-training: accumulates data during operation, retrains when 50+ samples collected
+- Convergence verified on 5 standard graph families (K_n, star, cycle, path, Erdos-Renyi)
+- 16 new tests, all passing
+- Two-tier coherence: fast every tick, exact on drift detection
+
+---
+
 ## v0.6.1 — Graphify Pipeline + Workspace RPC + ECC Calibration
 
 *2026-04-04*
