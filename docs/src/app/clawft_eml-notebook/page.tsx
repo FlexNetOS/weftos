@@ -67,8 +67,9 @@ export default function Page() {
 
     const trainingCurve = await a.trainOutModelOnly(samples, rng, {
       rounds,
+      onStatus: (msg) => append(msg),
       onStart: ({ samples: n, params }) => {
-        append(`train out_model: ${params} params, ${n} samples per MSE eval (subsampled to 16)`);
+        append(`train out_model: ${params} params, ${n} context pairs, 12-sample MSE subset`);
       },
       onRound: (round, mse, elapsedMs) => {
         append(`round ${round}/${rounds}   MSE = ${mse.toExponential(4)}   elapsed = ${elapsedMs.toFixed(0)} ms`);
