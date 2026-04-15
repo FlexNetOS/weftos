@@ -377,7 +377,9 @@ pub use mesh_noise::{EncryptedChannel, NoiseConfig, NoisePattern};
 #[cfg(feature = "mesh")]
 pub use mesh_framing::{FrameType, MeshFrame};
 #[cfg(feature = "mesh")]
-pub use mesh_listener::{JoinRequest, JoinResponse, MeshConnectionPool, PeerInfo};
+pub use mesh_listener::{
+    validate_genesis_hash, JoinRequest, JoinResponse, MeshConnectionPool, PeerInfo,
+};
 #[cfg(feature = "mesh")]
 pub use mesh_discovery::{
     DiscoveredPeer, DiscoveryBackend, DiscoveryCoordinator, DiscoveryError, DiscoverySource,

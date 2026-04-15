@@ -40,7 +40,7 @@
     }
   },
   "gateway": {
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "port": 18790,
     "apiPort": 18789,
     "corsOrigins": ["http://localhost:5173"],

@@ -246,18 +246,54 @@ impl<P: Platform> Kernel<P> {
         }
 
         // 5c. Register container service (K4)
-        let container_manager = std::sync::Arc::new(
-            crate::container::ContainerManager::new(crate::container::ContainerConfig::default()),
-        );
-        let container_service = std::sync::Arc::new(
-            crate::container::ContainerService::new(container_manager.clone()),
-        );
-        if let Err(e) = service_registry.register(container_service) {
-            error!(error = %e, "failed to register container service");
+        #[cfg(feature = "containers")]
+        {
+            let container_manager = std::sync::Arc::new(
+                crate::container::ContainerManager::new(crate::container::ContainerConfig::default()),
+            );
+            let container_service = std::sync::Arc::new(
+                crate::container::ContainerService::new(container_manager.clone()),
+            );
+            if let Err(e) = service_registry.register(container_service) {
+                error!(error = %e, "failed to register container service");
+            } else {
+                boot_log.push(BootEvent::info(
+                    BootPhase::Services,
+                    "Container service registered",
+                ));
+            }
+        }
+
+        // 5d. Register artifact store service
+        let artifact_store = Arc::new(crate::artifact_store::ArtifactStore::new_memory());
+        if let Err(e) = service_registry.register(artifact_store.clone()) {
+            error!(error = %e, "failed to register artifact store");
         } else {
             boot_log.push(BootEvent::info(
                 BootPhase::Services,
-                "Container service registered",
+                "Artifact store registered",
+            ));
+        }
+
+        // 5e. Register auth service
+        let auth_svc = Arc::new(crate::auth_service::AuthService::new_default());
+        if let Err(e) = service_registry.register(auth_svc.clone()) {
+            error!(error = %e, "failed to register auth service");
+        } else {
+            boot_log.push(BootEvent::info(
+                BootPhase::Services,
+                "Auth service registered",
+            ));
+        }
+
+        // 5f. Register config service
+        let config_svc = Arc::new(crate::config_service::ConfigService::new_default());
+        if let Err(e) = service_registry.register(config_svc.clone()) {
+            error!(error = %e, "failed to register config service");
+        } else {
+            boot_log.push(BootEvent::info(
+                BootPhase::Services,
+                "Config service registered",
             ));
         }
 
@@ -1222,6 +1258,21 @@ impl<P: Platform> Kernel<P> {
                 tracing::debug!(error = %e, "failed to register cognitive tick service");
             }
 
+            // Register WeaverEngine (K3c-G1 codebase modeling service)
+            let weaver_engine = Arc::new(crate::weaver::WeaverEngine::new(
+                causal.clone(),
+                hnsw.clone(),
+                Arc::new(crate::embedding::MockEmbeddingProvider::new(384)),
+            ));
+            if let Err(e) = service_registry.register(weaver_engine.clone()) {
+                tracing::debug!(error = %e, "failed to register weaver engine");
+            } else {
+                boot_log.push(BootEvent::info(
+                    BootPhase::Ecc,
+                    "WeaverEngine registered",
+                ));
+            }
+
             // Start the cognitive tick service explicitly -- start_all() ran
             // before ECC init so this service was never started, which caused
             // health checks to report "degraded - cognitive tick not running".
@@ -1827,16 +1878,25 @@ mod tests {
             .await
             .unwrap();
 
-        // Base: cron + containers; +cluster; +hnsw +cognitive_tick (ecc); +assess (native)
+        // Base services: cron + assess + artifact-store + auth-service + config-service = 5
+        // +containers (when feature enabled); +cluster; +hnsw +cognitive_tick +weaver (ecc)
         let count = kernel.services().len();
-        #[cfg(all(feature = "ecc", feature = "cluster"))]
-        assert_eq!(count, 6, "expected cron+containers+assess+cluster+hnsw+cognitive_tick");
-        #[cfg(all(feature = "ecc", not(feature = "cluster")))]
-        assert_eq!(count, 5, "expected cron+containers+assess+hnsw+cognitive_tick");
-        #[cfg(all(not(feature = "ecc"), feature = "cluster"))]
-        assert_eq!(count, 4, "expected cron+containers+assess+cluster");
-        #[cfg(all(not(feature = "ecc"), not(feature = "cluster")))]
-        assert_eq!(count, 3, "expected cron+containers+assess");
+        #[cfg(all(feature = "ecc", feature = "cluster", feature = "containers"))]
+        assert_eq!(count, 10, "expected base(5)+containers+cluster+hnsw+cognitive_tick+weaver");
+        #[cfg(all(feature = "ecc", feature = "cluster", not(feature = "containers")))]
+        assert_eq!(count, 9, "expected base(5)+cluster+hnsw+cognitive_tick+weaver");
+        #[cfg(all(feature = "ecc", not(feature = "cluster"), feature = "containers"))]
+        assert_eq!(count, 9, "expected base(5)+containers+hnsw+cognitive_tick+weaver");
+        #[cfg(all(feature = "ecc", not(feature = "cluster"), not(feature = "containers")))]
+        assert_eq!(count, 8, "expected base(5)+hnsw+cognitive_tick+weaver");
+        #[cfg(all(not(feature = "ecc"), feature = "cluster", feature = "containers"))]
+        assert_eq!(count, 7, "expected base(5)+containers+cluster");
+        #[cfg(all(not(feature = "ecc"), feature = "cluster", not(feature = "containers")))]
+        assert_eq!(count, 6, "expected base(5)+cluster");
+        #[cfg(all(not(feature = "ecc"), not(feature = "cluster"), feature = "containers"))]
+        assert_eq!(count, 6, "expected base(5)+containers");
+        #[cfg(all(not(feature = "ecc"), not(feature = "cluster"), not(feature = "containers")))]
+        assert_eq!(count, 5, "expected base(5): cron+assess+artifact-store+auth+config");
     }
 
     #[tokio::test]
@@ -2267,6 +2327,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "containers")]
     #[tokio::test]
     async fn boot_registers_container_service() {
         let platform = Arc::new(NativePlatform::new());
