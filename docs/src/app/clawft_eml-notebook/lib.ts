@@ -426,6 +426,176 @@ export class ToyEmlAttention {
   }
 }
 
+// -- Baseline (plain affine attention) for head-to-head comparison -------
+
+class AffineLayer {
+  inputs: number;
+  heads: number;
+  w: Float64Array;
+  b: Float64Array;
+  constructor(inputs: number, heads: number, rng: () => number) {
+    this.inputs = inputs;
+    this.heads = heads;
+    this.w = new Float64Array(heads * inputs);
+    this.b = new Float64Array(heads);
+    for (let i = 0; i < this.w.length; i++) this.w[i] = rng() * 0.05;
+    for (let i = 0; i < this.b.length; i++) this.b[i] = rng() * 0.05;
+  }
+  totalParams(): number {
+    return this.w.length + this.b.length;
+  }
+  predict(x: number[]): number[] {
+    const out = new Float64Array(this.heads);
+    for (let h = 0; h < this.heads; h++) {
+      let acc = this.b[h];
+      for (let i = 0; i < this.inputs; i++) acc += this.w[h * this.inputs + i] * x[i];
+      out[h] = acc;
+    }
+    return Array.from(out);
+  }
+}
+
+export class BaselineAttention {
+  seqLen: number;
+  dModel: number;
+  dK: number;
+  q: AffineLayer;
+  k: AffineLayer;
+  v: AffineLayer;
+  out: AffineLayer;
+  scale: number;
+
+  constructor(dModel: number, dK: number, seqLen: number, seed: number) {
+    this.seqLen = seqLen;
+    this.dModel = dModel;
+    this.dK = dK;
+    const rng = makeRng(seed);
+    const projIn = seqLen * dModel;
+    const projOut = seqLen * dK;
+    this.q = new AffineLayer(projIn, projOut, rng);
+    this.k = new AffineLayer(projIn, projOut, rng);
+    this.v = new AffineLayer(projIn, projOut, rng);
+    this.out = new AffineLayer(projOut, projIn, rng);
+    this.scale = 1 / Math.sqrt(dK);
+  }
+
+  paramCount(): number {
+    return this.q.totalParams() + this.k.totalParams() + this.v.totalParams() + this.out.totalParams();
+  }
+
+  forward(x: number[]): { y: number[] } {
+    const qp = this.q.predict(x);
+    const kp = this.k.predict(x);
+    const vp = this.v.predict(x);
+    const n = this.seqLen;
+    const d = this.dK;
+    const attn: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const row: number[] = [];
+      for (let j = 0; j < n; j++) {
+        let s = 0;
+        for (let r = 0; r < d; r++) s += qp[i * d + r] * kp[j * d + r];
+        row.push(s * this.scale);
+      }
+      attn.push(numericalSoftmax(row));
+    }
+    const ctx: number[] = new Array(n * d).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let r = 0; r < d; r++) {
+        let s = 0;
+        for (let j = 0; j < n; j++) s += attn[i][j] * vp[j * d + r];
+        ctx[i * d + r] = s;
+      }
+    }
+    return { y: this.out.predict(ctx) };
+  }
+
+  async trainEndToEnd(
+    samples: { x: number[]; target: number[] }[],
+    rng: () => number,
+    opts?: {
+      rounds?: number;
+      trialsPerRound?: number;
+      stepInit?: number;
+      stepFinal?: number;
+      onStart?: (info: { samples: number; params: number; trialsPerRound: number; baseline: number }) => void;
+      onRound?: (round: number, mse: number, elapsedMs: number) => void;
+      onStatus?: (msg: string) => void;
+    },
+  ): Promise<number[]> {
+    const rounds = opts?.rounds ?? 3;
+    const layers: AffineLayer[] = [this.q, this.k, this.v, this.out];
+    const totalParams = layers.reduce((a, l) => a + l.totalParams(), 0);
+    const effectiveTrials = opts?.trialsPerRound ?? Math.max(600, 4 * totalParams);
+
+    const evalSubset = Math.min(16, samples.length);
+    const subset = samples.slice(0, evalSubset);
+
+    const mseOn = (): number => {
+      let sum = 0;
+      let count = 0;
+      for (const s of subset) {
+        const { y } = this.forward(s.x);
+        for (let i = 0; i < y.length && i < s.target.length; i++) {
+          sum += (y[i] - s.target[i]) ** 2;
+          count += 1;
+        }
+      }
+      return sum / Math.max(1, count);
+    };
+
+    const baseline = mseOn();
+    opts?.onStart?.({ samples: samples.length, params: totalParams, trialsPerRound: effectiveTrials, baseline });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const pickParam = (idx: number): { arr: Float64Array; pos: number } => {
+      let remaining = idx;
+      for (const l of layers) {
+        if (remaining < l.w.length) return { arr: l.w, pos: remaining };
+        remaining -= l.w.length;
+        if (remaining < l.b.length) return { arr: l.b, pos: remaining };
+        remaining -= l.b.length;
+      }
+      return { arr: layers[0].w, pos: 0 };
+    };
+
+    const curve: number[] = [];
+    let best = baseline;
+    const t0 = performance.now();
+
+    for (let r = 0; r < rounds; r++) {
+      const roundStepInit = (opts?.stepInit ?? 0.4) * Math.pow(0.5, r);
+      const roundStepFinal = (opts?.stepFinal ?? 0.02) * Math.pow(0.5, r);
+      opts?.onStatus?.(
+        `[baseline] round ${r + 1}/${rounds}: ${effectiveTrials} trials, step ${roundStepInit.toFixed(3)} → ${roundStepFinal.toFixed(3)}…`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      for (let t = 0; t < effectiveTrials; t++) {
+        const frac = t / Math.max(1, effectiveTrials - 1);
+        const step = roundStepInit * Math.pow(roundStepFinal / roundStepInit, frac);
+        const u = (rng() + 1) * 0.5;
+        const idx = Math.min(totalParams - 1, Math.floor(u * totalParams));
+        const { arr, pos } = pickParam(idx);
+        const saved = arr[pos];
+        arr[pos] = saved + step * rng();
+        const candidate = mseOn();
+        if (candidate + 1e-12 < best) {
+          best = candidate;
+        } else {
+          arr[pos] = saved;
+        }
+      }
+
+      const elapsed = performance.now() - t0;
+      curve.push(best);
+      opts?.onRound?.(r + 1, best, elapsed);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return curve;
+  }
+}
+
 export function downloadJson(filename: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: 'application/json',

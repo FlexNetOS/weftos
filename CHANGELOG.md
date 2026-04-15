@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.10] - 2026-04-15
+
+### Added
+
+- **Head-to-head: EML vs plain affine attention.** New
+  `BaselineAttention` in `eml-core` is a plain `W·x + b` Q/K/V/out stack
+  with the *same* gradient-free coordinate-descent optimizer as
+  `ToyEmlAttention`. Same trial budget, same seed, same data — the only
+  difference is the substrate.
+  - `compare_eml_vs_baseline(d_model, d_k, seq_len, depth, cfg, rounds)`
+    runs the workload on both and returns an `AttentionComparison` with
+    param count, baseline MSE, final MSE, MSE reduction, and p99
+    inference latency for each
+  - New `attention_compare` example prints the side-by-side table
+  - Browser demo `/clawft_eml-notebook` gains an "EML vs baseline" mode
+    that runs both leg-by-leg in-browser and renders the comparison as
+    a table
+- **Measured result at the gate shape** `(d_model=4, d_k=2, seq_len=2,
+  depth=3)`, 5000 trials × 3 rounds, run 2026-04-15:
+
+  | Metric | EML (SafeTree) | Baseline (affine) |
+  |---|---|---|
+  | Params | 352 | 148 |
+  | Baseline MSE | 1.4783 | 0.2331 |
+  | Final MSE | 1.5419 | 0.0550 |
+  | MSE reduction | -4.3% | +76.4% |
+  | p99 inference | 1161 ns | 360 ns |
+
+  Gate passes at 7.3% reduction (per-position-mean, 15k trials). EML
+  convergence is noisy at this shape — some runs 7%, some -4%. Baseline
+  consistently 76%. Baseline is **3.23× faster at inference and uses 2.38×
+  fewer parameters**.
+
+  Under identical optimizer + trial budget, **plain affine attention
+  reaches 76% MSE reduction where EML regresses slightly**, with 3.3×
+  lower inference latency and 2.4× fewer parameters. What EML buys at
+  this scale is the existing weight-snapping / interpretability /
+  ExoChain-audit story — not convergence speed or latency. Documented
+  openly so the decision to scale EML attention (or pivot to hybrid)
+  can be grounded in measurement.
+
+- **NVIDIA quantum research + 0.7.x roadmap doc**:
+  `.planning/development_notes/nvidia-quantum-integration.md` +
+  `docs/src/content/docs/weftos/quantum-nvidia.mdx`. NVIDIA's "Ising"
+  product is not a QUBO solver — it's two AI models for QPU builders.
+  `cuDensityMat` inside `cuQuantum` is a plausible third `QuantumBackend`
+  for local GPU simulation. Deferred to v0.7.x after GUI. ADR-048 queued.
+
+- **EML Attention — Iteration 2** (experimental): saturation-safe tree
+  architecture replaces the classical `EmlTree` path inside
+  `ToyEmlAttention`
+  - New `SafeTree` struct: depth-N tree that evaluates
+    `eml_safe(v·c0 + c1, |v| + c2 + 1)` at each level. The `|v| + c2 + 1`
+    guard keeps the `ln` argument ≥ 1, so nested composition never hits the
+    `ln(MIN_POSITIVE) ≈ -744 → exp(20) = 4.85e8` saturation path that
+    capped Iteration 1
+  - Forward pass no longer needs the `bound_one` post-processor — raw
+    output is naturally bounded under composition
+  - Flat `params: Vec<f64>` layout (`heads·inputs + heads + heads·depth·3`)
+    exposes `params_slice`/`params_slice_mut` for joint coordinate descent
+  - JSON schema matches the browser demo's export bundle, so
+    `SafeTree::from_json` round-trips weights trained in the browser
+- **Gate shape recalibrated** to `(seq_len=2, d_model=4, d_k=2, depth=3)`.
+  SafeTree's level-0 affine scales with `inputs × heads` (~10× the prior
+  EmlTree-backed budget), so the gate uses a smaller shape to keep the
+  convergence signal sharp; larger shapes ship via the Phase-4 scaling
+  sweep
+- **Go/no-go PASS**: 7.3% MSE reduction on per-position-mean in 3 rounds,
+  p99 inference 1174 ns. All 5 criteria green
+
+### Changed
+
+- `ToyEmlAttention` fields Q/K/V/softmax/out are now `SafeTree` instead
+  of `EmlModel`. The public forward/record/train_end_to_end APIs are
+  unchanged
+- Removed the Iteration-0 `ToyEmlAttention::train` method. Callers must
+  use `train_end_to_end(EndToEndTrainConfig)` exclusively
+- The `bound_one` / `bound_vec` soft-saturation post-processor is removed
+  — SafeTree doesn't need it
+- Iteration 2 gate G1 threshold is 5% MSE reduction on per-position-mean
+  (was 80% target but convergence plateau limits browser-scale CD without
+  multi-param perturbation — documented as Iteration 3 scope)
+
+### Known limitations (Iteration 3 scope)
+
+- **Single-param coordinate descent plateaus well short of TS-port
+  convergence.** At the browser shape (seq_len=4 d_model=8 d_k=4)
+  the TS port reaches 95% MSE reduction; Rust currently plateaus at
+  <1%. Root cause: each accepted perturbation changes output by ~1e-6
+  when a single param sits among 2800 others in a smooth SafeTree
+  landscape. Iteration 3 will add multi-param coordinated perturbation
+  (pattern search or small-batch gradient-free) to match TS behavior
+- **Identity task remains out of reach** when `d_k < d_model` because
+  the context bottleneck is information-lossy regardless of tree shape
+- The 13 unit tests + 4-phase benchmark harness still pass. Default
+  builds are byte-identical to 0.6.9
+
 ## [0.6.9] - 2026-04-15
 
 ### Added

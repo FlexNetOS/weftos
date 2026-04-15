@@ -48,6 +48,8 @@ pub mod tree;
 
 #[cfg(feature = "experimental-attention")]
 pub mod attention;
+#[cfg(feature = "experimental-attention")]
+pub mod baseline_attention;
 
 // Re-export public API
 pub use events::{EmlEvent, EmlEventLog};
@@ -58,6 +60,11 @@ pub use tree::EmlTree;
 
 #[cfg(feature = "experimental-attention")]
 pub use attention::{
-    run_benchmark, AttentionBenchmark, AttentionError, EndToEndTrainConfig,
-    ScalingPoint, ToyEmlAttention, MAX_TOY_D_MODEL, MAX_TOY_SEQ_LEN,
+    run_benchmark, run_benchmark_with_trials, AttentionBenchmark, AttentionError,
+    EndToEndTrainConfig, SafeTree, ScalingPoint, ToyEmlAttention, MAX_TOY_D_MODEL,
+    MAX_TOY_SEQ_LEN,
+};
+#[cfg(feature = "experimental-attention")]
+pub use baseline_attention::{
+    compare_eml_vs_baseline, AttentionComparison, BaselineAttention,
 };

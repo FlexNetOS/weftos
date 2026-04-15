@@ -3,7 +3,7 @@ title: "EML Attention (Iteration 0)"
 description: "Experimental toy-scale EML-Transformer block composed of five EmlModel instances — first step toward a gradient-free, weight-snapping, ExoChain-audited attention primitive for WeftOS."
 ---
 
-**EXPERIMENTAL (0.6.9)** — Iteration 1 of an EML-Transformer. Ships behind the `experimental-attention` feature on `eml-core`. Default builds are unchanged.
+**EXPERIMENTAL (0.6.10)** — Iteration 2 of an EML-Transformer. Ships behind the `experimental-attention` feature on `eml-core`. Default builds are unchanged.
 
 EML Attention is WeftOS's first step toward replacing backprop-trained attention with a gradient-free, coordinate-descent-trained, weight-snapping primitive that lives in the same substrate as every other learned function in the kernel. The classical path (`EmlModel` wrappers for scalar-output learned heuristics — see [EML — Self-Learning Functions](/weftos/eml)) continues to run unchanged.
 
@@ -116,11 +116,50 @@ Two live demos are deployed to the docs site alongside this page:
 | Iter | d_model | seq_len | heads | scope | status |
 |------|---------|---------|-------|-------|--------|
 | 0 | 16 | 4-8 | 1 | hybrid toy block, pragmatic matmul, out-model-only training | **shipped 0.6.8** |
-| 1 (this) | 16 | 4-8 | 1 | end-to-end joint CD across all 5 sub-models, bounded forward | **shipped 0.6.9** |
-| 2 | 32-64 | 12-16 | 2 | saturation-safe tree formulation OR trainable output projection; learned positional encodings | next |
-| 3 | 96-128 | 24-32 | 4 | chunked attention, continual retraining on ExoChain drift | gated |
-| 4 | 192-256 | 48-64 | 8 | sparse attention, shared constants | gated |
-| 5+ | 256-512 | chunked | 16 | full hybrid attention+residual backbone | gated |
+| 1 | 16 | 4-8 | 1 | end-to-end joint CD across all 5 sub-models, bounded forward | **shipped 0.6.9** |
+| 2 (this) | 4-8 | 2-4 | 1 | `SafeTree` saturation-safe tree replaces `EmlTree`; no post-processor needed | **shipped 0.6.10** |
+| 3 | 32-64 | 12-16 | 2 | multi-param coordinated perturbation (pattern search) to match TS convergence at larger shapes; learned positional encodings | next |
+| 4 | 96-128 | 24-32 | 4 | chunked attention, continual retraining on ExoChain drift | gated |
+| 5+ | 192-256 | 48-64 | 8+ | sparse attention, full hybrid attention+residual backbone | gated |
+
+## How does this compare to a plain attention?
+
+`eml-core` also ships a `BaselineAttention` — same public API, same
+training loop, but the Q/K/V/out projections are plain `W·x + b` affine
+maps with no EML tree. Trained with the exact same gradient-free
+coordinate-descent optimizer, same trial budget, same seed.
+
+At the gate shape `(d_model=4, d_k=2, seq_len=2, depth=3)`, 5000 trials
+× 3 rounds:
+
+| Metric | EML (SafeTree) | Baseline (affine) |
+|---|---|---|
+| Parameters | 352 | 148 |
+| Baseline MSE (untrained) | 1.48 | 0.23 |
+| Final MSE | 1.54 | 0.055 |
+| MSE reduction | -4% | 76% |
+| Forward-pass p99 | 1.2 µs | 0.36 µs |
+
+At this scale, plain affine attention is strictly better on convergence,
+latency, and parameter efficiency. What EML buys is:
+
+- **Weight snapping** — trained EML parameters converge to exact integers
+  at Level 0; the model is expressible as a closed-form mathematical
+  expression
+- **ExoChain-auditable gradient-free training** — every training step is
+  a deterministic coordinate-descent move, recorded in the kernel event
+  stream, no backprop / autograd / magic constants
+- **Substrate alignment** — the 12 existing EML wrappers
+  (`QueryFusionModel`, `CausalCollapseModel`, `SurpriseScorer`, etc.)
+  use the same primitives, so attention slots into the learned-function
+  story without introducing a second optimization paradigm
+
+These are real-but-narrow wins. The measurement is shipped so you can
+make the tradeoff explicitly. If convergence speed or latency are
+primary, plain affine attention wins today.
+
+Live head-to-head demo: [/clawft_eml-notebook](/clawft_eml-notebook)
+"EML vs baseline" mode.
 
 ## Further reading
 

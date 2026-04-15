@@ -19,6 +19,7 @@
     "eml",
     "eml-attention",
     "quantum",
+    "quantum-nvidia",
     "democritus",
     "mesh-networking",
     "discovery",

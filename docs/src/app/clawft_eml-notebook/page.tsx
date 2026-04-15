@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import {
+  BaselineAttention,
   ToyEmlAttention,
   downloadJson,
   makeRng,
@@ -67,12 +68,16 @@ export default function Page() {
   const [rounds, setRounds] = useState(3);
   const [sampleCount, setSampleCount] = useState(64);
 
-  const [mode, setMode] = useState<'iter0' | 'iter1'>('iter1');
+  const [mode, setMode] = useState<'iter0' | 'iter1' | 'baseline' | 'compare'>('compare');
   const [state, setState] = useState<TrainState>('idle');
   const [curve, setCurve] = useState<number[]>([]);
   const [finalMse, setFinalMse] = useState<number | null>(null);
   const [attn, setAttn] = useState<ToyEmlAttention | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  const [compareResult, setCompareResult] = useState<null | {
+    eml: { params: number; baseline: number; final: number; p99us: number };
+    base: { params: number; baseline: number; final: number; p99us: number };
+  }>(null);
 
   const paramCount = useMemo(() => {
     const a = new ToyEmlAttention(dModel, dK, seqLen, depth, seed);
@@ -115,36 +120,97 @@ export default function Page() {
 
     await new Promise((r) => setTimeout(r, 20));
 
-    let trainingCurve: number[];
-    if (mode === 'iter1') {
-      append('mode: Iteration 1 — joint end-to-end coordinate descent across Q/K/V/out');
-      trainingCurve = await a.trainEndToEnd(samples, rng, {
+    let trainingCurve: number[] = [];
+    setCompareResult(null);
+
+    const rngA = makeRng(seed + 1);
+    const rngB = makeRng(seed + 1);
+
+    if (mode === 'iter1' || mode === 'compare') {
+      append(mode === 'compare'
+        ? 'backend: EML (SafeTree) — Iteration 1 joint e2e CD across Q/K/V/out'
+        : 'mode: Iteration 1 — joint end-to-end coordinate descent across Q/K/V/out');
+      trainingCurve = await a.trainEndToEnd(samples, rngA, {
         rounds,
         onStatus: (msg) => append(msg),
         onStart: ({ samples: n, params, trialsPerRound, baseline }) => {
-          append(
-            `e2e CD: ${params} params across Q/K/V/out, ${n} samples, ${trialsPerRound} trials/round`,
-          );
-          append(`baseline MSE (pre-training) = ${baseline.toExponential(4)}`);
+          append(`e2e CD: ${params} params, ${n} samples, ${trialsPerRound} trials/round`);
+          append(`baseline MSE = ${baseline.toExponential(4)}`);
+        },
+        onRound: (round, mse, elapsedMs) => {
+          append(`[eml] round ${round}/${rounds}   MSE = ${mse.toExponential(4)}   elapsed = ${elapsedMs.toFixed(0)} ms`);
+          setCurve((prev) => [...prev, mse]);
+        },
+      });
+    } else if (mode === 'iter0') {
+      append('mode: Iteration 0 — out_model-only self-distillation');
+      trainingCurve = await a.trainOutModelOnly(samples, rngA, {
+        rounds,
+        onStatus: (msg) => append(msg),
+        onStart: ({ samples: n, params, trialsPerRound }) => {
+          append(`train out_model: ${params} params, ${n} context pairs, ${trialsPerRound} trials/round`);
         },
         onRound: (round, mse, elapsedMs) => {
           append(`round ${round}/${rounds}   MSE = ${mse.toExponential(4)}   elapsed = ${elapsedMs.toFixed(0)} ms`);
           setCurve((prev) => [...prev, mse]);
         },
       });
-    } else {
-      append('mode: Iteration 0 — out_model-only self-distillation');
-      trainingCurve = await a.trainOutModelOnly(samples, rng, {
+    }
+
+    // Baseline (plain affine) leg — runs alone in baseline mode, in parallel-display in compare mode.
+    let baselineCurve: number[] = [];
+    let baselineStats = { params: 0, baseline: 0, final: 0 };
+    if (mode === 'baseline' || mode === 'compare') {
+      const base = new BaselineAttention(dModel, dK, seqLen, seed);
+      append(mode === 'compare'
+        ? 'backend: Baseline (plain affine) — joint e2e CD across Q/K/V/out'
+        : 'mode: Baseline — plain affine attention, same CD optimizer');
+      baselineCurve = await base.trainEndToEnd(samples, rngB, {
         rounds,
         onStatus: (msg) => append(msg),
-        onStart: ({ samples: n, params, trialsPerRound }) => {
-          append(
-            `train out_model: ${params} params, ${n} context pairs, 16-sample MSE subset, ${trialsPerRound} trials/round`,
-          );
+        onStart: ({ samples: n, params, trialsPerRound, baseline }) => {
+          append(`[baseline] ${params} params, ${n} samples, ${trialsPerRound} trials/round`);
+          append(`[baseline] baseline MSE = ${baseline.toExponential(4)}`);
+          baselineStats.params = params;
+          baselineStats.baseline = baseline;
         },
         onRound: (round, mse, elapsedMs) => {
-          append(`round ${round}/${rounds}   MSE = ${mse.toExponential(4)}   elapsed = ${elapsedMs.toFixed(0)} ms`);
-          setCurve((prev) => [...prev, mse]);
+          append(`[baseline] round ${round}/${rounds}   MSE = ${mse.toExponential(4)}   elapsed = ${elapsedMs.toFixed(0)} ms`);
+          if (mode === 'baseline') setCurve((prev) => [...prev, mse]);
+        },
+      });
+      baselineStats.final = baselineCurve[baselineCurve.length - 1] ?? Infinity;
+      if (mode === 'baseline') trainingCurve = baselineCurve;
+    }
+
+    // Compare mode: measure inference p99 for both + render side-by-side stats.
+    if (mode === 'compare') {
+      const base = new BaselineAttention(dModel, dK, seqLen, seed);
+      const timeIt = (fn: () => void): number => {
+        const lats: number[] = [];
+        for (let i = 0; i < 128; i++) {
+          const t = performance.now();
+          fn();
+          lats.push((performance.now() - t) * 1000); // µs
+        }
+        lats.sort((x, y) => x - y);
+        return lats[Math.floor(128 * 0.99)];
+      };
+      const sampleX = samples[0].x;
+      const emlP99 = timeIt(() => { a.forward(sampleX); });
+      const baseP99 = timeIt(() => { base.forward(sampleX); });
+      setCompareResult({
+        eml: {
+          params: a.paramCount(),
+          baseline: trainingCurve[0] ?? 0,
+          final: trainingCurve[trainingCurve.length - 1] ?? 0,
+          p99us: emlP99,
+        },
+        base: {
+          params: baselineStats.params || base.paramCount(),
+          baseline: baselineStats.baseline,
+          final: baselineStats.final,
+          p99us: baseP99,
         },
       });
     }
@@ -299,21 +365,17 @@ export default function Page() {
       <h2 className="mt-8 mb-3 text-2xl font-semibold">Train</h2>
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <span className="text-sm font-mono">mode:</span>
-        <div className="inline-flex rounded border border-neutral-300 dark:border-neutral-700 overflow-hidden text-sm">
-          <button
-            type="button"
-            onClick={() => setMode('iter0')}
-            className={`px-3 py-1.5 ${mode === 'iter0' ? 'bg-neutral-200 dark:bg-neutral-700 font-semibold' : 'bg-neutral-50 dark:bg-neutral-900'}`}
-          >
-            Iteration 0 (out_model only)
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('iter1')}
-            className={`px-3 py-1.5 ${mode === 'iter1' ? 'bg-neutral-200 dark:bg-neutral-700 font-semibold' : 'bg-neutral-50 dark:bg-neutral-900'}`}
-          >
-            Iteration 1 (joint e2e CD)
-          </button>
+        <div className="inline-flex rounded border border-neutral-300 dark:border-neutral-700 overflow-hidden text-sm flex-wrap">
+          {(['compare', 'iter1', 'iter0', 'baseline'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`px-3 py-1.5 border-r border-neutral-300 dark:border-neutral-700 last:border-r-0 ${mode === m ? 'bg-neutral-200 dark:bg-neutral-700 font-semibold' : 'bg-neutral-50 dark:bg-neutral-900'}`}
+            >
+              {m === 'compare' ? 'EML vs baseline' : m === 'iter1' ? 'EML (joint e2e)' : m === 'iter0' ? 'EML (out only)' : 'baseline (affine)'}
+            </button>
+          ))}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3">
@@ -330,6 +392,57 @@ export default function Page() {
           {mode === 'iter1' && ' Iter-1 trials scale with param count — budget ~5-10s on default shape.'}
         </span>
       </div>
+
+      {compareResult && (
+        <div className="mt-4 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 p-4">
+          <h3 className="text-base font-semibold mb-3">Head-to-head: EML vs Baseline</h3>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-neutral-100 dark:bg-neutral-800">
+                <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-left">metric</th>
+                <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-right">EML (SafeTree)</th>
+                <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-right">Baseline (affine)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">params</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.eml.params}</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.base.params}</td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">baseline MSE</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.eml.baseline.toExponential(3)}</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.base.baseline.toExponential(3)}</td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">final MSE</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.eml.final.toExponential(3)}</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.base.final.toExponential(3)}</td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">MSE reduction</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">
+                  {compareResult.eml.baseline > 0 ? ((1 - compareResult.eml.final / compareResult.eml.baseline) * 100).toFixed(1) + '%' : '—'}
+                </td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">
+                  {compareResult.base.baseline > 0 ? ((1 - compareResult.base.final / compareResult.base.baseline) * 100).toFixed(1) + '%' : '—'}
+                </td>
+              </tr>
+              <tr>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">forward p99 (µs)</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.eml.p99us.toFixed(2)}</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono text-right">{compareResult.base.p99us.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+            Same coordinate-descent optimizer, same trial budget, same seed — the only difference
+            is the attention substrate. Live results in-browser; the Rust head-to-head produces
+            comparable numbers (see release notes §v0.6.10).
+          </p>
+        </div>
+      )}
 
       {log.length > 0 && (
         <div className="mt-4">

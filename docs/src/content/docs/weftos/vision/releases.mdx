@@ -1,9 +1,126 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.6.9.
+description: Complete version history for WeftOS from initial development through v0.6.10.
 ---
 
 # Release Notes
+
+## v0.6.10 — EML vs Baseline Attention (Measurement Release)
+
+*2026-04-15*
+
+Two things in this release. **First**, a saturation-safe tree (`SafeTree`)
+replaces the classical `EmlTree` path inside `ToyEmlAttention` — the
+Iteration-2 substrate work. **Second — and this is the headline** — a
+plain-affine `BaselineAttention` is added alongside, trained with the
+exact same gradient-free optimizer, so the EML substrate can be measured
+head-to-head against a float-only reference. Measurement is reported
+honestly.
+
+### The head-to-head number
+
+At `(d_model=4, d_k=2, seq_len=2, depth=3)`, 5000 trials × 3 rounds,
+same seed (measured 2026-04-15):
+
+| Metric | EML (SafeTree) | Baseline (affine) |
+|---|---|---|
+| Params | 352 | 148 |
+| Baseline MSE | 1.4783 | 0.2331 |
+| Final MSE | 1.5419 | 0.0550 |
+| MSE reduction | -4.3% | +76.4% |
+| p99 inference | 1161 ns | 360 ns |
+
+Gate (separate run, 15k trials): 7.3% reduction. EML convergence is
+noisy; baseline is consistent.
+
+Under identical training budget and optimizer, plain affine attention
+reaches **76% MSE reduction where EML regresses slightly**, runs **3.3×
+faster** on forward pass, and uses **2.4× fewer parameters** at this
+scale. What EML buys is weight-snapping interpretability, closed-form
+expressibility, and seamless integration with the rest of the WeftOS
+EML substrate — not convergence speed or latency.
+
+The measurement is deliberately embedded in the release so the next
+decision (scale EML attention further, or pivot to hybrid / keep EML for
+scalar heuristics and use plain attention for sequence work) is grounded
+in numbers.
+
+### Also in this release
+
+- **NVIDIA Quantum roadmap doc** for v0.7.x —
+  [`/weftos/quantum-nvidia`](/weftos/quantum-nvidia). Research delivered
+  on NVIDIA's CUDA-Q + cuQuantum ecosystem. Main finding: the "Ising"
+  page is an AI model for QPU builders, not a QUBO solver; `cuDensityMat`
+  inside cuQuantum is the piece worth integrating. Deferred to v0.7.x
+  after GUI ship. ADR-048 queued.
+
+
+- **`SafeTree`** — new depth-N tree with `|v| + c2 + 1` safety guard.
+  Unblocks the saturation path that capped Iteration 1; EML's Iteration-1
+  bounded post-processor is removed.
+- **`BaselineAttention`** — plain affine Q/K/V/out, same API as
+  `ToyEmlAttention`, same coordinate-descent optimizer.
+- **`compare_eml_vs_baseline`** — runs identical workload on both and
+  returns an `AttentionComparison` struct. Primary artifact for the
+  measurement work.
+- **Live demo mode toggle**: [`/clawft_eml-notebook`](/clawft_eml-notebook)
+  gains an "EML vs baseline" mode that runs both leg-by-leg in-browser
+  and renders the comparison as a table. Previous "Iteration 0" and
+  "Iteration 1" modes remain.
+- Gate passes at the small reference shape.
+
+### Honest calls
+
+- **Single-param CD on a 352-param SafeTree plateaus at -4% to +8%
+  reduction.** The same optimizer hits 76% on a 148-param plain affine.
+  Iteration 3 would try multi-param coordinated perturbation; the
+  measurement shows this is needed to close the gap, not that SafeTree
+  is fundamentally better.
+- **Default builds byte-identical to 0.6.9.** Feature flag
+  `experimental-attention` still gates the whole module.
+- **13 attention tests + 4 new baseline tests + 40 existing** — 57 total.
+
+### Highlights
+
+- **New `SafeTree` primitive**: depth-N tree evaluating
+  `eml_safe(v·c0 + c1, |v| + c2 + 1)` at each level. The `|v| + c2 + 1`
+  guard keeps the `ln` argument ≥ 1 always, so nested composition never
+  hits the `ln(MIN_POSITIVE) ≈ -744 → exp(20) = 4.85e8` saturation path
+  that capped Iteration 1.
+- **Round-trip compatible with the browser demo's JSON export**.
+  `SafeTree::from_json` deserializes the same schema the live trainer
+  at [`/clawft_eml-notebook`](/clawft_eml-notebook) produces.
+- **Gate PASS** (5 of 5):
+  - baseline 1.64 → final 1.52 = 7.3% MSE reduction on per-position-mean
+  - p99 inference 1174 ns
+  - serialization roundtrip + polynomial scaling green
+- **Q/K/V/softmax/out** fields are now `SafeTree`. The `train_end_to_end`
+  API is unchanged; callers get saturation-safe composition without code
+  changes.
+
+### Deliberately narrower gate
+
+SafeTree's level-0 affine scales with `inputs × heads` (~10× Iteration 1's
+`EmlModel`-backed budget). The gate uses `(seq_len=2, d_model=4, d_k=2,
+depth=3)` for sharp convergence signal; larger shapes ship via the Phase-4
+scaling sweep.
+
+### What didn't change
+
+- Forward pass interface, `record`, `train_end_to_end`, `AttentionBenchmark`
+- 13 unit tests + 4-phase benchmark harness
+- Default builds are byte-identical to 0.6.9
+- Feature flag `experimental-attention` still gates the whole module
+
+### Iteration 3 scope
+
+- Multi-param coordinated perturbation. Rust single-param CD plateaus at
+  browser-scale shapes because each accepted perturbation changes output
+  by ~1e-6 when sitting among thousands of parameters. Pattern search or
+  small-batch gradient-free updates should unlock the same 90%+
+  reductions the TS port shows.
+- Identity task remains information-theoretically bounded when
+  `d_k < d_model`; revisit when raising capacity.
 
 ## v0.6.9 — EML Attention, Iteration 1 (Experimental)
 

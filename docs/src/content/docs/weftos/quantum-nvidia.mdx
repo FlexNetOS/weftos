@@ -1,0 +1,106 @@
+---
+title: "NVIDIA Quantum Integration — 0.7.x Roadmap"
+description: "Planned integration of NVIDIA CUDA-Q and cuQuantum as a third QuantumBackend alongside Pasqal Cloud and AWS Braket. Status: research complete, implementation deferred to 0.7.x."
+---
+
+**STATUS: PLANNED for v0.7.x** — research delivered 2026-04-15, implementation deferred until after GUI ship. This page summarizes the evaluation and planned integration path. See the existing [Quantum Cognitive Layer](/weftos/quantum) for what ships today (Pasqal Cloud + Braket stub).
+
+## TL;DR
+
+NVIDIA's "Ising" product page (nvidia.com/en-us/solutions/quantum-computing/ising) is **not** an Ising / QUBO solver. It ships two AI models for QPU *builders*:
+
+- **Ising-Calibration** — 35B vision-language model for automated QPU hardware calibration (licensed under `nvidia-open-model-license`)
+- **Ising-Decoding** — 3D-CNN pre-decoder for surface-code quantum error correction (Apache-2.0)
+
+Neither helps WeftOS directly. Pasqal handles calibration on the cloud side, and surface-code QEC has no analog on Pasqal's Rydberg platform.
+
+**The useful piece is one layer below**: NVIDIA's `cuDensityMat` library inside `cuQuantum` can evolve the same analog time-dependent Hamiltonian that Pasqal runs. This makes it a plausible **local GPU simulator backend** — a third `QuantumBackend` alongside `PasqalBackend` and `BraketBackend`.
+
+**Recommendation: DEFER to v0.7.x**. Python-sidecar pre-flight simulator first; full backend only if it beats `EMU_FREE` on latency and fidelity.
+
+## What NVIDIA actually ships
+
+| Library | License | What it does | Useful for WeftOS? |
+|---------|---------|--------------|---------------------|
+| **CUDA-Q** | Apache-2.0 | Quantum programming framework; hybrid classical-quantum kernels | **Yes** — Python entry point for cuQuantum simulation |
+| **cuQuantum SDK** | BSD-3 (Python) + proprietary binaries | `cuStateVec`, `cuTensorNet`, **`cuDensityMat`** | **Yes, narrowly** — `cuDensityMat` evolves analog Hamiltonians |
+| **cuOpt** | Apache-2.0 | MILP / LP / QP solvers | **No** — no QUBO support |
+| **Ising-Calibration** | nvidia-open-model-license | 35B VLM for QPU hardware tuning | **No** — Pasqal's problem, not ours |
+| **Ising-Decoding** | Apache-2.0 | 3D-CNN surface-code pre-decoder | **No** — gate-based, not analog |
+| **NVQLink** | Hardware spec | QPU↔GPU interconnect | **No** — data center hardware |
+
+No AGPL blockers. No Rust crates exist for any of them (verified crates.io). Integration path is Python sidecar.
+
+## Why `cuDensityMat` is interesting
+
+Pasqal's Rydberg Hamiltonian:
+
+```
+H(t)/ℏ = Σᵢ [ (Ω(t)/2) e^(-iφ) |g⟩⟨r| + h.c. − δ(t) |r⟩⟨r| ]
+       + Σᵢ<ⱼ (C₆ / R_ij⁶) nᵢ nⱼ
+```
+
+`cuDensityMat` is designed exactly for this kind of time-dependent open-system Lindbladian evolution. It accepts a `TimeEvolvingOperator` + density matrix and integrates on GPU using tensor network / state-vector methods.
+
+For a buoy-array graph mapped to atom positions via our existing `quantum_register::build_register`, `cuDensityMat` could:
+
+1. Simulate the same evolution Pasqal runs, locally on GPU, **before** committing QPU-hours
+2. Validate `graph_to_pulser_json` output against known-good trajectories
+3. Explore parameter sweeps (`Ω`, `δ`, evolution time) without per-run Pasqal cost
+4. Serve as a cheap ground-truth when debugging production Pasqal jobs
+
+## Integration options (ranked)
+
+### Option A — Python-sidecar pre-flight simulator *(v0.7.x primary)*
+
+- **Scope**: new `crates/clawft-quantum-sim/` umbrella that spawns a Python subprocess running CUDA-Q + `cuDensityMat`
+- **Rust side**: build the same Pulser JSON we already send to Pasqal, hand it to the sidecar, receive bitstrings
+- **Deployment**: optional sidecar — if Python + CUDA-Q unavailable, fall back to existing `EMU_FREE`
+- **Effort**: ~0.5 sprint for working sidecar, ~1 sprint for full `QuantumBackend` impl
+- **ADR**: ADR-048 *NVIDIA-backed quantum simulation sidecar*
+
+### Option B — Full `QuantumBackend` implementation *(v0.7.x+1 follow-up)*
+
+- **Scope**: `NvidiaBackend` implements the same trait as `PasqalBackend` and `BraketBackend`
+- **Requirements**: Python runtime, CUDA 12.x, NVIDIA GPU (Ampere+). Host deployment gains a hard dependency
+- **Risk**: if local simulation latency > `EMU_FREE`, the whole effort is wasted. Pasqal EMU-FREE is often 1-10 seconds; local `cuDensityMat` on 100 atoms could be minutes
+- **Gate to promote from Option A → B**: end-to-end latency ≤ EMU_FREE for our target shape (20-40 atom buoy graphs)
+
+### Option C — Classical Ising solver for ECC *(rejected)*
+
+The NVIDIA "Ising" page is a misnomer and `cuOpt` has no QUBO support. This option was explored and found to have no substance. ECC community detection already runs on CPU via `ruvector`; GPU acceleration would require a proper QUBO solver that NVIDIA does not currently ship.
+
+### Option D — Ising-Calibration / Ising-Decoding adoption *(rejected)*
+
+Both models address QPU-builder concerns. WeftOS is a QPU client. Not applicable.
+
+## Open questions (parked for 0.7.x kickoff)
+
+- What's the actual `cuDensityMat` latency for 20-40 atom analog simulation? (Benchmark required before Option A work begins.)
+- Does the Pulser JSON schema map cleanly into `cuDensityMat`'s operator representation, or do we need a translation layer?
+- Deployment footprint: Python + CUDA 12 + CUDA-Q in production servers is a substantial dependency increase. Is that acceptable, or do we keep it developer-only?
+- Licensing interaction with CUDA runtime (proprietary) — we can link but can't redistribute. Shipping precompiled containers may require legal review.
+
+## Timeline
+
+| Phase | Milestone | When |
+|-------|-----------|------|
+| Research complete | `.planning/development_notes/nvidia-quantum-integration.md` | **2026-04-15** |
+| ADR-048 draft | Decision to pursue Option A in v0.7.x | *post-GUI ship* |
+| Option A prototype | Python sidecar runs our Pulser JSON, returns bitstrings | *v0.7.x sprint 1* |
+| Benchmark gate | Decide Option A → B based on latency vs EMU-FREE | *v0.7.x sprint 2* |
+| Option B (optional) | `NvidiaBackend` implements `QuantumBackend` | *v0.7.x+1 if gate passes* |
+
+## What *not* to do
+
+- Do **not** adopt Ising-Calibration or Ising-Decoding. Wrong audience.
+- Do **not** wire `cuOpt` as a QUBO solver. It isn't one.
+- Do **not** rewrite `quantum_register` or `quantum_backend.rs` trait for NVIDIA. The trait is backend-agnostic by design; `NvidiaBackend` slots in alongside `PasqalBackend` / `BraketBackend` without touching the kernel.
+- Do **not** commit to a hard CUDA 12 / Ampere GPU dependency in the base kernel. NVIDIA simulation must remain a feature-gated optional backend.
+
+## Cross-references
+
+- Full research: `.planning/development_notes/nvidia-quantum-integration.md`
+- Existing quantum layer: [Quantum Cognitive Layer](/weftos/quantum)
+- Pasqal integration plan: `.planning/development_notes/pasqal-integration.md`
+- Trait surface: `crates/clawft-kernel/src/quantum_backend.rs`
