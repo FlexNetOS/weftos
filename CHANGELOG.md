@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2026-04-15
+
+### Added
+
+- **EML Attention — Iteration 0** (experimental): first step toward a
+  gradient-free EML-Transformer for WeftOS
+  - `ToyEmlAttention` in `eml-core` composed of 5 `EmlModel` instances
+    (Q/K/V projections, learned softmax, output projection) with `f64`
+    matmul between them — pragmatic hybrid approach, consistent with the
+    design note's Iteration 4+ guidance
+  - `new(name, d_model, d_k, seq_len, depth)` with toy-scale guards
+    (`d_model ≤ 32`, `seq_len ≤ 8`, `depth ∈ 3..=5`)
+  - `forward`, `record`, `train`, `to_json`/`from_json`, `AttentionError`
+  - Self-distillation training: `train()` runs a forward pass on the buffer,
+    derives per-submodel targets, then runs the existing coordinate-descent
+    loop on `softmax_model` (row-softmax distillation) and `out_model`
+    (`context → target`)
+  - Feature flag `experimental-attention` on `eml-core` (off by default);
+    default builds are unchanged
+  - 13 unit tests covering construction, shape enforcement, numerical-softmax
+    stability, serialization roundtrip, training-round counting, and the
+    benchmark sanity gates
+- **4-phase benchmark harness** `run_benchmark` + `AttentionBenchmark`
+  mirroring `clawft-weave/src/commands/bench_cmd.rs` (Warmup → Transport
+  → Compute → Scalability):
+  - Phase 1: single forward-pass timing + JSON roundtrip
+  - Phase 2: convergence on a memorizable identity task (96 samples, 3 rounds)
+  - Phase 3: inference latency mean + p99 over 256 random inputs
+  - Phase 4: `(seq_len, d_model)` scaling sweep with per-point param count
+- **Docs**: new `docs/src/content/docs/weftos/eml-attention.mdx` page
+- **Live demos**:
+  - `/clawft_eml-attention` — pure-JS Iteration 0 forward-pass demonstrator
+    (WASM rebuild follows in 0.6.9)
+  - `/clawft_eml-notebook` — Python Colab notebook that trains a Python
+    mirror and exports JSON directly loadable by Rust `EmlModel::from_json`
+- **Planning**:
+  - `.planning/development_notes/eml_model_development_assessment.md` —
+    Iteration 0 plan, design rationale, 5 explicit go/no-go criteria
+- **CHANGELOG + release notes** updated for 0.6.8
+
+### Notes
+
+- EML Attention is **additive**. Default builds are byte-identical to 0.6.7.
+- Iteration 0 deliberately keeps Q/K/V at default init — only `softmax_model`
+  and `out_model` train in this release. End-to-end coordinate descent across
+  all five sub-models is Iteration 1.
+- The two inter-projection matmuls (Q·Kᵀ and A·V) run in `f64`, not EML trees.
+  Pure-EML matmul is a research problem; the design note treats hybrid as
+  acceptable through Iteration 4+.
+
 ## [0.6.7] - 2026-04-15
 
 ### Added

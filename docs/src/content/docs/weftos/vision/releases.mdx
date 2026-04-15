@@ -1,9 +1,62 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.6.7.
+description: Complete version history for WeftOS from initial development through v0.6.8.
 ---
 
 # Release Notes
+
+## v0.6.8 — EML Attention, Iteration 0 (Experimental)
+
+*2026-04-15*
+
+First step toward an EML-Transformer for WeftOS. Ships a toy-scale attention
+block composed of five `EmlModel` instances, a 4-phase benchmark harness for
+quantifying future iterations, and two live demos on the docs site. All
+additive behind `experimental-attention`; default builds unchanged.
+
+### Highlights
+
+- **`ToyEmlAttention`** in `eml-core`: single-head attention block at
+  `d_model ≤ 32`, `seq_len ≤ 8`, per-submodel depth 3-5. Five learned
+  projections (Q/K/V + softmax + output) with `f64` matmul between them —
+  pragmatic hybrid consistent with the design note's Iteration 4+ guidance.
+- **Gradient-free training** via self-distillation: `train()` runs a forward
+  pass on buffered samples, derives per-submodel targets (numerical softmax
+  for `softmax_model`; `(context, target)` for `out_model`), then runs the
+  existing coordinate-descent loop.
+- **4-phase benchmark** `run_benchmark()` mirrors the WeftOS bench pattern
+  (Warmup → Convergence → Compute → Scalability) and returns a single
+  `AttentionBenchmark` struct. This sets the baseline future iterations
+  will be quantified against.
+- **Explicit go/no-go gate**. Iteration 1 is blocked until Iteration 0
+  passes: converges in ≤ 3 rounds, p99 ≤ 5 µs at the default shape, 1000
+  forward passes without NaN, serialization roundtrip, polynomial scaling.
+- **Documentation**: new [EML Attention page](/weftos/eml-attention)
+  covering architecture, benchmarks, limitations, roadmap.
+- **Live demos** deployed alongside the docs:
+  - [`/clawft_eml-attention`](/clawft_eml-attention) — pure-JS Iteration 0
+    forward-pass demonstrator with configurable shape + live latency.
+  - [`/clawft_eml-notebook`](/clawft_eml-notebook) — Python Colab notebook
+    that trains a Python mirror and exports JSON directly loadable by the
+    Rust `EmlModel::from_json` interface.
+
+### What it adds to WeftOS
+
+- Bridges the gap from scalar-output `EmlModel` wrappers (QueryFusionModel,
+  CausalCollapseModel, SurpriseScorer, etc.) to sequence-aware primitives —
+  without abandoning the gradient-free / weight-snapping / ExoChain-audited
+  posture that defines the EML substrate.
+- Ships the 4-phase benchmark as the canonical performance-quantification
+  tool for all future EML work, not just attention.
+
+### Experimental status
+
+- Feature flag `experimental-attention` on `eml-core` (off by default).
+- Default builds are byte-identical to 0.6.7.
+- Toy scale only; explicit roadmap through Iteration 4 gates each step on
+  the previous one passing benchmarks.
+- Q/K/V projections remain at default init in Iteration 0; end-to-end
+  coordinate descent lands in Iteration 1.
 
 ## v0.6.7 — Quantum Cognitive Layer (Experimental)
 

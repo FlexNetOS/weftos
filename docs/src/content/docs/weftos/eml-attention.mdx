@@ -1,0 +1,129 @@
+---
+title: "EML Attention (Iteration 0)"
+description: "Experimental toy-scale EML-Transformer block composed of five EmlModel instances — first step toward a gradient-free, weight-snapping, ExoChain-audited attention primitive for WeftOS."
+---
+
+**EXPERIMENTAL (0.6.8)** — Iteration 0 of an EML-Transformer. Ships behind the `experimental-attention` feature on `eml-core`. Default builds are unchanged.
+
+EML Attention is WeftOS's first step toward replacing backprop-trained attention with a gradient-free, coordinate-descent-trained, weight-snapping primitive that lives in the same substrate as every other learned function in the kernel. The classical path (`EmlModel` wrappers for scalar-output learned heuristics — see [EML — Self-Learning Functions](/weftos/eml)) continues to run unchanged.
+
+**Feature**: `experimental-attention` (off by default)
+**Source**: `crates/eml-core/src/attention.rs` (13 tests)
+**Phase**: experimental; part of the 0.6.x roadmap, not a production primitive
+**Related**: [EML — Self-Learning Functions](/weftos/eml), [ECC Cognitive Substrate](/weftos/ecc)
+
+## Why
+
+Every learned function in WeftOS today is a scalar-output `EmlModel`: `QueryFusionModel`, `CausalCollapseModel`, `SurpriseScorer`, `GossipTiming`, etc. These work brilliantly for isolated thresholds and scoring formulas, but they don't compose. A real cognitive primitive needs **attention** — content-addressable routing across a sequence — which no scalar EML head can express.
+
+The theoretical bridge is Odrzywolel 2026's proof that the EML operator `eml(x, y) = exp(x) - ln(y)` combined with the constant `1` can reconstruct every elementary function. Attention is built from those elementary functions (matrix multiplication, softmax, affine projection). So attention is in principle expressible in EML. This page documents the pragmatic first step.
+
+## What Iteration 0 is
+
+A single-head attention block at toy scale — `d_model ≤ 32`, `seq_len ≤ 8`, per-submodel depth 3-5 — built from five `EmlModel` instances:
+
+| Submodel | Shape | Role |
+|----------|-------|------|
+| `q_model` | `(seq_len·d_model) → (seq_len·d_k)` | Query projection |
+| `k_model` | `(seq_len·d_model) → (seq_len·d_k)` | Key projection |
+| `v_model` | `(seq_len·d_model) → (seq_len·d_k)` | Value projection |
+| `softmax_model` | `seq_len → seq_len` | Learned row-softmax approximator |
+| `out_model` | `(seq_len·d_k) → (seq_len·d_model)` | Output projection |
+
+The inter-projection matmuls (Q·Kᵀ and A·V) are `f64` in Iteration 0. The dev note [`eml_model_development.md`](https://github.com/weave-logic-ai/weftos/blob/master/.planning/development_notes/eml_model_development.md) is explicit that hybrid EML + float is acceptable through Iteration 4+; we adopt the hybrid from day one to make the spike tractable.
+
+Training is **gradient-free**. `record(input, target)` stores end-to-end pairs in an internal buffer (cap 256). `train()` runs a forward pass on the buffer, derives per-submodel targets via self-distillation — numerical softmax for `softmax_model`; `(context, target)` for `out_model` — and trains using the existing coordinate-descent loop with random restarts.
+
+## The 4-phase benchmark
+
+Mirrors the layout used by `clawft-weave/src/commands/bench_cmd.rs` (Warmup → Transport → Compute → Scalability) adapted for learned functions:
+
+- **Phase 1 — Warmup**: single forward-pass timing + `to_json`/`from_json` roundtrip
+- **Phase 2 — Convergence**: train on a memorizable identity task (96 synthetic samples); report converged flag, final MSE, training-round count
+- **Phase 3 — Compute**: inference latency over 256 random inputs; mean and p99
+- **Phase 4 — Scalability**: sweep `(seq_len, d_model)` across `{(4,8), (4,16), (8,8), (8,16)}`; report param count and mean inference per point
+
+Results are returned as a single `AttentionBenchmark` struct serializable as JSON — the benchmark's primary use is quantifying changes between iterations.
+
+```rust
+use eml_core::run_benchmark;
+
+let bench = run_benchmark(
+    /* d_model */ 8,
+    /* d_k     */ 4,
+    /* seq_len */ 4,
+    /* depth   */ 3,
+)?;
+println!("param_count = {}", bench.param_count);
+println!("phase3_mean = {} ns", bench.phase3_inference_ns_mean);
+println!("phase3_p99  = {} ns", bench.phase3_inference_ns_p99);
+```
+
+## Go/no-go criteria
+
+The spike is considered successful if all five hold:
+
+1. Converges on the identity task in ≤ 3 training rounds
+2. Inference p99 ≤ 5 µs at `(seq_len=4, d_model=8, d_k=4, depth=3)`
+3. 1000 forward passes without NaN / Inf at the default shape
+4. Serialization roundtrip preserves shape and parameter count
+5. Phase-4 scaling shows polynomial-not-exponential growth up to `(seq_len=8, d_model=16)`
+
+If Iteration 0 fails any criterion we stop and log the substrate limit; we do not proceed to Iteration 1 until this gate passes.
+
+## Usage
+
+```rust
+use eml_core::ToyEmlAttention;
+
+let mut attn = ToyEmlAttention::new(
+    "demo",
+    /* d_model */ 8,
+    /* d_k     */ 4,
+    /* seq_len */ 4,
+    /* depth   */ 3,
+)?;
+
+// Forward pass on random input
+let x = vec![0.5; 4 * 8];
+let y = attn.forward(&x)?;
+assert_eq!(y.len(), 4 * 8);
+
+// Record + train
+for i in 0..32 {
+    let input = (0..32).map(|j| ((i * j) as f64).sin()).collect::<Vec<_>>();
+    attn.record(input.clone(), input)?; // identity task
+}
+let converged = attn.train();
+```
+
+## Demos
+
+Two live demos are deployed to the docs site alongside this page:
+
+- [`/clawft_eml-attention`](/clawft_eml-attention) — pure-JS Iteration 0 forward-pass demonstrator. Lets you tweak `seq_len`, `d_model`, `d_k`, `depth` and see param count + forward-pass latency + softmax output live. WASM-backed version follows in 0.6.9.
+- [`/clawft_eml-notebook`](/clawft_eml-notebook) — Python Colab notebook that trains a Python mirror of `ToyEmlAttention` and exports JSON files directly loadable by the Rust `EmlModel::from_json`.
+
+## Honest limitations
+
+- **No end-to-end coordinate descent yet**. Q/K/V models stay at default init in Iteration 0; only `softmax_model` and `out_model` train. This validates the architecture but not the full training story. Iteration 1 introduces end-to-end coordinate descent over the union of all five sub-models.
+- **Hybrid, not pure EML**. The two matmuls are `f64`. Pure-EML matmul is a research problem (unsigned `ln` requirements); the dev note explicitly treats hybrid as acceptable through Iteration 4+.
+- **Toy scale only**. `d_model ≤ 32`, `seq_len ≤ 8`. This is a *deliberate* ceiling on Iteration 0 — the scaling plan grows these over four more iterations.
+- **Not yet wired into any production path**. No existing EML wrapper has been replaced by this block. That's a Sprint 18+ concern.
+
+## Roadmap
+
+| Iter | d_model | seq_len | heads | scope | status |
+|------|---------|---------|-------|-------|--------|
+| 0 (this) | 16 | 4-8 | 1 | hybrid toy block, pragmatic matmul | **shipped 0.6.8** |
+| 1 | 32-64 | 12-16 | 2 | end-to-end coordinate descent, learned positional encodings | next |
+| 2 | 96-128 | 24-32 | 4 | chunked attention, continual retraining on ExoChain drift | gated |
+| 3 | 192-256 | 48-64 | 8 | sparse attention, shared constants | gated |
+| 4+ | 256-512 | chunked | 16 | full hybrid attention+residual backbone | gated |
+
+## Further reading
+
+- `.planning/development_notes/eml_model_development.md` — the original design note
+- `.planning/development_notes/eml_model_development_assessment.md` — Iteration 0 plan + go/no-go criteria
+- [EML — Self-Learning Functions](/weftos/eml) — the classical EML substrate this extends
+- [Odrzywolel 2026, "All elementary functions from a single operator"](https://arxiv.org/abs/2603.21852) — the theoretical basis

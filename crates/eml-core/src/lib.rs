@@ -46,9 +46,18 @@ pub mod model;
 pub mod operator;
 pub mod tree;
 
+#[cfg(feature = "experimental-attention")]
+pub mod attention;
+
 // Re-export public API
 pub use events::{EmlEvent, EmlEventLog};
 pub use features::FeatureVector;
 pub use model::EmlModel;
 pub use operator::{eml, eml_safe, softmax3};
 pub use tree::EmlTree;
+
+#[cfg(feature = "experimental-attention")]
+pub use attention::{
+    run_benchmark, AttentionBenchmark, AttentionError, ScalingPoint, ToyEmlAttention,
+    MAX_TOY_D_MODEL, MAX_TOY_SEQ_LEN,
+};
