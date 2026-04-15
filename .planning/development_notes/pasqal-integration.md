@@ -667,6 +667,179 @@ Ranked by impact-to-effort ratio:
 
 ---
 
+## 13. Dual-Backend Strategy (Pasqal + AWS Braket / QuEra)
+
+Both Pasqal (Fresnel) and QuEra (Aquila) are neutral-atom analog processors
+using Rubidium + Rydberg interactions. The graph-to-register mapping in §5.1
+and the register builder in §6.3 are **backend-agnostic** — the same atom
+layout code produces a valid register on either platform.
+
+### Backend comparison
+
+| Axis | Pasqal Fresnel | QuEra Aquila (AWS Braket) |
+|------|----------------|----------------------------|
+| Max atoms | 100 (140+ Orion late 2025) | 256 |
+| API auth | Auth0 OAuth2 | AWS SigV4 (IAM credentials) |
+| SDK | pasqal-cloud + Pulser (Python) | Amazon Braket SDK / Bloqade |
+| Free tier | EMU-FREE (always free) | Braket free-tier hours/month |
+| Pricing | ~$300/QPU-hour | Braket per-task + per-shot |
+| JSON format | Pulser abstract-repr | Braket AHS (Analog Hamiltonian Simulation) |
+| Region | Europe | us-east-1 |
+
+### Rust module layout (both backends)
+
+```
+crates/clawft-kernel/src/
+  quantum_state.rs             # existing classical simulation
+  quantum_backend.rs           # QuantumBackend trait, shared types
+  quantum_register.rs          # graph -> 2D layout (shared)
+  quantum_pasqal.rs            # PasqalBackend (feature: quantum-pasqal)
+  quantum_braket.rs            # BraketBackend for QuEra Aquila (feature: quantum-braket)
+```
+
+### Feature flags
+
+```toml
+[features]
+# EXPERIMENTAL in 0.6.x — interface only. Full REST impl lands later.
+quantum-pasqal = ["dep:reqwest"]
+quantum-braket = ["dep:reqwest", "dep:aws-sigv4-or-aws-sdk-braket-crate"]
+```
+
+### Fallback policy
+
+The `KernelConfig.quantum.backend` selector is a list, not a single entry:
+
+```toml
+[kernel.quantum]
+backend = ["pasqal-emu", "braket-emu", "simulator"]  # try in order
+```
+
+If Pasqal's EMU-FREE queue is long or unavailable, the kernel falls through
+to QuEra's Aquila emulator, then to the classical in-process simulator. The
+same register JSON is transliterated into the other format at submission time.
+
+---
+
+## 14. Tiered Development Environments
+
+| Tier | Environment | Cost | Use |
+|------|-------------|------|-----|
+| **T0** | Local Pulser + emu-mps/emu-sv (Python) | $0 | Generate golden JSON to validate Rust builder; run in dev scripts, not in-kernel |
+| **T1** | Pasqal EMU-FREE (cloud) | $0 | CI/integration — exercises real Auth0 + REST path without QPU-hour burn |
+| **T2** | AWS Braket QuEra emulator | low | Cross-validate dual-backend path; Braket free-tier hours |
+| **T3** | Pasqal EMU-TN (GPU-accelerated MPS) | paid, cheap | Pre-prod timing and fidelity tests |
+| **T4** | Pasqal Fresnel QPU | ~$5–15/run | Signed-off production runs |
+| **T4b** | QuEra Aquila QPU | per-task | Fallback/comparison on real hardware |
+
+**T0 harness**: a `scripts/quantum/pulser-golden.py` dev-only script emits
+`tests/golden/quantum/*.json` fixtures from known graph inputs. The Rust
+builder's `graph_to_pulser_json` output is diffed against these fixtures in
+kernel unit tests. This catches schema drift without requiring Python at
+runtime or in CI for the Rust crate itself.
+
+---
+
+## 15. 0.6.x Experimental Scope
+
+Per the v0.6.x freeze (stay on 0.6.x until GUI complete), this integration
+lands as **experimental**. Scope for 0.6.x:
+
+**In scope (POC):**
+- `QuantumBackend` trait + shared types
+- `quantum_register.rs` — deterministic graph → 2D force-directed layout
+- **Live `PasqalBackend`**: Auth0 client-credentials flow with token caching,
+  batch create/poll/results/cancel against `apis.pasqal.cloud`, best-effort
+  Pulser abstract-repr JSON builder (`AnalogDevice` + global Rydberg channel)
+- `submit_raw_sequence()` escape hatch for pre-built Pulser JSON
+- Bitstring → per-atom Rydberg probability parsing
+- `BraketBackend` remains stub (interface-only; no live calls)
+- Feature flags `quantum-pasqal` / `quantum-braket` (both off by default)
+- T0 wiremock integration tests (full auth + submit + poll + results path)
+- T1/T3/T4 `#[ignore]`-gated live test against real Pasqal endpoints
+
+**Out of scope (deferred to 0.7.x+):**
+- DEMOCRITUS hybrid tick integration
+- Configuration wiring into `weave.toml`
+- `QuantumCognitiveState` update from real bitstrings in the tick loop
+- Braket live implementation
+
+---
+
+## 16. 4-Phase Test Runbook (Pasqal POC)
+
+The POC is tested at four tiers. Each tier uses the same `PasqalBackend` code;
+only the environment changes.
+
+### T0 — Local (wiremock)
+
+Zero cost. Runs on every `cargo test`. Verifies the full auth + REST + JSON
+path against a mock HTTP server.
+
+```bash
+cargo test -p clawft-kernel --features quantum-pasqal --lib quantum_pasqal
+cargo test -p clawft-kernel --features quantum-pasqal --test pasqal_live public_api_shape
+```
+
+Covers: token caching/refresh, `POST /api/v1/batches` body + bearer auth,
+`GET /api/v2/jobs/{id}` status parsing, `GET /api/v1/batches/{id}/results`
+counts-to-probabilities, `PATCH /api/v2/jobs/{id}/cancel`, 404→`None`, and
+`GraphTooLarge` enforcement before submit.
+
+### T1 — EMU-FREE (Pasqal free cloud emulator)
+
+Zero QPU-hour cost. First real-endpoint run. Requires a Pasqal account +
+service-account credentials.
+
+```bash
+export PASQAL_CLIENT_ID=...
+export PASQAL_CLIENT_SECRET=...
+export PASQAL_PROJECT_ID=...
+export PASQAL_DEVICE=EMU_FREE
+cargo test -p clawft-kernel --features quantum-pasqal --test pasqal_live \
+    -- --ignored --nocapture live_triangle_quantum_walk
+```
+
+Expected: 3-atom triangle quantum walk submits, polls to `DONE` within
+minutes, returns per-atom Rydberg probabilities from 100 shots.
+
+### T3 — EMU-TN (paid GPU-accelerated MPS emulator)
+
+Set `PASQAL_DEVICE=EMU_TN`. Same test. Validates that the Pulser JSON builder
+is accepted by the higher-fidelity emulator and that timing approximates real
+QPU behavior.
+
+### T4 — Fresnel QPU (real neutral-atom hardware)
+
+Set `PASQAL_DEVICE=FRESNEL`. Same test. Only run after T1+T3 pass cleanly.
+Budget ~$5–15 per run. Validates end-to-end on real hardware.
+
+### Pulser-JSON validation (side channel)
+
+The `build_sequence_json` output is **best-effort** — the exact Pulser
+abstract-repr schema is not fully stable and EMU-FREE is the first place
+schema mismatches surface. If T1 fails with a `Rejected(...)` error:
+
+1. Generate a golden JSON from Python:
+   ```python
+   import pulser, json
+   qubits = {"q0": (0,0), "q1": (5,0), "q2": (0,5)}
+   seq = pulser.Sequence(pulser.Register(qubits), pulser.devices.AnalogDevice)
+   seq.declare_channel("rydberg_global", "rydberg_global")
+   seq.add(pulser.Pulse.ConstantPulse(1000, 1.0, 0.0, 0.0), "rydberg_global")
+   seq.measure("ground-rydberg")
+   print(json.dumps(json.loads(seq.to_abstract_repr()), indent=2))
+   ```
+2. Diff against `build_sequence_json` output and adjust the builder, or pass
+   the Python JSON directly via `PasqalBackend::submit_raw_sequence()`.
+
+The trait and register code let downstream crates start targeting the
+interface immediately. The backend stubs can be replaced without breaking
+consumers. No default-feature change — existing users see no difference
+unless they opt into `quantum-pasqal` or `quantum-braket`.
+
+---
+
 ## Sources
 
 - [Pasqal Cloud Documentation](https://docs.pasqal.com/cloud/)

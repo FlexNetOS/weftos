@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-04-15
+
+### Added
+
+- **Quantum Cognitive Layer** (experimental): neutral-atom quantum acceleration for ECC
+  - `QuantumBackend` trait with object-safe async interface and shared types (`JobHandle`, `QuantumResults`, `JobStatus`, `BackendStatus`, `EvolutionParams`, `QuantumError`)
+  - `quantum_register`: deterministic force-directed graph → 2D atom-position layout with device-constraint enforcement
+  - **Live `PasqalBackend`** targeting Pasqal Cloud (EMU_FREE / EMU_TN / Fresnel):
+    - Auth0 `client_credentials` flow with 24h token caching and 300s refresh skew
+    - `POST /api/v1/batches`, `GET /api/v2/jobs/{id}`, `GET /api/v1/batches/{id}/results`, `PATCH /api/v2/jobs/{id}/cancel`
+    - Best-effort Pulser abstract-repr JSON builder for `AnalogDevice` + global Rydberg channel
+    - `submit_raw_sequence()` escape hatch for Python-generated Pulser JSON
+    - Counts → per-atom Rydberg probability parsing
+  - `BraketBackend` stub for QuEra Aquila on AWS Braket (interface only; live impl deferred)
+  - Feature flags `quantum-pasqal` and `quantum-braket` (both off by default; experimental in 0.6.x)
+  - T0 wiremock integration tests (14 tests exercising full auth + REST path)
+  - T1/T3/T4 `#[ignore]`-gated live tests against real Pasqal endpoints
+- **Docs**: new `docs/src/content/docs/weftos/quantum.mdx` page covering architecture, ECC integration, 4-tier test strategy, and roadmap
+- **Planning**: `.planning/development_notes/pasqal-integration.md` extended with dual-backend strategy (§13), tiered dev environments (§14), 0.6.x experimental scope (§15), and 4-phase test runbook (§16)
+
+### Notes
+
+- The quantum layer is **additive**. Default builds are byte-identical to 0.6.6.
+- `build_sequence_json` output is best-effort — the exact Pulser `to_abstract_repr()` schema is not fully stable. Runbook includes a Python golden-JSON validation path.
+
 ## [0.6.6] - 2026-04-14
 
 ### Added

@@ -1,0 +1,267 @@
+---
+title: "Quantum Cognitive Layer"
+description: "Neutral-atom quantum acceleration for ECC: the QuantumBackend trait, live Pasqal Cloud integration, graph-to-register mapping, and the 4-tier test strategy."
+---
+
+The Quantum Cognitive Layer is an **experimental** extension of the ECC substrate that lets WeftOS offload graph-structured reasoning onto real neutral-atom quantum processors. The classical `QuantumCognitiveState` already layers superposition, Born-rule probabilities, and unitary evolution on top of the `CausalGraph`. The new `QuantumBackend` trait connects that state to cloud-accessible quantum hardware, most prominently **Pasqal Fresnel** and its free cloud emulator.
+
+**Feature**: `quantum-pasqal` (experimental, off by default)
+**Source**: 4 modules in `crates/clawft-kernel/src/quantum_*` (27 tests)
+**Phase**: K3c (experimental 0.6.x extension; stable scope ships in 0.7.x)
+**Related**: [ECC Cognitive Substrate](/weftos/ecc), [EML — Self-Learning Functions](/weftos/eml)
+
+## Why quantum?
+
+The existing classical `QuantumCognitiveState` uses a first-order approximation for coherent evolution (`|psi'> ~= (I - i dt H)|psi>`) and simulated Born-rule measurement. Two observations motivate taking the layer onto real hardware:
+
+1. **ECC already reasons over graphs.** The `CausalGraph` adjacency structure, the HNSW vector neighborhoods, and the evidence-ranking expectation values are all graph-spectral computations. That is precisely the problem class where neutral-atom quantum processors provide a natural encoding: atom positions *are* the graph.
+2. **Some operations hit classical scaling walls.** Quantum walks, Grover-like amplitude amplification, and MIS-based community detection give quadratic-to-exponential speedups for the exploration phase of evidence ranking and hypothesis collapse, once graph sizes push past a few hundred nodes.
+
+The quantum layer is **additive**: ECC operates unchanged on classical hardware, and `quantum-pasqal` is a compile-time opt-in. Turn it off and the kernel loses no functionality.
+
+## The Rydberg Hamiltonian, briefly
+
+Pasqal's Fresnel QPU traps ~100 Rubidium atoms with optical tweezers and drives them between ground `|g>` and Rydberg `|r>` states. The hardware natively implements:
+
+```
+H(t)/hbar = sum_i [ (Omega(t)/2) e^(-i phi) |g_i><r_i| + h.c. - delta(t) |r_i><r_i| ]
+          + sum_{i<j} (C6 / R_ij^6) n_i n_j
+```
+
+The interaction term `C6 / R_ij^6 * n_i n_j` encodes a weighted graph whose edge weights are set by inter-atom distances. This is the crucial property: **arranging atoms in a 2D layout physically programs a graph Hamiltonian**. A quantum walk on that Hamiltonian explores all paths in superposition, which is exactly the search-and-rank operation that dominates ECC's evidence exploration.
+
+See `.planning/development_notes/pasqal-integration.md` §3 for the full derivation and §5.1 for the graph-to-register mapping algorithm.
+
+## Architecture
+
+The layer is four modules in `crates/clawft-kernel/src/`:
+
+```
+quantum_state.rs       classical simulation (existing, unchanged)
+quantum_backend.rs     QuantumBackend trait + shared types
+quantum_register.rs    graph -> 2D atom layout
+quantum_pasqal.rs      live Pasqal Cloud backend (feature: quantum-pasqal)
+quantum_braket.rs      QuEra Aquila stub (feature: quantum-braket, interface only)
+```
+
+### QuantumBackend trait
+
+All backends implement a single object-safe async trait:
+
+```rust
+#[async_trait]
+pub trait QuantumBackend: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn max_qubits(&self) -> usize;
+    async fn health_check(&self) -> Result<BackendStatus, QuantumError>;
+    async fn submit_evolution(
+        &self,
+        register: &[(String, [f64; 2])],
+        state: &QuantumCognitiveState,
+        params: EvolutionParams,
+    ) -> Result<JobHandle, QuantumError>;
+    async fn poll(&self, h: &JobHandle) -> Result<JobStatus, QuantumError>;
+    async fn get_results(&self, h: &JobHandle) -> Result<Option<QuantumResults>, QuantumError>;
+    async fn cancel(&self, h: &JobHandle) -> Result<(), QuantumError>;
+}
+```
+
+`JobHandle`, `QuantumResults`, `JobStatus`, `BackendStatus`, and `EvolutionParams` are vendor-neutral. This lets `Box<dyn QuantumBackend>` be chained for fallback: try Fresnel, fall back to EMU_TN, fall back to the classical `quantum_state` simulator.
+
+### Graph-to-register mapping
+
+`quantum_register::build_register` takes a weighted adjacency list and produces named 2D atom positions that satisfy device constraints (minimum inter-atom distance, maximum trap extent):
+
+```rust
+use clawft_kernel::{build_register, RegisterConstraints};
+
+let adjacency = vec![
+    vec![(1, 1.0), (2, 1.0)],
+    vec![(0, 1.0), (2, 1.0)],
+    vec![(0, 1.0), (1, 1.0)],
+];
+let register = build_register(&adjacency, RegisterConstraints::neutral_atom_default())?;
+// register: Vec<(String, [f64; 2])> -- ("q0", [x, y]), ("q1", [x, y]), ...
+```
+
+The current implementation is a deterministic force-directed layout (Fruchterman–Reingold) that scales so the minimum pairwise distance equals `min_distance_um` (default 4 µm). Spectral embedding for better Laplacian preservation is a follow-up.
+
+### Live Pasqal backend
+
+`PasqalBackend` implements the full cloud API path:
+
+| Step | HTTP | Endpoint |
+|------|------|----------|
+| Authenticate | `POST` | `https://pasqal.eu.auth0.com/oauth/token` (client_credentials, cached 24h) |
+| Submit batch | `POST` | `{api_url}/api/v1/batches` |
+| Poll status | `GET` | `{api_url}/api/v2/jobs/{id}` |
+| Get results | `GET` | `{api_url}/api/v1/batches/{id}/results` |
+| Cancel | `PATCH` | `{api_url}/api/v2/jobs/{id}/cancel` |
+
+Tokens are cached in-process with a 300-second refresh skew. Results come back as a `{bitstring: count}` histogram which the backend expands and reduces to per-atom Rydberg-excitation probabilities.
+
+A `submit_raw_sequence` escape hatch lets callers bypass the built-in Pulser JSON builder and submit a pre-validated sequence from the Python Pulser SDK. This matters because the `pulser.Sequence.to_abstract_repr()` schema is not fully stable across versions.
+
+## What it adds to ECC
+
+The layer maps six ECC operations onto quantum execution. Classical paths remain; the quantum path is opt-in per operation.
+
+| ECC operation | Classical (today) | Quantum (via `quantum-pasqal`) | Priority |
+|---|---|---|---|
+| Coherent evolution `exp(-i dt H)` | First-order approx in `quantum_state::evolve` | Exact unitary evolution on the Rydberg Hamiltonian | **P0** |
+| Born-rule measurement | Simulated via `norm_sq()` | True projective measurement, statistical sampling over shots | **P0** |
+| Hypothesis collapse | `HypothesisSuperposition::observe()` | Map hypotheses to atom groups, sample for real measurement statistics | **P0** |
+| Subgraph exploration (MCTS / beam) | Classical beam search | Quantum walk explores all paths in superposition (Grover-like quadratic speedup) | **P1** |
+| Graph partitioning | Fiedler vector sign | Quantum walk amplitude distribution separates communities inherently | **P1** |
+| Community detection | Label propagation | MIS / QUBO on neutral atoms — Pasqal's flagship algorithm | **P1** |
+| Evidence ranking `delta_lambda_2` | Classical `w*(phi[u]-phi[v])^2` | Quantum amplitude estimation on the evolved state | P2 |
+| Spectral analysis | Lanczos / RFF | Quantum phase estimation (needs digital gates, later phase) | P2 |
+
+**What does NOT run on quantum**: EML inference (too fast classically), HNSW search (not quantum-native), embedding generation (GPU wins), cross-reference lookups (pure DB ops). The layer targets graph-spectral operations only.
+
+## DEMOCRITUS integration (planned)
+
+The intended hybrid loop — deferred to 0.7.x but designed around the current interface:
+
+```text
+Classical tick (20 Hz, CognitiveTickConfig default = 50ms):
+  SENSE -> EMBED -> SEARCH -> UPDATE -> COMMIT
+    |
+    +-- Every N ticks (default 1000 = ~50s):
+          if graph changed significantly:
+            submit quantum walk to PasqalBackend
+          on completed jobs:
+            update QuantumCognitiveState.psi from measured probabilities
+            log quantum coherence metrics
+```
+
+See `.planning/development_notes/pasqal-integration.md` §6.4 for the full interaction diagram.
+
+## Configuration
+
+Configuration is interface-only in 0.6.x; wiring into `weave.toml` lands in 0.7.x.
+
+```toml
+[kernel.quantum]
+# Backend preference order. Tries in sequence, falls back on failure.
+backend = ["pasqal-emu", "simulator"]
+
+# Pasqal Cloud (read credentials from environment)
+api_url = "https://apis.pasqal.cloud"
+project_id = "your-project-id"
+client_id = "your-client-id"
+client_secret_env = "PASQAL_CLIENT_SECRET"
+
+# Device: EMU_FREE (free), EMU_TN (GPU emulator), FRESNEL (real QPU)
+device_type = "EMU_FREE"
+
+# Execution parameters
+default_shots = 100
+job_timeout_s = 300
+
+# Hybrid loop
+submit_every_n_ticks = 1000
+min_graph_change_threshold = 10
+evolution_time_ns = 1000
+omega = 1.0
+detuning = 0.0
+```
+
+## 4-Tier test strategy
+
+The quantum layer is tested at four tiers, escalating from zero-cost local mocks to real hardware. The same code runs at every tier; only the target changes.
+
+### T0 — Local (wiremock)
+
+Zero cost. Runs on every CI build under `quantum-pasqal`. Exercises the full auth + REST + JSON path against an in-process HTTP mock.
+
+```bash
+cargo test -p clawft-kernel --features quantum-pasqal --lib quantum_pasqal
+```
+
+Covers: token caching + refresh, `POST /api/v1/batches` body and bearer auth, `GET /api/v2/jobs/{id}` status parsing, counts-to-probabilities conversion, 404 → `None`, and `GraphTooLarge` enforcement before submit.
+
+### T1 — EMU-FREE (Pasqal free cloud emulator)
+
+Zero QPU-hour cost. First real-endpoint run. Requires a Pasqal service account.
+
+```bash
+export PASQAL_CLIENT_ID=...
+export PASQAL_CLIENT_SECRET=...
+export PASQAL_PROJECT_ID=...
+export PASQAL_DEVICE=EMU_FREE
+
+cargo test -p clawft-kernel --features quantum-pasqal --test pasqal_live \
+    -- --ignored --nocapture live_triangle_quantum_walk
+```
+
+The `live_triangle_quantum_walk` test submits a 3-atom triangle quantum walk, polls to `DONE`, and verifies that per-atom Rydberg probabilities come back.
+
+### T3 — EMU-TN (GPU-accelerated MPS emulator)
+
+Paid but cheap. Set `PASQAL_DEVICE=EMU_TN` and run the same test. Validates that the Pulser JSON builder is accepted by a higher-fidelity emulator whose timing approximates real QPU behavior.
+
+### T4 — Fresnel QPU (real neutral-atom hardware)
+
+~$5–15 per run. Only run after T1 + T3 pass cleanly. Set `PASQAL_DEVICE=FRESNEL` and run the same test.
+
+### Pulser-JSON validation side channel
+
+The `build_sequence_json` output is best-effort — the exact `Sequence.to_abstract_repr()` schema is not fully documented. If T1 fails with a `Rejected(...)` error, generate a golden JSON from Python:
+
+```python
+import pulser, json
+qubits = {"q0": (0, 0), "q1": (5, 0), "q2": (0, 5)}
+seq = pulser.Sequence(pulser.Register(qubits), pulser.devices.AnalogDevice)
+seq.declare_channel("rydberg_global", "rydberg_global")
+seq.add(pulser.Pulse.ConstantPulse(1000, 1.0, 0.0, 0.0), "rydberg_global")
+seq.measure("ground-rydberg")
+print(json.dumps(json.loads(seq.to_abstract_repr()), indent=2))
+```
+
+Diff against the Rust builder and adjust, or pass the Python JSON directly via `PasqalBackend::submit_raw_sequence()`.
+
+## Second backend: AWS Braket + QuEra Aquila (stub)
+
+A `BraketBackend` stub targets QuEra Aquila (256-atom neutral-atom processor) via AWS Braket. The same register-mapping code works because Aquila also implements the Rydberg Hamiltonian. It is **interface-only** in 0.6.x — SigV4 auth and AHS JSON format are deferred.
+
+Keeping a second vendor behind the trait gives ECC fallback when Fresnel is queued and doubles usable atom count (100 → 256). See `.planning/development_notes/pasqal-integration.md` §13 for the dual-backend plan.
+
+## Limitations and caveats
+
+Hardware constraints — these shape what ECC can ask the backend to do:
+
+- **Max 100 qubits** on current Fresnel (140+ Orion late 2025, 250+ early 2026, 1,000 lab demo end 2025, 10,000 goal 2028).
+- **Unit-disk graph constraint**: the `C6 / R^6` interaction cannot strongly connect atoms that are far apart. Graphs must be embeddable as (approximately) unit-disk graphs.
+- **No arbitrary Hamiltonian**: the Rydberg form is fixed. You control `Omega(t)`, `delta(t)`, `phi`. This means the Laplacian `L = D - A` is not directly implementable — only the adjacency-like interaction. WeftOS's native Hamiltonian is the Laplacian; the initial quantum integration uses the adjacency form (see §5.3 of the planning doc for the three reconciliation options).
+- **Gate fidelity**: ~99% single-qubit, ~97–99% two-qubit.
+- **Coherence time**: microseconds to milliseconds.
+- **Effective repetition rate**: a few Hz once atom loading and calibration overhead is included.
+- **Max 1,000 jobs per batch**; open batches time out after minutes of inactivity; 24-hour Auth0 token expiry (handled by the backend's token cache).
+
+## Roadmap
+
+| Phase | Deliverable | Version |
+|-------|-------------|---------|
+| ✓ | `QuantumBackend` trait + shared types | 0.6.7 |
+| ✓ | `quantum_register` graph → 2D layout | 0.6.7 |
+| ✓ | Live `PasqalBackend` (auth + submit + poll + results + cancel) | 0.6.7 |
+| ✓ | T0 wiremock tests, T1–T4 live-test scaffolding | 0.6.7 |
+| ✓ | `BraketBackend` stub (interface only) | 0.6.7 |
+|   | `weave.toml` wiring + CLI command to submit | 0.7.x |
+|   | DEMOCRITUS hybrid tick integration | 0.7.x |
+|   | Real measurement feedback into `QuantumCognitiveState.psi` | 0.7.x |
+|   | Live Braket implementation | 0.7.x+ |
+|   | Laplacian-form Hamiltonian via local addressing | 0.7.x+ |
+|   | Spectral analysis via quantum phase estimation | 0.8.x+ |
+
+## Further reading
+
+- [`ECC Cognitive Substrate`](/weftos/ecc) — the graph-spectral layer this extends
+- [`EML — Self-Learning Functions`](/weftos/eml) — the learned-function layer that coexists with it
+- [`DEMOCRITUS Loop`](/weftos/democritus) — the tick loop that drives ECC processing
+- `.planning/development_notes/pasqal-integration.md` — full research document (research date 2026-04-04; ~900 lines)
+- `.planning/symposiums/ecc-quantum-infographic.png` — business-style overview infographic
+- [Pasqal Cloud Documentation](https://docs.pasqal.com/cloud/)
+- [Pulser SDK](https://github.com/pasqal-io/Pulser)
+- [Graph Algorithms with Neutral Atom Quantum Processors (arXiv:2403.11931)](https://arxiv.org/html/2403.11931v1)

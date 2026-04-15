@@ -52,6 +52,9 @@ mesh = [
     "dep:futures-util",
 ]
 ecc = ["clawft-core/vector-memory", "dep:blake3"]
+# EXPERIMENTAL (0.6.x): quantum backends — interface only, stubs return NotImplemented.
+quantum-pasqal = ["ecc", "dep:reqwest"]
+quantum-braket = ["ecc", "dep:reqwest"]
 diskann = ["ecc", "dep:ruvector-diskann"]
 onnx-embeddings = ["dep:ort", "dep:ndarray"]
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
@@ -93,6 +96,7 @@ ort = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
@@ -111,3 +115,4 @@ clawft-platform = { workspace = true }
 clawft-types = { workspace = true }
 insta = { workspace = true }
 tempfile = { workspace = true }
+wiremock = "0.6"

@@ -1,9 +1,47 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.6.6.
+description: Complete version history for WeftOS from initial development through v0.6.7.
 ---
 
 # Release Notes
+
+## v0.6.7 — Quantum Cognitive Layer (Experimental)
+
+*2026-04-15*
+
+Adds a neutral-atom quantum acceleration layer to ECC with a live Pasqal Cloud
+integration. The classical ECC path is unchanged; quantum is a compile-time
+opt-in via `quantum-pasqal`.
+
+### Highlights
+
+- **`QuantumBackend` trait** — object-safe async interface with shared vendor-neutral types (`JobHandle`, `QuantumResults`, `JobStatus`, `BackendStatus`, `EvolutionParams`, `QuantumError`). Designed for fallback chaining: try Fresnel, fall through to EMU_TN, fall through to the classical simulator.
+- **Deterministic graph → atom layout** — force-directed 2D embedding in `quantum_register::build_register`, enforcing device constraints (min 4 µm inter-atom distance, max trap extent).
+- **Live `PasqalBackend`** — end-to-end against `apis.pasqal.cloud`:
+  - Auth0 `client_credentials` with 24h token caching and 300s refresh skew
+  - Batch create / job poll / batch results / job cancel wired to real endpoints
+  - Best-effort Pulser abstract-repr JSON builder for `AnalogDevice` + global Rydberg channel
+  - `submit_raw_sequence()` escape hatch for Python-generated golden JSON
+  - `{bitstring: count}` → per-atom Rydberg probability reduction
+- **`BraketBackend` stub** — interface-only for QuEra Aquila (256 atoms) on AWS Braket. Same register code works on both vendors; live impl deferred.
+- **4-tier test strategy** — T0 local wiremock (14 tests on every CI build) → T1 EMU-FREE (free cloud emulator) → T3 EMU-TN (paid GPU emulator) → T4 Fresnel QPU. Live tiers run with `--ignored` when `PASQAL_*` env vars are set.
+- **Docs** — new [Quantum Cognitive Layer](/weftos/quantum) page covering architecture, ECC integration, 4-tier test strategy, limitations, and roadmap. Linked from the ECC page header.
+
+### What it adds to ECC
+
+| Operation | Classical | Quantum |
+|-----------|-----------|---------|
+| Coherent evolution `exp(-i dt H)` | First-order approximation | Exact unitary on Rydberg Hamiltonian |
+| Born-rule measurement | Simulated `norm_sq()` | True projective measurement |
+| Hypothesis collapse | Deterministic `observe()` | Real measurement statistics |
+| Subgraph exploration | Beam / MCTS | Quantum walk in superposition (Grover-like) |
+| Community detection | Label propagation | MIS / QUBO on neutral atoms |
+
+### Experimental status
+
+The layer is gated on `quantum-pasqal` / `quantum-braket` features, both off by
+default. Default builds are byte-identical to 0.6.6. `weave.toml` wiring and
+DEMOCRITUS tick integration land in 0.7.x.
 
 ## v0.6.6 — Sprint 17: Knowledge Graph Intelligence
 

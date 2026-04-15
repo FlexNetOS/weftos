@@ -105,6 +105,14 @@ pub mod eml_kernel;
 pub mod eml_persistence;
 #[cfg(feature = "ecc")]
 pub mod quantum_state;
+#[cfg(feature = "ecc")]
+pub mod quantum_backend;
+#[cfg(feature = "ecc")]
+pub mod quantum_register;
+#[cfg(all(feature = "ecc", feature = "quantum-pasqal"))]
+pub mod quantum_pasqal;
+#[cfg(all(feature = "ecc", feature = "quantum-braket"))]
+pub mod quantum_braket;
 
 #[cfg(feature = "sensor")]
 pub mod sensor_graph;
@@ -345,6 +353,17 @@ pub use quantum_state::{
     Complex, HypothesisSuperposition, Hypothesis, QuantumCognitiveState,
     QuantumEvidenceRanking,
 };
+#[cfg(feature = "ecc")]
+pub use quantum_backend::{
+    BackendStatus, EvolutionParams, JobHandle, JobStatus, QuantumBackend, QuantumError,
+    QuantumResults,
+};
+#[cfg(feature = "ecc")]
+pub use quantum_register::{build_register, RegisterConstraints};
+#[cfg(all(feature = "ecc", feature = "quantum-pasqal"))]
+pub use quantum_pasqal::{PasqalBackend, PasqalConfig, PasqalDevice};
+#[cfg(all(feature = "ecc", feature = "quantum-braket"))]
+pub use quantum_braket::{BraketBackend, BraketConfig, BraketDevice};
 pub use ipc::{
     ExitReason as SignalExitReason, GlobalPid, KernelIpc, KernelMessage, KernelSignal,
     MessagePayload, MessageTarget, ProcessDown as SignalProcessDown,
