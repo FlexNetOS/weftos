@@ -86,15 +86,23 @@ export class PyEmlModel {
   trainOneRound(
     samples: { x: number[]; y: number[] }[],
     rng: () => number,
-    opts?: { trials?: number; step?: number; evalSubset?: number },
+    opts?: {
+      trials?: number;
+      stepInit?: number;
+      stepFinal?: number;
+      evalSubset?: number;
+    },
   ): number {
     if (samples.length < 4) {
       this.lastMse = Infinity;
       return Infinity;
     }
-    const trials = opts?.trials ?? 400;
-    const step = opts?.step ?? 0.3;
-    const evalSubset = Math.min(opts?.evalSubset ?? 12, samples.length);
+    const totalParams = this.totalParams();
+    // Scale default trials with param count so every param gets ~8 chances.
+    const trials = opts?.trials ?? Math.max(400, 8 * totalParams);
+    const stepInit = opts?.stepInit ?? 0.5;
+    const stepFinal = opts?.stepFinal ?? 0.03;
+    const evalSubset = Math.min(opts?.evalSubset ?? 16, samples.length);
 
     const subset: { x: number[]; y: number[] }[] = [];
     for (let i = 0; i < evalSubset; i++) {
@@ -113,15 +121,17 @@ export class PyEmlModel {
       return sum / (subset.length * this.heads);
     };
 
-    const paramArrays: Float64Array[] = [this.w, this.b, this.tree];
-    const totalParams = this.totalParams();
-
     let bestMse = mseOn();
 
     for (let t = 0; t < trials; t++) {
-      // Pick a random parameter across the three arrays, uniform over total.
-      const u = Math.abs(rng());
-      let idx = Math.floor(u * totalParams) % totalParams;
+      // Anneal step size log-linearly from stepInit to stepFinal.
+      const frac = t / Math.max(1, trials - 1);
+      const step =
+        stepInit * Math.pow(stepFinal / stepInit, frac);
+
+      // Pick a uniformly random parameter across the three arrays.
+      const u = (rng() + 1) * 0.5; // map [-1,1] -> [0,1]
+      let idx = Math.min(totalParams - 1, Math.floor(u * totalParams));
       let arr: Float64Array;
       if (idx < this.w.length) {
         arr = this.w;
@@ -142,13 +152,6 @@ export class PyEmlModel {
         bestMse = candidate;
       } else {
         arr[idx] = saved;
-      }
-
-      // Tame the step geometrically as trials advance to approximate the
-      // effect of step-halving without the unbounded inner loop.
-      if (t === (trials >> 1)) {
-        /* halfway: reduce step to refine */
-        // (local scope — we just use a scaled step on next iteration)
       }
     }
 
@@ -275,12 +278,23 @@ export class ToyEmlAttention {
     opts?.onStart?.({ samples: training.length, params: this.out.totalParams() });
     await new Promise((r) => setTimeout(r, 0));
 
+    // Baseline MSE at current (random) weights — gives the user a delta
+    // reference so "converged" vs "not learning" is visible at a glance.
+    const baseline = this.out.trainOneRound(training, rng, { trials: 0 });
+    opts?.onStatus?.(`baseline MSE (untrained out_model) = ${baseline.toExponential(4)}`);
+    await new Promise((r) => setTimeout(r, 0));
+
+    const effectiveTrials =
+      trials > 0 ? trials : Math.max(400, 8 * this.out.totalParams());
+
     const curve: number[] = [];
     const t0 = performance.now();
     for (let r = 0; r < rounds; r++) {
-      opts?.onStatus?.(`round ${r + 1}/${rounds}: running ${trials} random-param trials…`);
+      opts?.onStatus?.(
+        `round ${r + 1}/${rounds}: ${effectiveTrials} annealed-step trials (0.5 → 0.03)…`,
+      );
       await new Promise((resolve) => setTimeout(resolve, 0));
-      const mse = this.out.trainOneRound(training, rng, { trials });
+      const mse = this.out.trainOneRound(training, rng, { trials: effectiveTrials });
       const elapsed = performance.now() - t0;
       curve.push(mse);
       opts?.onRound?.(r + 1, mse, elapsed);
