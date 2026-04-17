@@ -85,6 +85,9 @@ enum Commands {
     /// Topology layout, schema validation, and geometry detection.
     Topology(commands::topology_cmd::TopologyArgs),
 
+    /// Leaf device control (push audio, display, effects).
+    Leaf(commands::leaf_cmd::LeafArgs),
+
     /// Run standardized kernel performance benchmark.
     Benchmark {
         #[command(subcommand)]
@@ -135,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graphify(args) => commands::graphify_cmd::run(args).await?,
         Commands::Vault(args) => commands::vault_cmd::run(args).await?,
         Commands::Topology(args) => commands::topology_cmd::run(args).await?,
+        Commands::Leaf(args) => commands::leaf_cmd::run(args).await?,
         Commands::Benchmark { cmd } => commands::bench_cmd::run(cmd).await?,
         Commands::Update { cmd } => match cmd {
             Some(c) => commands::update_cmd::run(c).await?,

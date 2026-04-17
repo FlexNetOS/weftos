@@ -41,6 +41,7 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+weftos-leaf-types = { path = "../weftos-leaf-types", features = ["std"] }
 anyhow = { workspace = true }
 comfy-table = { workspace = true }
 chrono = { workspace = true }
