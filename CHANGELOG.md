@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.17] - 2026-04-17
+
+### Leaf Push Protocol
+
+- **weftos-leaf-types crate**: shared no_std wire schema for kernel → leaf
+  push operations. CBOR serialization. Types: LeafPush (Audio/Display/
+  Brightness/Effect), LeafServices, Subscribe, AudioDrop (Chord/Scuttle/
+  Pcm), DisplayText/Image/Clear, LayerSlot, LayerEffectKind. 11 roundtrip
+  tests.
+- **weaver leaf push**: CLI command to push audio/display/control to leaf
+  devices via kernel daemon IPC. Publishes CBOR payload (base64 wrapped)
+  to mesh.leaf.<pubkey>.push topic. Supports text, chord, scuttle, clear,
+  brightness, effect subcommands with --dry-run and named colors.
+
 ## [0.6.16] - 2026-04-17
 
 ### Added

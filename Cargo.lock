@@ -1284,6 +1284,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "weftos-leaf-types",
  "weftos-rvf-wire",
 ]
 
