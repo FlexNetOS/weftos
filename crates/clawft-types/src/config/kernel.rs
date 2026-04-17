@@ -219,6 +219,17 @@ pub struct MeshConfig {
     /// Seed peers to connect to on startup.
     #[serde(default)]
     pub seed_peers: Vec<String>,
+
+    /// Enable Noise Protocol encryption on mesh connections.
+    /// When true, all peer connections use Noise XX handshake
+    /// (Noise_XX_25519_ChaChaPoly_SHA256). Default: false.
+    #[serde(default)]
+    pub noise: bool,
+
+    /// Path to Ed25519 private key for Noise handshake.
+    /// If absent, a ephemeral key is generated at boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_key_path: Option<String>,
 }
 
 fn default_mesh_transport() -> String {
@@ -237,6 +248,8 @@ impl Default for MeshConfig {
             listen_addr: default_mesh_listen_addr(),
             discovery: false,
             seed_peers: vec![],
+            noise: false,
+            noise_key_path: None,
         }
     }
 }

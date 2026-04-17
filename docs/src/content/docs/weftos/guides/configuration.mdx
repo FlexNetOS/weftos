@@ -316,15 +316,23 @@ into the A2A router for cross-node message delivery.
 | `listen_addr` | string | `"0.0.0.0:9470"` | Address and port to bind the mesh listener |
 | `discovery` | bool | `false` | Enable Kademlia DHT peer discovery |
 | `seed_peers` | string[] | `[]` | Peer addresses to connect to on startup |
+| `noise` | bool | `false` | Enable Noise Protocol encryption (XX_25519_ChaChaPoly_SHA256) |
+| `noise_key_path` | string | (none) | Path to Ed25519 private key file for Noise. Ephemeral key generated if absent. |
 
 ```toml
 [kernel.mesh]
 enabled = true
 transport = "tcp"
 listen_addr = "0.0.0.0:9470"
+noise = true
 discovery = true
 seed_peers = ["192.168.1.10:9470", "192.168.1.11:9470"]
 ```
+
+When `noise = true`, all peer connections perform a Noise XX handshake
+before any data flows. Both the listener (responder) and seed peer
+connections (initiator) use the same keypair. Traffic is encrypted
+with ChaCha20-Poly1305 AEAD.
 
 The mesh listener starts in boot phase 5d (after the A2A router, before
 cluster service) so that cluster coordination can use mesh transport for

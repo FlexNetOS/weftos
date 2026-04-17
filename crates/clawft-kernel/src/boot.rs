@@ -289,6 +289,36 @@ impl<P: Platform> Kernel<P> {
                 let transport_name_for_seeds = mesh_config.transport.clone();
                 let transport_display = mesh_config.transport.clone();
                 let listen_display = mesh_config.listen_addr.clone();
+                let noise_enabled = mesh_config.noise;
+
+                // Generate or load Noise keypair.
+                let noise_config = if noise_enabled {
+                    let private_key: [u8; 32] = if let Some(ref key_path) = mesh_config.noise_key_path {
+                        let key_bytes = std::fs::read(key_path).unwrap_or_else(|_| {
+                            tracing::warn!("noise key file not found, generating ephemeral key");
+                            let mut key = [0u8; 32];
+                            use rand::RngCore;
+                            rand::thread_rng().fill_bytes(&mut key);
+                            key.to_vec()
+                        });
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&key_bytes[..32.min(key_bytes.len())]);
+                        arr
+                    } else {
+                        let mut key = [0u8; 32];
+                        use rand::RngCore;
+                        rand::thread_rng().fill_bytes(&mut key);
+                        key
+                    };
+                    Some(Arc::new(crate::mesh_noise::NoiseConfig {
+                        pattern: crate::mesh_noise::NoisePattern::XX,
+                        local_private_key: private_key,
+                        remote_static_key: None,
+                    }))
+                } else {
+                    None
+                };
+                let noise_for_seeds = noise_config.clone();
 
                 // Spawn the mesh listener on the configured transport.
                 let listen_addr = mesh_config.listen_addr.clone();
@@ -313,17 +343,45 @@ impl<P: Platform> Kernel<P> {
                             tracing::info!(
                                 transport = transport.name(),
                                 addr = %bind,
+                                noise = noise_config.is_some(),
                                 "mesh listener started"
                             );
 
                             loop {
                                 match listener.accept().await {
-                                    Ok((mut stream, peer_addr)) => {
+                                    Ok((stream, peer_addr)) => {
                                         let rt2 = Arc::clone(&rt);
+                                        let nc = noise_config.clone();
                                         tokio::spawn(async move {
-                                            tracing::info!(peer = %peer_addr, "mesh peer connected");
+                                            tracing::info!(
+                                                peer = %peer_addr,
+                                                noise = nc.is_some(),
+                                                "mesh peer connected"
+                                            );
+
+                                            // Optionally wrap in Noise encryption.
+                                            let mut channel = match &nc {
+                                                Some(cfg) => {
+                                                    match crate::mesh_noise::NoiseChannel::respond(stream, cfg).await {
+                                                        Ok(ch) => {
+                                                            tracing::info!(peer = %peer_addr, "noise handshake complete");
+                                                            Box::new(ch) as Box<dyn crate::mesh_noise::EncryptedChannel>
+                                                        }
+                                                        Err(e) => {
+                                                            tracing::warn!(peer = %peer_addr, error = %e, "noise handshake failed, dropping");
+                                                            return;
+                                                        }
+                                                    }
+                                                }
+                                                None => {
+                                                    Box::new(crate::mesh_noise::PassthroughChannel::new(stream))
+                                                        as Box<dyn crate::mesh_noise::EncryptedChannel>
+                                                }
+                                            };
+
+                                            // Read loop: decrypt and inject into mesh runtime.
                                             loop {
-                                                match stream.recv().await {
+                                                match channel.recv_encrypted().await {
                                                     Ok(data) => {
                                                         if let Err(e) = rt2.handle_incoming(&data).await {
                                                             tracing::debug!(error = %e, "mesh message handling error");
@@ -355,6 +413,7 @@ impl<P: Platform> Kernel<P> {
                     let addr = peer_addr.clone();
                     let rt = Arc::clone(&runtime);
                     let transport_name = transport_name_for_seeds.clone();
+                    let nc = noise_for_seeds.clone();
                     tokio::spawn(async move {
                         use crate::mesh::MeshTransport;
 
@@ -365,17 +424,32 @@ impl<P: Platform> Kernel<P> {
 
                         match transport.connect(&addr).await {
                             Ok(stream) => {
+                                // Optionally wrap in Noise encryption (as initiator).
+                                let mut channel: Box<dyn crate::mesh_noise::EncryptedChannel> = match &nc {
+                                    Some(cfg) => {
+                                        match crate::mesh_noise::NoiseChannel::initiate(stream, cfg).await {
+                                            Ok(ch) => {
+                                                tracing::info!(peer = %addr, "noise handshake complete (initiator)");
+                                                Box::new(ch)
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(peer = %addr, error = %e, "noise handshake failed");
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    None => Box::new(crate::mesh_noise::PassthroughChannel::new(stream)),
+                                };
+
                                 let (tx, mut rx) = tokio::sync::mpsc::channel(256);
                                 let peer_id = addr.clone();
                                 rt.add_peer(peer_id.clone(), tx);
-                                tracing::info!(peer = %addr, "connected to seed peer");
+                                tracing::info!(peer = %addr, noise = nc.is_some(), "connected to seed peer");
 
-                                // Drain outbound queue to stream.
-                                let mut stream = stream;
+                                // Drain outbound queue through encrypted channel.
                                 tokio::spawn(async move {
-                                    use crate::mesh::MeshStream;
                                     while let Some(data) = rx.recv().await {
-                                        if stream.send(&data).await.is_err() {
+                                        if channel.send_encrypted(&data).await.is_err() {
                                             break;
                                         }
                                     }
