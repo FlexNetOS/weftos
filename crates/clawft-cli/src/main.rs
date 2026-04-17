@@ -96,6 +96,9 @@ enum Commands {
     /// Initialize clawft config and workspace.
     Onboard(commands::onboard::OnboardArgs),
 
+    /// Code analysis: extract graphs, detect topology, enrich docs.
+    Analyze(commands::analyze_cmd::AnalyzeArgs),
+
     /// Run SOP assessment workflow (analyze codebase, report findings).
     Assess(commands::assess_cmd::AssessArgs),
 
@@ -467,6 +470,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Agents(args) => commands::agents_cmd::run(args).await?,
         Commands::Workspace(args) => commands::workspace_cmd::run(args).await?,
         Commands::Onboard(args) => commands::onboard::run(args).await?,
+        Commands::Analyze(args) => commands::analyze_cmd::run(args).await?,
         Commands::Assess(args) => commands::assess_cmd::run(args).await?,
         Commands::Plugins(args) => commands::plugins_cmd::run(args).await?,
         Commands::Security(args) => commands::security_cmd::run(args).await?,

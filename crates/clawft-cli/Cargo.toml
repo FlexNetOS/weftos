@@ -43,6 +43,7 @@ clawft-llm = { workspace = true }
 clawft-services = { workspace = true, optional = true }
 clawft-plugin = { workspace = true, optional = true }
 clawft-security = { workspace = true }
+which = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
