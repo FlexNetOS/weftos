@@ -91,6 +91,11 @@ pub enum MessagePayload {
     },
     /// System control signal.
     Signal(KernelSignal),
+    /// Raw binary payload.
+    ///
+    /// For mesh transport, sensor data, file transfer, or any opaque
+    /// byte stream that doesn't need JSON/text interpretation.
+    Binary(Vec<u8>),
     /// RVF-typed payload with segment type hint.
     ///
     /// Agents can exchange RVF-typed messages. The segment type tells
@@ -113,6 +118,7 @@ impl MessagePayload {
             MessagePayload::ToolCall { .. } => "tool_call",
             MessagePayload::ToolResult { .. } => "tool_result",
             MessagePayload::Signal(_) => "signal",
+            MessagePayload::Binary(_) => "binary",
             MessagePayload::Rvf { .. } => "rvf",
         }
     }
@@ -711,6 +717,23 @@ mod tests {
             MessagePayload::Signal(KernelSignal::Ping).type_name(),
             "signal"
         );
+        assert_eq!(
+            MessagePayload::Binary(vec![0xDE, 0xAD]).type_name(),
+            "binary"
+        );
+    }
+
+    #[test]
+    fn binary_payload_serde_roundtrip() {
+        let payload = MessagePayload::Binary(vec![0x01, 0x02, 0x03, 0xFF]);
+        let json = serde_json::to_string(&payload).unwrap();
+        let restored: MessagePayload = serde_json::from_str(&json).unwrap();
+        match restored {
+            MessagePayload::Binary(data) => {
+                assert_eq!(data, vec![0x01, 0x02, 0x03, 0xFF]);
+            }
+            other => panic!("expected Binary, got {:?}", other),
+        }
     }
 
     #[test]
