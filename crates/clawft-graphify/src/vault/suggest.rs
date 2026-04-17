@@ -225,8 +225,9 @@ mod tests {
         let suggestions = suggest_links(&nodes, &SuggestConfig::default());
         // a-b should score higher than a-c or b-c.
         assert!(!suggestions.is_empty());
-        assert_eq!(suggestions[0].source, "a.md");
-        assert_eq!(suggestions[0].target, "b.md");
-        assert!(suggestions[0].shared_tags.contains(&"rust".to_string()));
+        let top = &suggestions[0];
+        let pair = [top.source.as_str(), top.target.as_str()];
+        assert!(pair.contains(&"a.md") && pair.contains(&"b.md"));
+        assert!(top.shared_tags.contains(&"rust".to_string()));
     }
 }

@@ -1,0 +1,274 @@
+name: software
+label: "Software Architecture"
+version: "1.0.0"
+domain: code
+iri: "https://weftos.weavelogic.ai/schema/software/1.0"
+
+nodes:
+  package:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Package"
+    geometry: tree
+    contains: [module, file, config]
+    style:
+      shape: rect
+      color: "#6366f1"
+      icon: folder
+      min_radius: 16
+      max_radius: 64
+    size_field: line_count
+    display_name: "Package"
+
+  module:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Module"
+    geometry: tree
+    contains: [class, function, interface, struct_, enum_, constant, import]
+    style:
+      shape: rect
+      color: "#8b5cf6"
+      icon: file-code
+      min_radius: 12
+      max_radius: 48
+    size_field: line_count
+    display_name: "Module"
+
+  class:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Class"
+    geometry: force
+    contains: [function]
+    style:
+      shape: hexagon
+      color: "#3b82f6"
+      icon: box
+      min_radius: 12
+      max_radius: 48
+    size_field: method_count
+    display_name: "Class"
+
+  struct_:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Struct"
+    geometry: force
+    contains: [function]
+    style:
+      shape: hexagon
+      color: "#0ea5e9"
+      icon: box
+    display_name: "Struct"
+
+  interface:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Interface"
+    geometry: force
+    contains: [function]
+    style:
+      shape: diamond
+      color: "#06b6d4"
+      icon: shield
+    display_name: "Interface"
+
+  enum_:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Enum"
+    geometry: grid
+    style:
+      shape: diamond
+      color: "#14b8a6"
+      icon: list
+    display_name: "Enum"
+
+  function:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Function"
+    geometry: force
+    style:
+      shape: circle
+      color: "#22c55e"
+      icon: function
+      min_radius: 6
+      max_radius: 32
+    size_field: complexity
+    display_name: "Function"
+
+  import:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Import"
+    geometry: layered
+    style:
+      shape: pill
+      color: "#a3a3a3"
+      icon: arrow-down
+      min_radius: 4
+      max_radius: 16
+    display_name: "Import"
+
+  constant:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Constant"
+    geometry: grid
+    style:
+      shape: rect
+      color: "#f59e0b"
+      icon: hash
+      min_radius: 4
+      max_radius: 16
+    display_name: "Constant"
+
+  config:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Config"
+    geometry: force
+    style:
+      shape: rect
+      color: "#f97316"
+      icon: settings
+    display_name: "Config"
+
+  service:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Service"
+    same_as:
+      - "http://schema.org/WebAPI"
+    geometry: force
+    contains: [endpoint, config]
+    style:
+      shape: hexagon
+      color: "#ec4899"
+      icon: server
+      min_radius: 16
+      max_radius: 56
+    size_field: endpoint_count
+    display_name: "Service"
+
+  endpoint:
+    iri: "https://weftos.weavelogic.ai/ontology/code#Endpoint"
+    geometry: grid
+    style:
+      shape: pill
+      color: "#f472b6"
+      icon: globe
+    display_name: "Endpoint"
+
+  file:
+    iri: "https://weftos.weavelogic.ai/ontology/code#File"
+    geometry: tree
+    contains: [module, class, function]
+    style:
+      shape: rect
+      color: "#78716c"
+      icon: file
+    size_field: line_count
+    display_name: "File"
+
+  "*":
+    geometry: force
+    style:
+      shape: circle
+      color: "#a3a3a3"
+    display_name: "Entity"
+
+edges:
+  - type: contains
+    iri: "https://weftos.weavelogic.ai/ontology/code#contains"
+    from: "*"
+    to: "*"
+    cardinality: "1:N"
+    style:
+      stroke: "#d4d4d8"
+      width: 1.0
+      dash: dashed
+      arrow: true
+
+  - type: calls
+    iri: "https://weftos.weavelogic.ai/ontology/code#calls"
+    from: function
+    to: function
+    cardinality: "N:M"
+    style:
+      stroke: "#22c55e"
+      width: 1.5
+      arrow: true
+    animated: true
+
+  - type: imports
+    iri: "https://weftos.weavelogic.ai/ontology/code#imports"
+    from: module
+    to: module
+    cardinality: "N:M"
+    style:
+      stroke: "#8b5cf6"
+      arrow: true
+
+  - type: depends_on
+    iri: "https://weftos.weavelogic.ai/ontology/code#dependsOn"
+    from: "*"
+    to: "*"
+    cardinality: "N:M"
+    style:
+      stroke: "#ef4444"
+      width: 1.5
+      arrow: true
+    animated: true
+
+  - type: implements
+    iri: "https://weftos.weavelogic.ai/ontology/code#implements"
+    from: class
+    to: interface
+    cardinality: "N:M"
+    style:
+      stroke: "#06b6d4"
+      dash: dashed
+      arrow: true
+
+  - type: extends
+    iri: "https://weftos.weavelogic.ai/ontology/code#extends"
+    from: class
+    to: class
+    cardinality: "N:1"
+    style:
+      stroke: "#3b82f6"
+      width: 1.5
+      arrow: true
+
+  - type: method_of
+    iri: "https://weftos.weavelogic.ai/ontology/code#methodOf"
+    from: function
+    to: class
+    cardinality: "N:1"
+    style:
+      stroke: "#60a5fa"
+      width: 0.8
+      arrow: true
+
+  - type: configures
+    iri: "https://weftos.weavelogic.ai/ontology/code#configures"
+    from: config
+    to: service
+    cardinality: "N:M"
+    style:
+      stroke: "#f97316"
+      dash: dotted
+      arrow: true
+
+modes:
+  structure:
+    root_geometry: layered
+
+  diff:
+    sources:
+      before: "git:HEAD~1"
+      after: "git:HEAD"
+
+  heatmap:
+    metrics:
+      - field: complexity
+        label: "Cyclomatic Complexity"
+        palette: inferno
+        range: [1, 50]
+      - field: line_count
+        label: "Lines of Code"
+        palette: viridis
+      - field: degree
+        label: "Coupling (degree)"
+        palette: rdylgn
+
+  flow:
+    edge_types: [calls, depends_on]
+    speed: 150.0
+    color: "#60a5fa"
+
+constraints:
+  max_visible_nodes: 2000
+  max_visible_edges: 5000
+  auto_cluster: true

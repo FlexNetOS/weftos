@@ -1,0 +1,292 @@
+name: investigation
+label: "Forensic Investigation"
+version: "1.0.0"
+domain: forensic
+iri: "https://weftos.weavelogic.ai/schema/investigation/1.0"
+
+nodes:
+  person:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Person"
+    same_as:
+      - "http://xmlns.com/foaf/0.1/Person"
+      - "http://schema.org/Person"
+    geometry: force
+    style:
+      shape: circle
+      color: "#ef4444"
+      icon: user
+      min_radius: 12
+      max_radius: 56
+    size_field: degree
+    display_name: "Person"
+
+  event:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Event"
+    same_as:
+      - "http://schema.org/Event"
+    geometry: timeline
+    style:
+      shape: diamond
+      color: "#f59e0b"
+      icon: calendar
+      min_radius: 10
+      max_radius: 40
+    time_field: timestamp
+    display_name: "Event"
+
+  evidence:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Evidence"
+    geometry: force
+    style:
+      shape: hexagon
+      color: "#3b82f6"
+      icon: search
+      min_radius: 10
+      max_radius: 48
+    size_field: confidence_score
+    display_name: "Evidence"
+
+  location:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Location"
+    same_as:
+      - "http://schema.org/Place"
+    geometry: geo
+    style:
+      shape: diamond
+      color: "#22c55e"
+      icon: map-pin
+      min_radius: 12
+      max_radius: 40
+    lat_field: latitude
+    lng_field: longitude
+    display_name: "Location"
+
+  timeline:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Timeline"
+    geometry: timeline
+    contains: [event]
+    style:
+      shape: rect
+      color: "#f97316"
+      icon: clock
+      min_radius: 16
+      max_radius: 48
+    time_field: start_date
+    display_name: "Timeline"
+
+  document:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Document"
+    same_as:
+      - "http://schema.org/DigitalDocument"
+    geometry: grid
+    style:
+      shape: rect
+      color: "#78716c"
+      icon: file-text
+    display_name: "Document"
+
+  hypothesis:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Hypothesis"
+    geometry: radial
+    contains: [evidence, person, event]
+    style:
+      shape: hexagon
+      color: "#a855f7"
+      icon: lightbulb
+      min_radius: 16
+      max_radius: 56
+    size_field: confidence_score
+    display_name: "Hypothesis"
+
+  organization:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Organization"
+    same_as:
+      - "http://schema.org/Organization"
+    geometry: tree
+    contains: [person]
+    style:
+      shape: rect
+      color: "#6366f1"
+      icon: building
+      min_radius: 14
+      max_radius: 48
+    display_name: "Organization"
+
+  physical_object:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#PhysicalObject"
+    geometry: force
+    style:
+      shape: hexagon
+      color: "#0ea5e9"
+      icon: package
+    display_name: "Physical Object"
+
+  digital_artifact:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#DigitalArtifact"
+    geometry: force
+    style:
+      shape: rect
+      color: "#14b8a6"
+      icon: hard-drive
+    display_name: "Digital Artifact"
+
+  financial_record:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#FinancialRecord"
+    geometry: timeline
+    style:
+      shape: rect
+      color: "#84cc16"
+      icon: dollar-sign
+    time_field: transaction_date
+    display_name: "Financial Record"
+
+  communication:
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#Communication"
+    geometry: stream
+    style:
+      shape: pill
+      color: "#ec4899"
+      icon: message-circle
+      min_radius: 6
+      max_radius: 28
+    time_field: timestamp
+    display_name: "Communication"
+
+  "*":
+    geometry: force
+    style:
+      shape: circle
+      color: "#d4d4d8"
+    display_name: "Entity"
+
+edges:
+  - type: witnessed_by
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#witnessedBy"
+    from: event
+    to: person
+    cardinality: "N:M"
+    style:
+      stroke: "#ef4444"
+      width: 1.5
+      arrow: true
+
+  - type: found_at
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#foundAt"
+    from: evidence
+    to: location
+    cardinality: "N:1"
+    style:
+      stroke: "#22c55e"
+      width: 1.5
+      arrow: true
+
+  - type: contradicts
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#contradicts"
+    from: "*"
+    to: "*"
+    cardinality: "N:M"
+    style:
+      stroke: "#ef4444"
+      width: 2.0
+      dash: dashed
+      arrow: false
+    animated: true
+
+  - type: corroborates
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#corroborates"
+    from: "*"
+    to: "*"
+    cardinality: "N:M"
+    style:
+      stroke: "#22c55e"
+      width: 2.0
+      arrow: false
+    animated: true
+
+  - type: precedes
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#precedes"
+    from: event
+    to: event
+    cardinality: "N:M"
+    style:
+      stroke: "#f59e0b"
+      width: 1.5
+      arrow: true
+    animated: true
+
+  - type: owned_by
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#ownedBy"
+    from: "*"
+    to: person
+    cardinality: "N:1"
+    style:
+      stroke: "#a855f7"
+      arrow: true
+
+  - type: contacted_by
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#contactedBy"
+    from: person
+    to: person
+    cardinality: "N:M"
+    style:
+      stroke: "#ec4899"
+      arrow: true
+
+  - type: located_at
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#locatedAt"
+    from: "*"
+    to: location
+    cardinality: "N:1"
+    style:
+      stroke: "#22c55e"
+      width: 0.8
+      dash: dotted
+      arrow: true
+
+  - type: documented_in
+    iri: "https://weftos.weavelogic.ai/ontology/forensic#documentedIn"
+    from: "*"
+    to: document
+    cardinality: "N:M"
+    style:
+      stroke: "#78716c"
+      width: 0.8
+      dash: dotted
+      arrow: true
+
+modes:
+  structure:
+    root_geometry: force
+
+  diff:
+    sources:
+      before: "theory.json"
+      after: "evidence.json"
+
+  heatmap:
+    metrics:
+      - field: confidence_score
+        label: "Evidence Confidence"
+        palette: rdylgn
+        range: [0.0, 1.0]
+      - field: degree
+        label: "Connection Density"
+        palette: viridis
+      - field: gap_count
+        label: "Structural Gaps"
+        palette: inferno
+
+  flow:
+    edge_types: [precedes, contradicts, corroborates]
+    speed: 80.0
+    color: "#f59e0b"
+
+  timeline:
+    node_types: [event, communication, financial_record]
+    lane_field: category
+
+constraints:
+  max_visible_nodes: 1500
+  max_visible_edges: 4000
+  min_confidence: 0.2
+  auto_cluster: true
