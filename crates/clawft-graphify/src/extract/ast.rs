@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::entity::{EntityId, EntityType};
-use crate::model::{Entity, ExtractionResult, Relationship};
-use crate::relationship::{Confidence, RelationType};
+use crate::model::{Entity, ExtractionResult};
+use crate::relationship::{Confidence, RelationType, Relationship};
 use crate::GraphifyError;
 
 use super::lang::LanguageId;
@@ -131,45 +131,66 @@ pub struct RawExtractionResult {
 impl RawExtractionResult {
     /// Convert to typed ExtractionResult.
     pub fn into_extraction_result(self, path: &Path) -> ExtractionResult {
+        use crate::entity::FileType;
+
         let entities: Vec<Entity> = self
             .nodes
             .into_iter()
-            .map(|n| Entity {
-                id: EntityId::from_legacy_string(&n.id),
-                entity_type: EntityType::Concept, // simplified; callers can refine
-                label: n.label,
-                source_file: n.source_file,
-                source_location: n.source_location,
-                file_type: n.file_type,
-                metadata: HashMap::new(),
-                legacy_id: Some(n.id),
-                iri: None,
+            .map(|n| {
+                let file_type = match n.file_type.as_str() {
+                    "code" => FileType::Code,
+                    "document" => FileType::Document,
+                    "config" => FileType::Config,
+                    _ => FileType::Unknown,
+                };
+                Entity {
+                    id: EntityId::from_legacy_string(&n.id),
+                    entity_type: EntityType::Concept,
+                    label: n.label,
+                    iri: None,
+                    source_file: Some(n.source_file),
+                    source_location: Some(n.source_location),
+                    file_type,
+                    metadata: serde_json::json!({}),
+                    legacy_id: Some(n.id),
+                }
             })
             .collect();
 
         let relationships: Vec<Relationship> = self
             .edges
             .into_iter()
-            .map(|e| Relationship {
-                source: EntityId::from_legacy_string(&e.source),
-                target: EntityId::from_legacy_string(&e.target),
-                relation_type: RelationType::from_str_lossy(&e.relation),
-                confidence: match e.confidence.as_str() {
-                    "EXTRACTED" => Confidence::Extracted,
-                    "INFERRED" => Confidence::Inferred,
-                    _ => Confidence::Ambiguous,
-                },
-                weight: e.weight,
-                source_file: e.source_file,
-                source_location: e.source_location,
-                metadata: HashMap::new(),
-                legacy_source: Some(e.source),
-                legacy_target: Some(e.target),
+            .map(|e| {
+                let relation_type = match e.relation.to_lowercase().as_str() {
+                    "contains" => RelationType::Contains,
+                    "calls" => RelationType::Calls,
+                    "imports" => RelationType::Imports,
+                    "extends" => RelationType::Extends,
+                    "implements" => RelationType::Implements,
+                    "depends_on" => RelationType::DependsOn,
+                    "method_of" => RelationType::MethodOf,
+                    "references" | "uses" => RelationType::RelatedTo,
+                    other => RelationType::Custom(other.to_string()),
+                };
+                Relationship {
+                    source: EntityId::from_legacy_string(&e.source),
+                    target: EntityId::from_legacy_string(&e.target),
+                    relation_type,
+                    confidence: match e.confidence.as_str() {
+                        "EXTRACTED" => Confidence::Extracted,
+                        "INFERRED" => Confidence::Inferred,
+                        _ => Confidence::Ambiguous,
+                    },
+                    weight: e.weight as f32,
+                    source_file: Some(e.source_file),
+                    source_location: Some(e.source_location),
+                    metadata: serde_json::json!({}),
+                }
             })
             .collect();
 
         ExtractionResult {
-            source_file: path.to_path_buf(),
+            source_file: path.to_string_lossy().to_string(),
             entities,
             relationships,
             hyperedges: Vec::new(),

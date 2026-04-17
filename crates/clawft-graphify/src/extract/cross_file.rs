@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::entity::EntityId;
-use crate::model::{ExtractionResult, Relationship};
-use crate::relationship::{Confidence, RelationType};
+use crate::model::ExtractionResult;
+use crate::relationship::{Confidence, RelationType, Relationship};
 
 use super::ast::make_id;
 
@@ -35,11 +35,11 @@ pub fn resolve_cross_file_imports(
 
     for result in per_file {
         for entity in &result.entities {
-            let src = &entity.source_file;
-            if src.is_empty() {
-                continue;
-            }
-            let stem = Path::new(src)
+            let src = match &entity.source_file {
+                Some(s) if !s.is_empty() => s,
+                _ => continue,
+            };
+            let stem = Path::new(src.as_str())
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
@@ -88,7 +88,7 @@ pub fn resolve_cross_file_imports(
             .entities
             .iter()
             .filter(|e| {
-                e.source_file == str_path
+                e.source_file.as_deref() == Some(str_path.as_str())
                     && !e.label.ends_with(')')
                     && !e.label.ends_with(".py")
                     && e.legacy_id.as_deref() != Some(&file_nid)
@@ -106,36 +106,27 @@ pub fn resolve_cross_file_imports(
                 continue;
             }
 
-            // The target legacy_id is the module stem
-            let target_legacy = match &rel.legacy_target {
-                Some(t) => t.clone(),
-                None => continue,
-            };
+            // The target is identified by the relationship target EntityId.
+            let target_hex = rel.target.to_hex();
 
-            // Check if the target stem has known entities
-            // The target_legacy is a make_id'd module name; try to find matching stem
+            // Check if the target stem has known entities.
             for (target_stem, entities) in &stem_to_entities {
                 let target_stem_id = make_id(&[target_stem]);
-                if target_stem_id != target_legacy {
+                if target_stem_id != target_hex && !target_hex.starts_with(&target_stem_id) {
                     continue;
                 }
 
-                // For each entity in the target module, create uses edges
-                // from each local class to the imported entity
-                for (entity_label, entity_legacy_id) in entities {
-                    let _ = entity_label;
+                for (_entity_label, entity_legacy_id) in entities {
                     for local_class_nid in &local_classes {
                         new_edges.push(Relationship {
                             source: EntityId::from_legacy_string(local_class_nid),
                             target: EntityId::from_legacy_string(entity_legacy_id),
-                            relation_type: RelationType::Uses,
+                            relation_type: RelationType::RelatedTo,
                             confidence: Confidence::Inferred,
                             weight: 0.8,
-                            source_file: str_path.clone(),
+                            source_file: Some(str_path.clone()),
                             source_location: rel.source_location.clone(),
-                            metadata: HashMap::new(),
-                            legacy_source: Some(local_class_nid.clone()),
-                            legacy_target: Some(entity_legacy_id.clone()),
+                            metadata: serde_json::json!({}),
                         });
                     }
                 }

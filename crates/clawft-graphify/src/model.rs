@@ -69,6 +69,21 @@ pub struct ExtractionResult {
     pub errors: Vec<String>,
 }
 
+impl ExtractionResult {
+    /// Create an empty extraction result for a source file.
+    pub fn empty(source_file: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            source_file: source_file.as_ref().to_string_lossy().to_string(),
+            entities: Vec::new(),
+            relationships: Vec::new(),
+            hyperedges: Vec::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            errors: Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ExtractionStats
 // ---------------------------------------------------------------------------

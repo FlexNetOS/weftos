@@ -480,7 +480,7 @@ edges: []
         let slice = children_slice(&kg, &schema, &p.id, &crumbs, 800.0, 600.0);
         // Should have auth and db modules, not the function.
         assert_eq!(slice.graph.nodes.len(), 2);
-        assert_eq!(slice.depth, 1);
+        assert_eq!(slice.depth, 2); // breadcrumbs(1) + 1
         assert_eq!(slice.breadcrumbs.len(), 1);
     }
 }
