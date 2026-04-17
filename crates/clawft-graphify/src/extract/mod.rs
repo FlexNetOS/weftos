@@ -14,3 +14,5 @@ pub mod cross_file;
 
 #[cfg(feature = "ast-extract")]
 pub mod lang;
+
+pub mod treecalc;
