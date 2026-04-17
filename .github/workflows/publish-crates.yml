@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -15,6 +15,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -25,9 +27,16 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
+            ~/.cargo/bin/
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-publish-
+
+      - name: Install cargo-workspaces
+        run: |
+          if ! command -v cargo-workspaces &> /dev/null; then
+            cargo install cargo-workspaces
+          fi
 
       - name: Verify tag matches workspace version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -40,145 +49,27 @@ jobs:
           fi
           echo "Publishing version ${VERSION}"
 
-      - name: Dry-run publish (all crates)
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          # Dry-run all publishable crates.
-          for crate in eml-core clawft-types clawft-rpc exo-resource-tree \
-            clawft-plugin clawft-platform clawft-llm clawft-core \
-            clawft-services clawft-plugin-treesitter clawft-tools \
-            clawft-kernel weftos; do
-            echo "--- Dry-run: $crate ---"
-            cargo publish -p "$crate" --dry-run --allow-dirty 2>&1 || true
-          done
-
-      - name: Publish crates (dependency order)
+      - name: Publish crates (cargo-workspaces)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
           set -euo pipefail
 
-          # Publishable crates in dependency-topological order:
-          #   Tier 0 (no internal deps): eml-core, clawft-types, clawft-rpc,
-          #          exo-resource-tree, clawft-plugin
-          #   Tier 1 (depends on types/eml-core): clawft-platform, clawft-llm
-          #   Tier 2 (depends on tier 0+1): clawft-core, clawft-services, clawft-plugin-treesitter
-          #   Tier 3 (depends on tier 0-2): clawft-tools
-          #   Tier 4 (depends on core+types+treesitter): clawft-kernel
-          #   Tier 5 (depends on kernel+types): weftos
+          # cargo-workspaces handles:
+          # - Dependency-topological ordering
+          # - Skipping publish=false crates
+          # - Skipping already-published versions
+          # - Retrying on transient failures
+          # - Index propagation waits
           #
-          # Skipped (publish = false):
-          #   clawft-channels, clawft-cli, clawft-wasm, clawft-weave,
-          #   clawft-security, clawft-graphify, clawft-edge-bench,
-          #   clawft-plugin-{git,cargo,oauth2,browser,calendar,containers,npm,ci}
+          # Single command replaces the entire tiered publish pipeline.
 
-          CRATES=(
-            eml-core
-            clawft-types
-            clawft-rpc
-            exo-resource-tree
-            clawft-plugin
-            clawft-platform
-            clawft-llm
-            clawft-core
-            clawft-services
-            clawft-plugin-treesitter
-            clawft-tools
-            clawft-kernel
-            weftos
-          )
-
-          publish_crate() {
-            local crate="$1"
-            local retries=3
-            local delay=10
-
-            for attempt in $(seq 1 $retries); do
-              echo "::group::Publishing $crate (attempt $attempt/$retries)"
-              local output
-              output=$(cargo publish -p "$crate" --allow-dirty 2>&1) && {
-                echo "$output"
-                echo "::endgroup::"
-                echo "Successfully published $crate"
-                return 0
-              }
-              echo "$output"
-              echo "::endgroup::"
-
-              # Skip if version already exists on crates.io
-              if echo "$output" | grep -qE "already (uploaded|exists)"; then
-                echo "::notice::$crate version already published, skipping"
-                return 0
-              fi
-
-              if [ "$attempt" -lt "$retries" ]; then
-                echo "Retrying in ${delay}s..."
-                sleep "$delay"
-                delay=$((delay * 2))
-              fi
-            done
-
-            echo "::error::Failed to publish $crate after $retries attempts"
-            return 1
-          }
-
-          # Publish in tiered parallel: crates within a tier have no
-          # inter-dependencies and can publish simultaneously. Only wait
-          # between tiers for index propagation.
-
-          publish_tier() {
-            local tier_name="$1"
-            shift
-            local crates=("$@")
-            local pids=()
-
-            echo "::group::Tier: $tier_name (${#crates[@]} crates)"
-            for crate in "${crates[@]}"; do
-              publish_crate "$crate" &
-              pids+=($!)
-            done
-
-            local failed=0
-            for pid in "${pids[@]}"; do
-              if ! wait "$pid"; then
-                failed=1
-              fi
-            done
-            echo "::endgroup::"
-
-            if [ "$failed" -ne 0 ]; then
-              echo "::error::Tier $tier_name had failures"
-              return 1
-            fi
-          }
-
-          wait_for_index() {
-            echo "Waiting 15s for crates.io index propagation..."
-            sleep 15
-          }
-
-          publish_tier "0 (no internal deps)" \
-            eml-core clawft-types clawft-rpc exo-resource-tree clawft-plugin
-          wait_for_index
-
-          publish_tier "1 (depends on types/eml-core)" \
-            clawft-platform clawft-llm
-          wait_for_index
-
-          publish_tier "2 (depends on tier 0+1)" \
-            clawft-core clawft-services clawft-plugin-treesitter
-          wait_for_index
-
-          publish_tier "3 (depends on tier 0-2)" \
-            clawft-tools
-          wait_for_index
-
-          publish_tier "4 (depends on core+treesitter)" \
-            clawft-kernel
-          wait_for_index
-
-          publish_tier "5 (depends on kernel)" \
-            weftos
-
-          echo "All crates published successfully!"
+          cargo workspaces publish \
+            --from-git \
+            --allow-dirty \
+            --no-git-commit \
+            --no-git-push \
+            --no-git-tag \
+            --yes \
+            --token "$CARGO_REGISTRY_TOKEN" \
+            skip
