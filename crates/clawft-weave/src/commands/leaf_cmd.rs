@@ -121,20 +121,44 @@ pub async fn run(args: LeafArgs) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // TODO: connect to kernel mesh and publish.
-            // For now, write to a file that the kernel can pick up,
-            // or connect directly once MeshRuntime topic routing is wired.
+            // Publish via kernel daemon IPC.
+            use crate::protocol::{IpcPublishParams, Request};
+
+            // Base64-encode CBOR for transport over JSON RPC.
+            let b64_payload = base64_encode(&cbor_bytes);
+            let wire_message = serde_json::json!({
+                "type": "leaf_push",
+                "cbor_b64": b64_payload,
+                "target_pubkey": target_hex,
+            }).to_string();
+
             println!("Target:  {target_hex}");
             println!("Topic:   {topic}");
             println!("Payload: {} bytes CBOR", cbor_bytes.len());
-            println!();
-            println!("Note: direct mesh publish not yet wired.");
-            println!("Payload saved to: leaf-push-{}.cbor", &target_hex[..8.min(target_hex.len())]);
 
-            let filename = format!("leaf-push-{}.cbor", &target_hex[..8.min(target_hex.len())]);
-            std::fs::write(&filename, &cbor_bytes)?;
-            println!("Run: weaver ipc publish --topic '{}' --file '{}'", topic, filename);
+            let mut client = clawft_rpc::DaemonClient::connect().await
+                .ok_or_else(|| anyhow::anyhow!(
+                    "cannot connect to kernel daemon.\nIs `weaver kernel start` running?"
+                ))?;
 
+            let params = serde_json::to_value(IpcPublishParams {
+                topic: topic.clone(),
+                message: wire_message,
+            })?;
+
+            let resp = client.call(Request::with_params("ipc.publish", params)).await?;
+
+            if !resp.ok {
+                anyhow::bail!("publish failed: {}", resp.error.unwrap_or_default());
+            }
+
+            let subs = resp.result
+                .as_ref()
+                .and_then(|v: &serde_json::Value| v.get("subscribers"))
+                .and_then(|v: &serde_json::Value| v.as_u64())
+                .unwrap_or(0);
+
+            println!("Published to '{topic}' ({subs} subscribers)");
             Ok(())
         }
     }
@@ -232,6 +256,30 @@ fn parse_effect(s: &str) -> anyhow::Result<LayerEffectKind> {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 #[cfg(test)]
