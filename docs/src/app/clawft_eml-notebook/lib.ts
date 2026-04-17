@@ -596,6 +596,69 @@ export class BaselineAttention {
   }
 }
 
+// Stability diagnostic: numerically probe the sensitivity of the forward pass
+// to a one-element input perturbation. Mirrors the Python reference:
+//
+//   grads = []
+//   for _ in range(50):
+//       x = randn(seq_len * d_model) * 0.5
+//       y  = model.forward(x)
+//       x2 = x.copy(); x2[0] += eps
+//       dy = (model.forward(x2) - y) / eps
+//       grads.append(max(|dy|))
+//   max_grad = max(grads)   # < 1e4 = stable, < 1e5 = watch, else stiff
+//
+// Any model with `.seqLen`, `.dModel`, and `forward(x): { y: number[] }`
+// satisfies the shape — works for both ToyEmlAttention and BaselineAttention.
+export interface StabilityProbeTarget {
+  seqLen: number;
+  dModel: number;
+  forward(x: number[]): { y: number[] };
+}
+
+export interface StabilityReport {
+  maxGrad: number;
+  meanGrad: number;
+  trials: number;
+  tier: 'stable' | 'watch' | 'stiff';
+}
+
+export function diagnoseStability(
+  model: StabilityProbeTarget,
+  rng: () => number,
+  opts?: { trials?: number; eps?: number },
+): StabilityReport {
+  const trials = opts?.trials ?? 50;
+  const eps = opts?.eps ?? 1e-6;
+  const dim = model.seqLen * model.dModel;
+  // Box-Muller over the [-1, 1] LCG rng to get ~N(0, 1) draws, scaled by 0.5.
+  const randn = (): number => {
+    const u1 = Math.max(1e-12, (rng() + 1) * 0.5);
+    const u2 = (rng() + 1) * 0.5;
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  };
+  const grads: number[] = [];
+  for (let t = 0; t < trials; t++) {
+    const x: number[] = new Array(dim);
+    for (let i = 0; i < dim; i++) x[i] = randn() * 0.5;
+    const y = model.forward(x).y;
+    const x2 = x.slice();
+    x2[0] += eps;
+    const y2 = model.forward(x2).y;
+    let maxAbs = 0;
+    for (let i = 0; i < y.length; i++) {
+      const dy = Math.abs((y2[i] - y[i]) / eps);
+      if (dy > maxAbs) maxAbs = dy;
+    }
+    grads.push(maxAbs);
+  }
+  const maxGrad = grads.reduce((a, b) => (b > a ? b : a), 0);
+  const meanGrad = grads.reduce((a, b) => a + b, 0) / Math.max(1, grads.length);
+  const tier: StabilityReport['tier'] =
+    maxGrad < 1e4 ? 'stable' : maxGrad < 1e5 ? 'watch' : 'stiff';
+  return { maxGrad, meanGrad, trials, tier };
+}
+
 export function downloadJson(filename: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: 'application/json',

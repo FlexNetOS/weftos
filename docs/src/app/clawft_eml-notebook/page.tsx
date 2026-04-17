@@ -6,6 +6,8 @@ import {
   ToyEmlAttention,
   downloadJson,
   makeRng,
+  diagnoseStability,
+  type StabilityReport,
 } from './lib';
 
 type TrainState = 'idle' | 'training' | 'done';
@@ -78,6 +80,10 @@ export default function Page() {
     eml: { params: number; baseline: number; final: number; p99us: number };
     base: { params: number; baseline: number; final: number; p99us: number };
   }>(null);
+  const [stability, setStability] = useState<null | {
+    eml?: StabilityReport;
+    base?: StabilityReport;
+  }>(null);
 
   const paramCount = useMemo(() => {
     const a = new ToyEmlAttention(dModel, dK, seqLen, depth, seed);
@@ -89,6 +95,7 @@ export default function Page() {
     setCurve([]);
     setFinalMse(null);
     setLog([]);
+    setStability(null);
     // Defer one tick so the button state repaints before heavy work begins.
     await new Promise((r) => setTimeout(r, 20));
 
@@ -160,8 +167,10 @@ export default function Page() {
     // Baseline (plain affine) leg — runs alone in baseline mode, in parallel-display in compare mode.
     let baselineCurve: number[] = [];
     let baselineStats = { params: 0, baseline: 0, final: 0 };
+    let baseAttn: BaselineAttention | null = null;
     if (mode === 'baseline' || mode === 'compare') {
       const base = new BaselineAttention(dModel, dK, seqLen, seed);
+      baseAttn = base;
       append(mode === 'compare'
         ? 'backend: Baseline (plain affine) — joint e2e CD across Q/K/V/out'
         : 'mode: Baseline — plain affine attention, same CD optimizer');
@@ -218,6 +227,29 @@ export default function Page() {
     const final = trainingCurve[trainingCurve.length - 1] ?? null;
     setFinalMse(final);
     setAttn(a);
+
+    // Numerical gradient probe — catches runaway sensitivity (stiffness) in
+    // the exp(x) − ln(y) tree that training-loss curves alone can miss.
+    // Python reference: diagnose_stability(attn) — see user comment on this file.
+    const probeRng = makeRng(seed + 9001);
+    const report: { eml?: StabilityReport; base?: StabilityReport } = {};
+    if (mode !== 'baseline') {
+      report.eml = diagnoseStability(a, probeRng);
+      append(
+        `stability[eml]  max|∇| = ${report.eml.maxGrad.toExponential(2)}  ` +
+          `mean|∇| = ${report.eml.meanGrad.toExponential(2)}  (${report.eml.tier})`,
+      );
+    }
+    if (baseAttn) {
+      report.base = diagnoseStability(baseAttn, probeRng);
+      append(
+        `stability[base] max|∇| = ${report.base.maxGrad.toExponential(2)}  ` +
+          `mean|∇| = ${report.base.meanGrad.toExponential(2)}  (${report.base.tier})`,
+      );
+    }
+    setStability(report);
+
+
     if (final != null && final < 0.01) {
       append(`converged (MSE < 1e-2)`);
     } else {
@@ -591,6 +623,10 @@ export default function Page() {
         </div>
       )}
 
+      {stability && (stability.eml || stability.base) && (
+        <StabilityPanel stability={stability} />
+      )}
+
       <h2 className="mt-8 mb-3 text-2xl font-semibold">Export Rust-loadable JSON</h2>
       <p className="mb-3 text-sm text-neutral-600 dark:text-neutral-400">
         Each download contains the full weights for one submodel in a shape
@@ -769,6 +805,74 @@ let q = EmlModel::from_json(&q_json).unwrap();
         </p>
       </div>
     </main>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Stability panel — numerical gradient probe over the forward pass
+// --------------------------------------------------------------------------
+
+function StabilityPanel({
+  stability,
+}: {
+  stability: { eml?: StabilityReport; base?: StabilityReport };
+}) {
+  const rows: { label: string; report: StabilityReport }[] = [];
+  if (stability.eml) rows.push({ label: 'EML (SafeTree)', report: stability.eml });
+  if (stability.base) rows.push({ label: 'Baseline (affine)', report: stability.base });
+  const tierClass = (tier: StabilityReport['tier']) =>
+    tier === 'stable'
+      ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-100'
+      : tier === 'watch'
+      ? 'bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-100'
+      : 'bg-rose-100 dark:bg-rose-900 text-rose-800 dark:text-rose-100';
+  const tierLabel = (tier: StabilityReport['tier']) =>
+    tier === 'stable'
+      ? '✅ stable'
+      : tier === 'watch'
+      ? '⚠️ watch for stiffness'
+      : '⛔ stiff';
+  return (
+    <div className="mt-4 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 p-4">
+      <h3 className="text-base font-semibold mb-1">Stability diagnostic</h3>
+      <p className="mb-3 text-xs text-neutral-600 dark:text-neutral-400">
+        Numerical gradient probe: perturb one input element by ε=1e-6 across{' '}
+        {rows[0]?.report.trials ?? 50} random inputs and measure{' '}
+        <code>max |∂y/∂x|</code>. Threshold: <code>&lt; 1e4</code> stable,{' '}
+        <code>&lt; 1e5</code> watch, otherwise stiff (exp/log tree is
+        saturating — expect training noise).
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-neutral-100 dark:bg-neutral-800">
+              <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-left">Substrate</th>
+              <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-left">max |∇|</th>
+              <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-left">mean |∇|</th>
+              <th className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-left">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ label, report }) => (
+              <tr key={label}>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5">{label}</td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">
+                  {report.maxGrad.toExponential(2)}
+                </td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 font-mono">
+                  {report.meanGrad.toExponential(2)}
+                </td>
+                <td className="border border-neutral-300 dark:border-neutral-700 px-3 py-1.5">
+                  <span className={`rounded px-2 py-0.5 text-xs ${tierClass(report.tier)}`}>
+                    {tierLabel(report.tier)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

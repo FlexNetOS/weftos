@@ -345,6 +345,9 @@ pub use hnsw_eml::{
     HnswEmlConfig, HnswEmlManager, HnswEmlStatus,
     EfPrediction, RebuildPrediction,
     EfTrainingPoint, DistanceTrainingPoint, PathTrainingPoint, RebuildTrainingPoint,
+    HnswEmlBenchmark, HnswScalingPoint, ArmMetrics, EfStrategy, run_hnsw_benchmark,
+    SearchStrategy, ProbeReport, probe_corpus,
+    SpectrumForm, TriageRecord, triage_strategy,
 };
 #[cfg(feature = "ecc")]
 pub use cluster::NodeEccCapability;

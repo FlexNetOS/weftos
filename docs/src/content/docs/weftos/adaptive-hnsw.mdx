@@ -1,0 +1,99 @@
+---
+title: "Adaptive HNSW"
+description: "Tiered dimensional search with tree calculus strategy selection and EML-learned dimension ordering for WeftOS vector memory."
+---
+
+**Shipped in 0.6.13.** Replaces static HNSW parameters with a probe → triage → tiered search pipeline that adapts to the data.
+
+**Feature**: `ecc` (enabled by default in kernel builds)
+**Source**: `crates/clawft-kernel/src/hnsw_eml.rs`, `crates/clawft-core/src/embeddings/hnsw_store.rs`
+**Related**: [EML — Self-Learning Functions](/weftos/eml), [EML Attention](/weftos/eml-attention)
+
+## The idea
+
+Standard HNSW searches every dimension on every graph hop. If your 128-dim embeddings have most of their variance in the first 20 dimensions (as real text/image embeddings do), the other 108 dimensions are noise during the coarse phase of search. Tiered search exploits this:
+
+1. **Coarse** — HNSW graph built on the top-20 projected dimensions. Graph traversal is cheap (20-float cosine). Over-fetches ~120 candidates.
+2. **Medium** — re-rank survivors with 40-dim cosine. Narrows to ~40 candidates.
+3. **Fine** — full 128-dim cosine on the final survivors. Returns exact top-k.
+
+The coarse HNSW graph has different connectivity than the full-dim graph because "nearby in 20 dims" differs from "nearby in 128 dims". This is the dictionary analogy: you skip to 'P' (coarse), then to 'Pn' (medium), then scan locally (fine).
+
+## Tree calculus strategy selection
+
+Not all data benefits from tiering. Uniform random embeddings have no dominant dimensions, so projecting to 20 dims loses 85% of the signal and recall collapses. The system detects this automatically.
+
+**Probe** — samples the corpus, computes per-dimension variance, measures spectral steepness (ratio of top-quartile to bottom-quartile variance).
+
+**Triage** — tree calculus classifies the spectrum:
+
+| Form | Steepness | Meaning | Strategy |
+|------|-----------|---------|----------|
+| `Atom` | < 1.5 | Uniform — all dims equally informative | Flat HNSW, skip tiering |
+| `Sequence` | 1.5 — 8.0 | Gradual decay — moderate structure | Moderate tiering |
+| `Branch` | > 8.0 | Sharp clusters — a few dims dominate | Aggressive tiering |
+
+**EML** — for `Sequence` and `Branch` forms, exp-ln scoring computes the tier widths (coarse dims, medium dims) and funnel sizes (keep counts) from the steepness and the variance knee point (first dimension index where cumulative variance exceeds 80%).
+
+The full decision record (`TriageRecord`) is logged to ExoChain for auditable training provenance.
+
+## Benchmark (5000 vectors, 128 dims, k=10)
+
+Structured embeddings: 20 clusters, exponentially decaying dimensional variance.
+
+```
+Triage:
+  Form:           Branch
+  Steepness:      1985.59
+  Concentration:  92.5%
+  Knee:           20 dims
+  → Tiered (coarse=20d keep=120, medium=40d keep=40, ef=50)
+
+                          recall@10    mean (ns)    p99 (ns)
+  Control (flat HNSW):     0.69          95,239      149,613
+  Tiered (probe-guided):   0.79          58,978       97,034
+
+  Result: 1.61× faster mean, 1.54× faster p99, +10% recall
+```
+
+The tiered search is both faster *and* higher recall because the coarse HNSW finds the right cluster cheaply, while flat HNSW at ef=20 sometimes misses neighbors due to the high-dimensional graph's poor connectivity on the dominant dimensions.
+
+## API
+
+```rust
+use clawft_kernel::{probe_corpus, triage_strategy, SearchStrategy};
+use clawft_core::embeddings::hnsw_store::TieredSearch;
+
+// Probe the corpus
+let probe = probe_corpus(&embeddings, dims, top_k);
+let triage = triage_strategy(&probe);
+
+// Build the right search structure
+match &triage.strategy {
+    SearchStrategy::Flat { ef } => {
+        // Use standard HnswStore::with_params(*ef, 200)
+    }
+    SearchStrategy::Tiered { dim_order, coarse_dims, medium_dims, ef, .. } => {
+        let tiered = TieredSearch::build(
+            &entries,
+            dim_order[..*coarse_dims].to_vec(),
+            dim_order[..*medium_dims].to_vec(),
+            top_k,
+            *ef,
+        );
+        let results = tiered.search(&query, top_k);
+    }
+}
+```
+
+## ExoChain integration
+
+Every triage decision is loggable as an `hnsw.eml.triage` chain event containing the full `TriageRecord` (form, steepness, concentration, knee, strategy parameters). Search observations are logged as `hnsw.eml.observe` with ef, latency, recall, and store size. This creates an auditable training provenance trail.
+
+## When tiering doesn't help
+
+- **Uniform embeddings** (steepness < 1.5): the probe returns `Atom` → flat HNSW. No tiering attempted.
+- **Small stores** (< 100 vectors): brute-force is already fast. Probe returns flat.
+- **Low dimensionality** (< 16 dims): not enough dimensions to tier meaningfully.
+
+The probe runs once at index build time (~1ms for 500 sample vectors). No per-query overhead unless tiered search is selected.

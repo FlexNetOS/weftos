@@ -1,9 +1,84 @@
 ---
 title: Release Notes
-description: Complete version history for WeftOS from initial development through v0.6.10.
+description: Complete version history for WeftOS from initial development through v0.6.13.
 ---
 
 # Release Notes
+
+## v0.6.13 — Adaptive HNSW: Tiered Dimensional Search
+
+*2026-04-17*
+
+The HNSW vector store now adapts to the data it stores. A corpus probe
+analyzes the dimensional variance spectrum, tree calculus triage classifies
+the structure (Atom/Sequence/Branch), and EML computes tier parameters.
+Structured data gets multi-index tiered search; uniform data stays on
+standard flat HNSW. The system decides automatically.
+
+### The headline number
+
+5000 vectors, 128 dims, k=10, clustered embeddings (20 clusters):
+
+| Metric | Control (flat HNSW) | Tiered (probe-guided) |
+|---|---|---|
+| recall@10 | 0.69 | 0.79 |
+| mean latency | 95 µs | 59 µs |
+| p99 latency | 150 µs | 97 µs |
+
+**1.61x faster mean, 1.54x faster p99, +10% recall.** The tiered search
+is both faster and higher recall because the coarse 20-dim HNSW finds the
+right cluster cheaply while flat HNSW at ef=20 sometimes misses neighbors.
+
+### What's in the release
+
+- **`TieredSearch`** — multi-index dimensional search in `hnsw_store.rs`.
+  Separate HNSW indexes at coarse/medium resolution, linear fine re-rank.
+  `cosine_partial` for subset-dimension cosine similarity.
+
+- **Corpus probe** — analyzes per-dimension variance, computes spectral
+  steepness and variance knee. Runs once at build time (~1ms).
+
+- **Tree calculus triage** — classifies spectrum as Atom (flat → skip
+  tiering), Sequence (gradual → moderate tiering), or Branch (sharp →
+  aggressive tiering). Follows the dual-substrate pattern from
+  `treecalc.rs`: tree calculus for structural dispatch, EML for
+  continuous parameters.
+
+- **2-head EML ef model** — joint ef + recall prediction. Head 0 learns
+  the ef→latency mapping, head 1 learns ef→recall. Recall is backfilled
+  from periodic brute-force measurements. Score strategy balances both.
+
+- **HnswService EML integration** — every search call now runs through
+  the EML predict+record path. Adaptive ef, adaptive rebuild timing,
+  and search telemetry feeding back into model training.
+
+- **ExoChain events** — `hnsw.eml.observe` (per-search), `hnsw.eml.recall`
+  (periodic measurement), `hnsw.eml.trained` (training cycle),
+  `hnsw.eml.triage` (strategy decision). Full audit trail for training
+  provenance.
+
+- **4-phase benchmark harness** — mirrors the attention benchmark protocol.
+  Phase 1 (warmup), Phase 2 (learning), Phase 3 (4-arm A/B: control vs
+  overhead vs adaptive vs tiered), Phase 4 (scalability sweep). Structured
+  test data generator with clustered embeddings and exponentially decaying
+  dimensional variance.
+
+- **Stability diagnostic** (EML notebook) — `diagnose_stability()` probes
+  numerical gradient sensitivity of the attention forward pass. Catches
+  stiffness from `exp(x) - ln(y)` tree saturation that MSE curves miss.
+
+### Tests
+
+76 tests across hnsw_eml (36), hnsw_service (23), hnsw_store (17).
+
+### Documentation
+
+- [`/weftos/adaptive-hnsw`](/weftos/adaptive-hnsw) — full architecture,
+  API, benchmark, and when-it-doesn't-help guide
+- `.planning/development_notes/adaptive-hnsw-tiered-search.md` — detailed
+  development narrative including what didn't work and why
+
+---
 
 ## v0.6.10 — EML vs Baseline Attention (Measurement Release)
 

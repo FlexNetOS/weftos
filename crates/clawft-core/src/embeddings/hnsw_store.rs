@@ -480,6 +480,36 @@ impl HnswStore {
         self.rebuild_index();
     }
 
+    /// Override ef_search at runtime and trigger a rebuild so the new
+    /// value takes effect. Used by the adaptive EML layer.
+    pub fn set_ef_search(&mut self, ef: usize) {
+        self.ef_search = ef;
+        if self.entries.len() >= HNSW_THRESHOLD {
+            self.rebuild_index();
+        }
+    }
+
+    /// Current ef_search parameter.
+    pub fn ef_search(&self) -> usize {
+        self.ef_search
+    }
+
+    /// Number of mutations since the last HNSW rebuild.
+    pub fn inserts_since_rebuild(&self) -> usize {
+        self.inserts_since_rebuild
+    }
+
+    /// Brute-force top-k search for ground-truth recall measurement.
+    ///
+    /// Unlike [`query`], this always does a full linear scan regardless of
+    /// store size or HNSW index state. Returns IDs only.
+    pub fn brute_force_topk(&self, query: &[f32], top_k: usize) -> Vec<String> {
+        self.brute_force_query(query, top_k)
+            .into_iter()
+            .map(|r| r.id)
+            .collect()
+    }
+
     /// Brute-force cosine similarity search (fallback for small datasets).
     fn brute_force_query(
         &self,
@@ -510,6 +540,203 @@ impl Default for HnswStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ── Tiered search ─────────────────────────────────────────────────────
+
+/// Configuration for one tier of dimensional search.
+#[derive(Debug, Clone)]
+pub struct TierConfig {
+    /// Which dimensions to use for cosine at this tier.
+    /// Empty = use all dimensions (full cosine).
+    pub dims: Vec<usize>,
+    /// How many candidates to keep after this tier.
+    pub keep: usize,
+}
+
+/// Multi-index tiered dimensional search.
+///
+/// Three separate HNSW indexes at different resolutions:
+///
+/// 1. **Coarse index** (8 dims): graph traversal on projected embeddings.
+///    Cheap distance function (8 floats), fast traversal, high recall at
+///    low precision. Over-fetches ~50× top_k candidates.
+/// 2. **Medium re-rank** (32 dims): partial cosine on survivors from
+///    coarse. No graph traversal — just linear re-score.
+/// 3. **Fine re-rank** (full dims): full cosine on the final ~5× top_k
+///    survivors. Returns exact top-k.
+///
+/// The coarse index's graph connectivity is built in the projected
+/// space, so "nearby" means similar in the coarse dimensions — like
+/// skipping to 'P' in a dictionary. The medium and fine tiers are
+/// linear passes on the shrinking candidate set.
+pub struct TieredSearch {
+    coarse_index: HnswStore,
+    coarse_dims: Vec<usize>,
+    coarse_keep: usize,
+    medium_dims: Vec<usize>,
+    medium_keep: usize,
+    full_store: HnswStore,
+}
+
+/// Project a full embedding to a subset of dimensions.
+fn project(embedding: &[f32], dims: &[usize]) -> Vec<f32> {
+    dims.iter().map(|&d| if d < embedding.len() { embedding[d] } else { 0.0 }).collect()
+}
+
+impl TieredSearch {
+    /// Build a tiered index from a corpus.
+    ///
+    /// `entries`: (id, full_embedding, metadata) triples.
+    /// `coarse_dims`: dimension indices for the coarse HNSW.
+    /// `medium_dims`: dimension indices for the medium re-rank.
+    /// `top_k`: expected query depth (used to size keep counts).
+    /// `ef`: ef_search for the coarse HNSW (can be low since dims are few).
+    pub fn build(
+        entries: &[(String, Vec<f32>, serde_json::Value)],
+        coarse_dims: Vec<usize>,
+        medium_dims: Vec<usize>,
+        top_k: usize,
+        ef: usize,
+    ) -> Self {
+        // Coarse index: store projected embeddings.
+        let mut coarse_index = HnswStore::with_params(ef, 200);
+        for (id, emb, meta) in entries {
+            let projected = project(emb, &coarse_dims);
+            coarse_index.insert(id.clone(), projected, meta.clone());
+        }
+        coarse_index.force_rebuild();
+
+        // Full store for re-ranking (brute-force lookups by ID).
+        let mut full_store = HnswStore::new();
+        for (id, emb, meta) in entries {
+            full_store.insert(id.clone(), emb.clone(), meta.clone());
+        }
+
+        let coarse_keep = (top_k * 50).max(200);
+        let medium_keep = (top_k * 5).max(20);
+
+        TieredSearch {
+            coarse_index,
+            coarse_dims,
+            coarse_keep,
+            medium_dims,
+            medium_keep,
+            full_store,
+        }
+    }
+
+    /// Build with default dimension selection for the given dimensionality.
+    pub fn build_default(
+        entries: &[(String, Vec<f32>, serde_json::Value)],
+        dims: usize,
+        top_k: usize,
+        ef: usize,
+    ) -> Self {
+        let coarse_n = (dims / 16).max(2);
+        let medium_n = (dims / 4).max(4);
+        Self::build(
+            entries,
+            (0..coarse_n).collect(),
+            (0..medium_n).collect(),
+            top_k,
+            ef,
+        )
+    }
+
+    /// Build with a learned dimension ordering.
+    pub fn build_learned(
+        entries: &[(String, Vec<f32>, serde_json::Value)],
+        dim_order: &[usize],
+        dims: usize,
+        top_k: usize,
+        ef: usize,
+    ) -> Self {
+        let coarse_n = (dims / 16).max(2);
+        let medium_n = (dims / 4).max(4);
+        Self::build(
+            entries,
+            dim_order[..coarse_n.min(dim_order.len())].to_vec(),
+            dim_order[..medium_n.min(dim_order.len())].to_vec(),
+            top_k,
+            ef,
+        )
+    }
+
+    /// Number of entries in the index.
+    pub fn len(&self) -> usize {
+        self.full_store.len()
+    }
+
+    /// Run a tiered search.
+    ///
+    /// 1. Query the coarse HNSW (projected dims) for ~50× top_k candidates.
+    /// 2. Re-rank survivors with medium-dim cosine, keep ~5× top_k.
+    /// 3. Re-rank with full-dim cosine, return top_k.
+    pub fn search(&mut self, query: &[f32], top_k: usize) -> Vec<HnswQueryResult> {
+        if self.full_store.is_empty() || top_k == 0 {
+            return Vec::new();
+        }
+
+        // Tier 1 (Coarse): HNSW on projected query.
+        let coarse_query = project(query, &self.coarse_dims);
+        let mut candidates: Vec<(String, f32, serde_json::Value)> = self
+            .coarse_index
+            .query(&coarse_query, self.coarse_keep)
+            .into_iter()
+            .map(|r| (r.id, r.score, r.metadata))
+            .collect();
+
+        // Tier 2 (Medium): re-score with more dimensions.
+        if !self.medium_dims.is_empty() && candidates.len() > self.medium_keep {
+            for c in &mut candidates {
+                if let Some(entry) = self.full_store.get(&c.0) {
+                    c.1 = cosine_partial(query, &entry.embedding, &self.medium_dims);
+                }
+            }
+            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            candidates.truncate(self.medium_keep);
+        }
+
+        // Tier 3 (Fine): full-dimensional cosine.
+        let mut results: Vec<HnswQueryResult> = candidates
+            .into_iter()
+            .filter_map(|(id, _, _)| {
+                self.full_store.get(&id).map(|entry| HnswQueryResult {
+                    id: id.clone(),
+                    score: cosine_similarity(query, &entry.embedding),
+                    metadata: entry.metadata.clone(),
+                })
+            })
+            .collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(top_k);
+        results
+    }
+
+    /// Brute-force top-k for recall measurement (uses full store).
+    pub fn brute_force_topk(&self, query: &[f32], top_k: usize) -> Vec<String> {
+        self.full_store.brute_force_topk(query, top_k)
+    }
+}
+
+/// Cosine similarity using only selected dimensions.
+fn cosine_partial(a: &[f32], b: &[f32], dims: &[usize]) -> f32 {
+    let mut dot = 0.0_f32;
+    let mut norm_a = 0.0_f32;
+    let mut norm_b = 0.0_f32;
+    let len = a.len().min(b.len());
+    for &d in dims {
+        if d < len {
+            let va = a[d];
+            let vb = b[d];
+            dot += va * vb;
+            norm_a += va * va;
+            norm_b += vb * vb;
+        }
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 { 0.0 } else { dot / denom }
 }
 
 /// Compute cosine similarity between two vectors.

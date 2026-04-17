@@ -391,7 +391,8 @@ impl A2ARouter {
                 debug!(pid, "message delivered to inbox");
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Full(rejected_msg)) => {
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                let rejected_msg = msg;
                 warn!(pid, "inbox full, dead-lettering");
                 #[cfg(feature = "os-patterns")]
                 if let Some(dlq) = self.dead_letter_queue.get() {
@@ -402,7 +403,8 @@ impl A2ARouter {
                 }
                 Err(KernelError::Ipc(format!("inbox full for PID {pid}")))
             }
-            Err(mpsc::error::TrySendError::Closed(rejected_msg)) => {
+            Err(mpsc::error::TrySendError::Closed(msg)) => {
+                let rejected_msg = msg;
                 warn!(pid, "inbox closed, removing and dead-lettering");
                 self.inboxes.remove(&pid);
                 #[cfg(feature = "os-patterns")]

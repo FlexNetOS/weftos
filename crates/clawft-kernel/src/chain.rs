@@ -673,6 +673,35 @@ pub const EVENT_KIND_HNSW_SAVE: &str = "hnsw.save";
 /// The payload should include `path`, `entry_count`.
 pub const EVENT_KIND_HNSW_LOAD: &str = "hnsw.load";
 
+/// HNSW EML search observation event.
+///
+/// Emitted after each search when EML is enabled. Carries the full
+/// multi-signal payload: ef_used, latency_us, recall (when measured),
+/// query_norm, query_variance, store_size. Used by the 2-head ef
+/// model for joint ef ↔ recall training and by ExoChain for auditable
+/// training provenance.
+pub const EVENT_KIND_HNSW_EML_OBSERVE: &str = "hnsw.eml.observe";
+
+/// HNSW EML recall measurement event.
+///
+/// Emitted when a recall checkpoint is taken (brute-force vs HNSW).
+/// Payload: avg_recall, store_size, inserts_since_rebuild, query_count.
+pub const EVENT_KIND_HNSW_EML_RECALL: &str = "hnsw.eml.recall";
+
+/// HNSW EML model trained event.
+///
+/// Emitted after a training cycle. Payload: train_cycles, models_trained,
+/// ef_trained, rebuild_trained, distance_trained, path_trained.
+pub const EVENT_KIND_HNSW_EML_TRAINED: &str = "hnsw.eml.trained";
+
+/// HNSW EML triage decision event.
+///
+/// Emitted when the tree calculus strategy selector runs. Payload
+/// contains the full TriageRecord: form (Atom/Sequence/Branch),
+/// steepness, concentration, knee, and the chosen SearchStrategy
+/// with tuned parameters. Auditable training provenance.
+pub const EVENT_KIND_HNSW_EML_TRIAGE: &str = "hnsw.eml.triage";
+
 /// Local chain state.
 struct LocalChain {
     chain_id: u32,
