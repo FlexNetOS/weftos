@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.14] - 2026-04-17
+
+### Mesh Time Synchronization
+
+- **MeshClockSync**: authority-based time sync piggybacked on heartbeats.
+  Clock hierarchy: GPS > TSF > NTP > Mesh > Local. Authority elected
+  from best source. EMA smoothing with outlier rejection. Precision
+  targets: <1µs (WiFi TSF), ~100µs (same LAN), ~1-5ms (cross-network).
+- **ClockSource enum**: Local, Mesh, Ntp, Tsf, Gps with ordering.
+- **mesh_time_us()** on MeshRuntime: returns authority-aligned microseconds.
+- PingRequest/PingResponse carry `mesh_time_us` and `clock_source` fields.
+- 5 new time sync tests (clock ordering, initial state, NTP authority,
+  source filtering, jitter smoothing).
+
+### Noise Protocol Encryption
+
+- Real Noise XX handshake via `snow` crate (Noise_XX_25519_ChaChaPoly_SHA256).
+- `NoiseChannel::initiate()` and `NoiseChannel::respond()` for mutual auth.
+- `create_encrypted_channel()` helper: crypto when configured, passthrough
+  for dev/test. Mesh traffic is now encrypted by default when Noise is
+  configured.
+
+### weave.toml Config Loading
+
+- Config loader now reads `weave.toml` from project root and merges with
+  JSON config (`~/.clawft/config.json`). Deep merge: JSON overrides TOML.
+  `[kernel.mesh] enabled = true` in weave.toml actually works now.
+
+### Agent Analysis Commands
+
+- `weft analyze` with 9 subcommands (extract, detect, infer, diff, slice,
+  vowl, enrich, links, suggest) — agents can run topology/vault analysis
+  by delegating to weaver.
+
+### Tree-sitter ast-extract Fixed
+
+- 19 compile errors in the `--features lang-rust` path fixed. Tree-sitter
+  can be used as the fast baseline extractor alongside LSP enrichment.
+
+### Other Fixes
+
+- `weaver init` rewritten — works in any directory, generates weave.toml
+- `weaver update` handles "Text file busy" via rename-swap
+- Mesh peer-connected log raised from debug to info
+
 ## [0.6.13] - 2026-04-17
 
 ### Mesh Transport Boot Integration

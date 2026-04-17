@@ -13,7 +13,7 @@ use crate::a2a::A2ARouter;
 use crate::error::{KernelError, KernelResult};
 use crate::ipc::{KernelMessage, MessageTarget};
 use crate::mesh_chain::{ChainSyncRequest, ChainSyncResponse};
-use crate::mesh_heartbeat::{HeartbeatConfig, HeartbeatTracker};
+use crate::mesh_heartbeat::{ClockSource, HeartbeatConfig, HeartbeatTracker, MeshClockSync};
 use crate::mesh_ipc::MeshIpcEnvelope;
 use crate::mesh_kad::KademliaTable;
 
@@ -54,6 +54,8 @@ pub struct MeshRuntime {
     local_router: Option<Arc<A2ARouter>>,
     /// Optional discovery state (Kademlia + heartbeat).
     discovery: Option<DiscoveryState>,
+    /// Mesh time synchronization state.
+    clock: std::sync::Mutex<MeshClockSync>,
 }
 
 impl MeshRuntime {
@@ -64,6 +66,7 @@ impl MeshRuntime {
             peers: DashMap::new(),
             local_router: None,
             discovery: None,
+            clock: std::sync::Mutex::new(MeshClockSync::new(ClockSource::Local)),
         }
     }
 
@@ -81,6 +84,7 @@ impl MeshRuntime {
                 peer_addresses: DashMap::new(),
                 heartbeat: Mutex::new(HeartbeatTracker::new(HeartbeatConfig::default())),
             }),
+            clock: std::sync::Mutex::new(MeshClockSync::new(ClockSource::Local)),
         }
     }
 
@@ -246,6 +250,52 @@ impl MeshRuntime {
             }
             hb.record_alive(node_id);
         }
+    }
+
+    // ── Time synchronization ──────────────────────────────────────
+
+    /// Get the current mesh-synchronized time in microseconds since epoch.
+    ///
+    /// If time sync is active (synced from authority), returns the
+    /// authority-aligned time. Otherwise returns local system time.
+    pub fn mesh_time_us(&self) -> u64 {
+        self.clock.lock().unwrap().mesh_time_us()
+    }
+
+    /// Get the clock uncertainty estimate in microseconds.
+    pub fn clock_uncertainty_us(&self) -> u64 {
+        self.clock.lock().unwrap().uncertainty_us
+    }
+
+    /// Get the current clock source quality.
+    pub fn clock_source(&self) -> ClockSource {
+        self.clock.lock().unwrap().local_source
+    }
+
+    /// Set the local clock source (e.g., after NTP sync is confirmed).
+    pub fn set_clock_source(&self, source: ClockSource) {
+        self.clock.lock().unwrap().local_source = source;
+    }
+
+    /// Process a time sync sample from a peer's heartbeat.
+    pub fn sync_clock_from_peer(
+        &self,
+        peer_id: &str,
+        peer_time_us: u64,
+        peer_source: ClockSource,
+    ) {
+        let local_time = crate::mesh_heartbeat::system_time_us();
+        self.clock.lock().unwrap().process_sync(
+            peer_id,
+            peer_time_us,
+            peer_source,
+            local_time,
+        );
+    }
+
+    /// Check if this node is the time authority.
+    pub fn is_time_authority(&self) -> bool {
+        self.clock.lock().unwrap().is_authority(&self.node_id)
     }
 
     /// Return node IDs of peers that heartbeat considers suspect or dead.

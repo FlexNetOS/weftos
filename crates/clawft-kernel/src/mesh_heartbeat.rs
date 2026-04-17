@@ -47,6 +47,12 @@ pub struct PingRequest {
     pub indirect: bool,
     /// If indirect, the original requester.
     pub on_behalf_of: Option<String>,
+    /// Mesh-synchronized time from the sender (microseconds since epoch).
+    #[serde(default)]
+    pub mesh_time_us: u64,
+    /// Clock source quality of the sender.
+    #[serde(default)]
+    pub clock_source: ClockSource,
 }
 
 /// Ping response.
@@ -60,6 +66,143 @@ pub struct PingResponse {
     pub process_count: u32,
     /// Service count on responding node.
     pub service_count: u32,
+    /// Mesh-synchronized time from the responder (microseconds since epoch).
+    #[serde(default)]
+    pub mesh_time_us: u64,
+    /// Clock source quality of the responder.
+    #[serde(default)]
+    pub clock_source: ClockSource,
+}
+
+// ── Time synchronization ──────────────────────────────────────────
+
+/// Clock source quality (higher = better, wins authority election).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockSource {
+    /// Local monotonic clock only (no external sync).
+    Local = 0,
+    /// Synchronized via mesh heartbeat from another node.
+    Mesh = 1,
+    /// NTP-synchronized system clock.
+    Ntp = 2,
+    /// WiFi TSF counter (sub-microsecond, same AP only).
+    Tsf = 3,
+    /// GPS PPS (pulse-per-second) disciplined clock.
+    Gps = 4,
+}
+
+impl Default for ClockSource {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+/// Mesh time synchronization state for a node.
+#[derive(Debug, Clone)]
+pub struct MeshClockSync {
+    /// Current clock offset from authority (microseconds, signed).
+    pub offset_us: i64,
+    /// Smoothed offset (EMA).
+    smoothed_offset: f64,
+    /// ID of the current time authority node.
+    pub authority_id: Option<String>,
+    /// Clock source of the authority.
+    pub authority_source: ClockSource,
+    /// Our own clock source.
+    pub local_source: ClockSource,
+    /// Number of sync samples received.
+    pub sync_count: u64,
+    /// Estimated clock uncertainty (microseconds).
+    pub uncertainty_us: u64,
+}
+
+impl MeshClockSync {
+    /// Create a new clock sync state.
+    pub fn new(local_source: ClockSource) -> Self {
+        Self {
+            offset_us: 0,
+            smoothed_offset: 0.0,
+            authority_id: None,
+            authority_source: ClockSource::Local,
+            local_source,
+            sync_count: 0,
+            uncertainty_us: 1_000_000, // 1 second initial uncertainty
+        }
+    }
+
+    /// Get the current mesh-synchronized time in microseconds since epoch.
+    pub fn mesh_time_us(&self) -> u64 {
+        let local = system_time_us();
+        (local as i64 + self.offset_us) as u64
+    }
+
+    /// Process a time sync sample from a heartbeat.
+    ///
+    /// If the sender has a better clock source, update our offset.
+    /// Uses exponential moving average to smooth jitter.
+    pub fn process_sync(
+        &mut self,
+        sender_id: &str,
+        sender_time_us: u64,
+        sender_source: ClockSource,
+        local_receive_time_us: u64,
+    ) {
+        // Only sync from equal or better clock sources.
+        if sender_source < self.local_source && self.sync_count > 0 {
+            return;
+        }
+
+        // If this sender has a better source than current authority, switch.
+        if sender_source > self.authority_source
+            || self.authority_id.is_none()
+            || self.authority_id.as_deref() == Some(sender_id)
+        {
+            let raw_offset = sender_time_us as i64 - local_receive_time_us as i64;
+
+            // Reject outliers: >100ms jump is likely network delay, not drift.
+            if self.sync_count > 5 && (raw_offset - self.offset_us).unsigned_abs() > 100_000 {
+                return;
+            }
+
+            // EMA smoothing: alpha=0.1 for stability.
+            let alpha = if self.sync_count < 5 { 0.5 } else { 0.1 };
+            self.smoothed_offset =
+                (1.0 - alpha) * self.smoothed_offset + alpha * raw_offset as f64;
+            self.offset_us = self.smoothed_offset as i64;
+
+            self.authority_id = Some(sender_id.to_string());
+            self.authority_source = sender_source;
+            self.sync_count += 1;
+
+            // Uncertainty decreases with more samples.
+            self.uncertainty_us = match self.sync_count {
+                0..=5 => 10_000,    // 10ms
+                6..=20 => 1_000,    // 1ms
+                21..=100 => 100,    // 100µs
+                _ => 50,            // 50µs steady state
+            };
+        }
+    }
+
+    /// Check if this node should be the time authority.
+    pub fn is_authority(&self, our_node_id: &str) -> bool {
+        self.authority_id.as_deref() == Some(our_node_id)
+            || self.authority_id.is_none()
+    }
+
+    /// Whether we have a better clock source than the given source.
+    pub fn is_better_source(&self, other: ClockSource) -> bool {
+        self.local_source > other
+    }
+}
+
+/// Get current system time in microseconds since Unix epoch.
+pub fn system_time_us() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
 }
 
 /// Node health state from heartbeat monitoring.
@@ -298,6 +441,8 @@ mod tests {
             sequence: 42,
             indirect: true,
             on_behalf_of: Some("node-b".to_string()),
+            mesh_time_us: system_time_us(),
+            clock_source: ClockSource::Ntp,
         };
         let json = serde_json::to_string(&req).unwrap();
         let restored: PingRequest = serde_json::from_str(&json).unwrap();
@@ -314,6 +459,8 @@ mod tests {
             sequence: 42,
             process_count: 5,
             service_count: 3,
+            mesh_time_us: system_time_us(),
+            clock_source: ClockSource::Local,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let restored: PingResponse = serde_json::from_str(&json).unwrap();
@@ -494,5 +641,82 @@ mod tests {
         assert_eq!(tracker.next_sequence(), 1);
         assert_eq!(tracker.next_sequence(), 2);
         assert_eq!(tracker.next_sequence(), 3);
+    }
+
+    // ── Time sync tests ──────────────────────────────────────────
+
+    #[test]
+    fn clock_source_ordering() {
+        assert!(ClockSource::Gps > ClockSource::Ntp);
+        assert!(ClockSource::Ntp > ClockSource::Mesh);
+        assert!(ClockSource::Mesh > ClockSource::Local);
+        assert!(ClockSource::Tsf > ClockSource::Ntp);
+    }
+
+    #[test]
+    fn mesh_clock_sync_initial_state() {
+        let sync = MeshClockSync::new(ClockSource::Local);
+        assert_eq!(sync.offset_us, 0);
+        assert_eq!(sync.sync_count, 0);
+        assert!(sync.authority_id.is_none());
+        assert_eq!(sync.uncertainty_us, 1_000_000);
+    }
+
+    #[test]
+    fn mesh_clock_sync_from_ntp_authority() {
+        let mut sync = MeshClockSync::new(ClockSource::Local);
+        let now = system_time_us();
+
+        // Simulate NTP authority 5ms ahead.
+        let authority_time = now + 5_000;
+        sync.process_sync("authority-1", authority_time, ClockSource::Ntp, now);
+
+        assert_eq!(sync.authority_id.as_deref(), Some("authority-1"));
+        assert_eq!(sync.authority_source, ClockSource::Ntp);
+        assert_eq!(sync.sync_count, 1);
+        // First sample with alpha=0.5: offset ≈ 0.5 * 5000 = 2500µs.
+        assert!((sync.offset_us - 2_500).unsigned_abs() < 1_000);
+    }
+
+    #[test]
+    fn mesh_clock_sync_ignores_worse_source() {
+        let mut sync = MeshClockSync::new(ClockSource::Ntp);
+        let now = system_time_us();
+
+        // We have NTP, peer only has Local — should be ignored after warmup.
+        for i in 0..10 {
+            sync.process_sync("peer", now + i * 100, ClockSource::Local, now + i * 100);
+        }
+        // After warmup samples, local source should be ignored.
+        let offset_before = sync.offset_us;
+        sync.process_sync("peer", now + 50_000, ClockSource::Local, now);
+        assert_eq!(sync.offset_us, offset_before);
+    }
+
+    #[test]
+    fn mesh_clock_sync_smooths_jitter() {
+        let mut sync = MeshClockSync::new(ClockSource::Local);
+        let now = system_time_us();
+
+        // Send 20 samples with 1ms offset + random jitter.
+        for i in 0..20u64 {
+            let jitter = (i % 3) as i64 * 50 - 50; // -50, 0, +50µs
+            let authority_time = (now as i64 + 1_000 + jitter) as u64;
+            sync.process_sync("auth", authority_time, ClockSource::Ntp, now);
+        }
+
+        // Offset should be close to 1000µs (1ms).
+        assert!((sync.offset_us - 1_000).unsigned_abs() < 500);
+        // Uncertainty should have decreased.
+        assert!(sync.uncertainty_us < 10_000);
+    }
+
+    #[test]
+    fn system_time_us_returns_plausible_value() {
+        let t = system_time_us();
+        // Should be after 2020-01-01 in microseconds.
+        assert!(t > 1_577_836_800_000_000);
+        // Should be before 2050-01-01.
+        assert!(t < 2_524_608_000_000_000);
     }
 }
