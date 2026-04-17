@@ -44,6 +44,35 @@ pub enum TopologyAction {
         /// Path to the knowledge graph JSON.
         graph: PathBuf,
     },
+    /// Infer a topology schema from a knowledge graph.
+    Infer {
+        /// Path to the knowledge graph JSON.
+        graph: PathBuf,
+        /// Name for the inferred schema.
+        #[arg(short, long, default_value = "inferred")]
+        name: String,
+        /// Output path for the inferred schema YAML.
+        #[arg(short, long, default_value = "inferred.topology.yaml")]
+        output: PathBuf,
+    },
+    /// Diff a declared schema against one inferred from a graph.
+    Diff {
+        /// Path to the declared schema YAML.
+        declared: PathBuf,
+        /// Path to the knowledge graph JSON to infer from.
+        graph: PathBuf,
+    },
+    /// Export a knowledge graph as VOWL JSON for the navigator widget.
+    Vowl {
+        /// Path to the knowledge graph JSON.
+        graph: PathBuf,
+        /// Path to the topology schema YAML.
+        #[arg(short, long)]
+        schema: Option<PathBuf>,
+        /// Output path for VOWL JSON.
+        #[arg(short, long, default_value = "vowl-graph.json")]
+        output: PathBuf,
+    },
 }
 
 pub async fn run(args: TopologyArgs) -> anyhow::Result<()> {
@@ -53,6 +82,9 @@ pub async fn run(args: TopologyArgs) -> anyhow::Result<()> {
         }
         TopologyAction::Validate { schema } => cmd_validate(&schema),
         TopologyAction::Detect { graph } => cmd_detect(&graph),
+        TopologyAction::Infer { graph, name, output } => cmd_infer(&graph, &name, &output),
+        TopologyAction::Diff { declared, graph } => cmd_diff(&declared, &graph),
+        TopologyAction::Vowl { graph, schema, output } => cmd_vowl(&graph, schema.as_deref(), &output),
     }
 }
 
@@ -199,6 +231,127 @@ fn cmd_detect(graph_path: &PathBuf) -> anyhow::Result<()> {
     let default_schema = load_schema(None)?;
     let detected = clawft_graphify::layout::detect_geometry(&kg, &default_schema);
     println!("\nRecommended geometry: {detected:?}");
+
+    Ok(())
+}
+
+fn cmd_infer(graph_path: &PathBuf, name: &str, output_path: &PathBuf) -> anyhow::Result<()> {
+    let kg = load_graph(graph_path)?;
+
+    println!(
+        "Inferring schema from {} nodes, {} edges...",
+        kg.entity_count(),
+        kg.relationship_count(),
+    );
+
+    let schema = clawft_graphify::topology_infer::infer_schema(&kg, name);
+    let warnings = schema.validate();
+
+    let yaml = serde_yaml::to_string(&schema)?;
+    std::fs::write(output_path, &yaml)?;
+
+    println!(
+        "Inferred schema '{}': {} node types, {} edge types → {}",
+        schema.name,
+        schema.nodes.len() - 1, // exclude wildcard
+        schema.edges.len(),
+        output_path.display(),
+    );
+
+    if !warnings.is_empty() {
+        println!("\n{} warning(s):", warnings.len());
+        for w in &warnings {
+            println!("  - {w}");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_diff(declared_path: &PathBuf, graph_path: &PathBuf) -> anyhow::Result<()> {
+    let declared_yaml = std::fs::read_to_string(declared_path)?;
+    let declared = clawft_graphify::topology::TopologySchema::from_yaml(&declared_yaml)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let kg = load_graph(graph_path)?;
+    let inferred = clawft_graphify::topology_infer::infer_schema(&kg, "inferred");
+
+    let diff = clawft_graphify::topology_infer::diff_schemas(&declared, &inferred);
+
+    println!(
+        "Schema diff: '{}' (declared) vs inferred from graph",
+        declared.name,
+    );
+
+    if diff.is_empty() {
+        println!("\nNo differences — declared schema matches the graph.");
+        return Ok(());
+    }
+
+    if !diff.added_types.is_empty() {
+        println!("\nNew entity types in graph (not in schema):");
+        for t in &diff.added_types {
+            println!("  + {t}");
+        }
+    }
+
+    if !diff.removed_types.is_empty() {
+        println!("\nDeclared types missing from graph:");
+        for t in &diff.removed_types {
+            println!("  - {t}");
+        }
+    }
+
+    if !diff.geometry_changes.is_empty() {
+        println!("\nGeometry mismatches:");
+        for g in &diff.geometry_changes {
+            println!("  ~ {g}");
+        }
+    }
+
+    if !diff.added_edges.is_empty() {
+        println!("\nNew edge types in graph:");
+        for e in &diff.added_edges {
+            println!("  + {e}");
+        }
+    }
+
+    if !diff.removed_edges.is_empty() {
+        println!("\nDeclared edge types missing from graph:");
+        for e in &diff.removed_edges {
+            println!("  - {e}");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_vowl(
+    graph_path: &PathBuf,
+    schema_path: Option<&std::path::Path>,
+    output_path: &PathBuf,
+) -> anyhow::Result<()> {
+    let kg = load_graph(graph_path)?;
+    let schema = load_schema(schema_path)?;
+
+    println!(
+        "Exporting {} nodes, {} edges as VOWL JSON...",
+        kg.entity_count(),
+        kg.relationship_count(),
+    );
+
+    let vowl = clawft_graphify::export::vowl::to_vowl_json(&kg, &schema)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let json = serde_json::to_string_pretty(&vowl)?;
+    std::fs::write(output_path, &json)?;
+
+    println!(
+        "VOWL JSON: {} classes, {} properties → {}",
+        vowl["metrics"]["classCount"],
+        vowl["metrics"]["objectPropertyCount"],
+        output_path.display(),
+    );
 
     Ok(())
 }

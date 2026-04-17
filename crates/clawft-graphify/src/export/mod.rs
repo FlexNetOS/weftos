@@ -2,6 +2,7 @@
 
 pub mod json;
 pub mod obsidian;
+pub mod vowl;
 pub mod wiki;
 
 use std::path::Path;
@@ -26,6 +27,8 @@ pub enum ExportFormat {
     Svg,
     /// Wikipedia-style markdown wiki.
     Wiki,
+    /// VOWL JSON for WebVOWL / topology navigator.
+    Vowl,
 }
 
 impl ExportFormat {
@@ -39,6 +42,7 @@ impl ExportFormat {
             "obsidian" => Some(Self::Obsidian),
             "svg" => Some(Self::Svg),
             "wiki" => Some(Self::Wiki),
+            "vowl" => Some(Self::Vowl),
             _ => None,
         }
     }
@@ -53,6 +57,7 @@ impl ExportFormat {
             Self::Obsidian => "md",
             Self::Svg => "svg",
             Self::Wiki => "md",
+            Self::Vowl => "json",
         }
     }
 }

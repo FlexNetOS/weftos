@@ -33,6 +33,7 @@ pub mod hooks;
 pub mod ingest;
 pub mod layout;
 pub mod topology;
+pub mod topology_infer;
 pub mod validation;
 pub mod vault;
 pub mod watch;
