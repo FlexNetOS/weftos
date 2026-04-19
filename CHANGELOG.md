@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.18] - 2026-04-19
+
+### Fixed
+
+- **graphify ingest/query schema mismatch** (#26): writer now emits
+  `"edges"` (not NetworkX `"links"`) and populates `source_file` on
+  each edge, matching the reader's schema validator. `weaver graphify
+  query` now succeeds immediately after `weaver graphify ingest`
+  without any workaround. `weaver graphify diff` retains backwards
+  compatibility with old `"links"`-format graph.json files.
+
 ## [0.6.17] - 2026-04-17
 
 ### Leaf Push Protocol
