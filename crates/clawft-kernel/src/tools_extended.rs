@@ -613,19 +613,17 @@ fn parse_toml_to_json(input: &str) -> Result<serde_json::Value, String> {
 }
 
 fn ensure_section(root: &mut serde_json::Map<String, serde_json::Value>, path: &str) {
-    let mut current = root as *mut serde_json::Map<String, serde_json::Value>;
-    for segment in path.split('.') {
-        // Safety: we control the mutable references here and never alias
-        let map = unsafe { &mut *current };
-        if !map.contains_key(segment) {
-            map.insert(
-                segment.to_string(),
-                serde_json::Value::Object(serde_json::Map::new()),
-            );
-        }
-        if let Some(serde_json::Value::Object(ref mut inner)) = map.get_mut(segment) {
-            current = inner as *mut serde_json::Map<String, serde_json::Value>;
-        }
+    let segments: Vec<&str> = path.split('.').collect();
+    let mut current = root;
+    for segment in &segments {
+        // Use entry API to safely insert-then-descend without raw pointers.
+        current
+            .entry(segment.to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        current = current
+            .get_mut(*segment)
+            .and_then(|v| v.as_object_mut())
+            .expect("section must be object after or_insert");
     }
 }
 
