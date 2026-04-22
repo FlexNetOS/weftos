@@ -157,6 +157,136 @@ export const ADRS = [
   { n: '058', title: 'Sensor ↔ world-model decoupling invariant', cite: 'Sensor network primary · world model additive · the constitution', hero: true },
 ] as const;
 
+export const SENSORS = [
+  {
+    id: 'rgbd',
+    idx: '01',
+    title: 'RGB-D camera',
+    tagline: 'depth + color stream — primary spatial sensor for grasp planning, free-space, and object identity.',
+    codec: 'depth16 · YUV420 → patch tokens',
+    specs: [
+      { label: 'rate', value: '30 fps · 320 × 180' },
+      { label: 'collect', value: 'novelty gate · MAD on depth Δ' },
+      { label: 'aggregate', value: 'patch tokens · 16×9 grid' },
+      { label: 'encode', value: 'ViT-tiny · 6L · 192d' },
+      { label: 'fallback', value: 'graceful · proprio + lidar fill' },
+    ],
+    tags: ['ADR-056', 'ADR-057'],
+  },
+  {
+    id: 'imu',
+    idx: '02',
+    title: 'IMU · 6-axis',
+    tagline: 'fast inertial sensor — drives the 1 kHz servo loop and bootstraps every prediction.',
+    codec: 'float32 · 6-axis → 1d temporal tokens',
+    specs: [
+      { label: 'rate', value: '1 kHz · 6-axis (acc + gyro)' },
+      { label: 'collect', value: 'ring buffer 100 ms · raw' },
+      { label: 'aggregate', value: 'temporal align with vision' },
+      { label: 'encode', value: 'temporal-CNN → 192d' },
+      { label: 'fallback', value: 'never drops · servo critical' },
+    ],
+    tags: ['ADR-047', 'ADR-056'],
+  },
+  {
+    id: 'proprio',
+    idx: '03',
+    title: 'Proprioception',
+    tagline: '12 joint angles + torques — DEMOCRITUS reads here every millisecond.',
+    codec: 'float32 · 24-channel → joint tokens',
+    specs: [
+      { label: 'rate', value: '1 kHz · 12 joints (θ + τ)' },
+      { label: 'collect', value: 'always-on · authoritative' },
+      { label: 'aggregate', value: 'kinematic chain projection' },
+      { label: 'encode', value: 'GNN over chain → 192d' },
+      { label: 'fallback', value: 'local-only fallback path' },
+    ],
+    tags: ['ADR-047', 'ADR-053'],
+  },
+  {
+    id: 'lidar',
+    idx: '04',
+    title: 'LiDAR · 96-beam',
+    tagline: 'spatial truth — long-range geometry that anchors the visual world model.',
+    codec: 'compressed pointcloud → voxel tokens',
+    specs: [
+      { label: 'rate', value: '20 Hz · 96 beams · 360°' },
+      { label: 'collect', value: 'voxel hash · 10 cm³' },
+      { label: 'aggregate', value: 'sparse-conv · radial bins' },
+      { label: 'encode', value: 'PointTransformer-S → 192d' },
+      { label: 'fallback', value: 'depth-only mode degraded' },
+    ],
+    tags: ['ADR-056', 'ADR-058'],
+  },
+  {
+    id: 'audio',
+    idx: '05',
+    title: 'Audio · 48-mel',
+    tagline: 'event sensor — surprise spikes, voice commands, environment classification.',
+    codec: '16-bit PCM → log-mel spectrogram',
+    specs: [
+      { label: 'rate', value: '16 kHz · 48-mel · 25 ms hop' },
+      { label: 'collect', value: 'VAD gate · energy threshold' },
+      { label: 'aggregate', value: 'mel windows · 1 s context' },
+      { label: 'encode', value: 'audio-ViT-nano → 192d' },
+      { label: 'fallback', value: 'optional · world-model only' },
+    ],
+    tags: ['ADR-053', 'ADR-057'],
+  },
+] as const;
+
+export const DEEPDIVE = {
+  title: 'Inside one sensor pipeline.',
+  subtitle:
+    'Three small models per sensor class. Each is RVF-hosted, separately versioned, separately attested, and hot-swappable at tick alignment with 30-second SIGReg rollback.',
+  collect:
+    'A trained transmit-gate decides what is worth sending. MAD-novelty + saturation gate cut bandwidth ~7× without losing rare-event sensitivity.',
+  aggregate:
+    'Per-modality tokenizers feed a temporal-aligned cross-modal block. Sensor-drop is a contract, not an error: missing modalities degrade quality smoothly.',
+  encode:
+    'A 6-layer ViT-tiny projects to 192d under SIGReg + VICReg. The output is contract-checked against an isotropic Gaussian so any consumer can subscribe uniformly.',
+  caption: 'Three RVF segments · three independent rollback domains · one shared latent contract.',
+} as const;
+
+export const TOPOLOGIES = [
+  {
+    id: 'single',
+    title: 'Single primary',
+    fleet: '1–10 nodes',
+    body:
+      'One WorldModelService for the entire fleet. Local ECC consumers fall back cleanly when it is unreachable. Simplest to operate, the right default for small teams.',
+    props: [
+      'lowest operational overhead',
+      'ServiceUnavailable on outage',
+      'best for early deployments',
+    ],
+  },
+  {
+    id: 'standby',
+    title: 'Raft-elected primary + standby',
+    fleet: '10–500 nodes',
+    body:
+      'Active primary with a hot standby trained off the same ExoChain replay. Failover is a leader election, not a re-train. Standby promotes within seconds.',
+    props: [
+      'subsecond failover',
+      'standby trains off replay',
+      'one authoritative writer',
+    ],
+  },
+  {
+    id: 'p2p',
+    title: 'Peer-to-peer mesh',
+    fleet: '500+ nodes · low-trust',
+    body:
+      'Every node runs its own WorldModelService and gossips checkpoints over mesh. No central authority. Used when fleets cross trust boundaries or partition tolerance dominates.',
+    props: [
+      'no central writer',
+      'gossip-checkpointed',
+      'partition-tolerant by construction',
+    ],
+  },
+] as const;
+
 export const CLOSER = {
   quote:
     'The sensor network is a self-sufficient three-step learned pipeline whose emissions live on a SIGReg manifold so any consumer, including an optional world model, can subscribe uniformly.',
