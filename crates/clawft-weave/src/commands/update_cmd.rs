@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-const REPO: &str = "weave-logic-ai/weftos";
+const REPO: &str = "FlexNetOS/weftos";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Update subcommands.

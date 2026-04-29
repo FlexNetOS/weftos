@@ -16,7 +16,7 @@
 //!   [`lifecycle::governance::StrictGate`] are placeholders; ADR-012 /
 //!   M1.6+ owns the real gate.
 //!
-//! [adr]: https://github.com/weave-logic-ai/weftos/blob/development-0.7.0/.planning/symposiums/compositional-ui/adrs/adr-015-app-manifest.md
+//! [adr]: https://github.com/FlexNetOS/weftos/blob/development-0.7.0/.planning/symposiums/compositional-ui/adrs/adr-015-app-manifest.md
 
 pub mod lifecycle;
 pub mod manifest;

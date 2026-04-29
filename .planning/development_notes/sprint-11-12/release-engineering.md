@@ -13,10 +13,10 @@
 ## Distribution Channels
 | Channel | URL | Status |
 |---------|-----|--------|
-| GitHub Releases | github.com/weave-logic-ai/weftos/releases | Live |
+| GitHub Releases | github.com/FlexNetOS/weftos/releases | Live |
 | crates.io | crates.io/crates/weftos | 10 crates |
 | npm | npmjs.com/package/@weftos/core | @weftos/core 0.1.1 |
-| Docker | ghcr.io/weave-logic-ai/weftos | Multi-arch |
+| Docker | ghcr.io/FlexNetOS/weftos | Multi-arch |
 | Homebrew | weave-logic-ai/homebrew-tap | 3 formulae |
 | Docs | weftos.weavelogic.ai | Fumadocs + rustdoc |
 | docs.rs | docs.rs/weftos | Auto-built |

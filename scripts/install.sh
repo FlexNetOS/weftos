@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://weftos.weavelogic.ai/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/weave-logic-ai/weftos/master/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/FlexNetOS/weftos/master/scripts/install.sh | sh
 #
 # Installs or updates: weft, weaver, weftos
 # Detects platform automatically.
@@ -11,7 +11,7 @@
 
 set -eu
 
-REPO="weave-logic-ai/weftos"
+REPO="FlexNetOS/weftos"
 INSTALL_DIR="${WEFTOS_INSTALL_DIR:-/usr/local/bin}"
 BINS="clawft-cli clawft-weave weftos"
 BIN_NAMES="weft weaver weftos"

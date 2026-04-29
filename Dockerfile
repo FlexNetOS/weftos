@@ -28,7 +28,7 @@ case "$TARGETARCH" in
   *) echo "Unsupported arch: $TARGETARCH"; exit 1 ;;
 esac
 ASSET="clawft-cli-${TRIPLE}.tar.gz"
-URL="https://github.com/weave-logic-ai/weftos/releases/download/v${VERSION}/${ASSET}"
+URL="https://github.com/FlexNetOS/weftos/releases/download/v${VERSION}/${ASSET}"
 echo "Downloading ${URL}"
 wget -qO- "$URL" | tar xz --strip-components=1 -C /usr/local/bin/
 chmod +x /usr/local/bin/weft

@@ -15,7 +15,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 const CDN_ORIGIN =
   process.env.CDN_ORIGIN ||
-  'https://github.com/weave-logic-ai/weftos/releases/download/cdn-assets';
+  'https://github.com/FlexNetOS/weftos/releases/download/cdn-assets';
 
 const MIME_TYPES: Record<string, string> = {
   '.js': 'application/javascript',
