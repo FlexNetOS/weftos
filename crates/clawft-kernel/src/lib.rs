@@ -54,7 +54,7 @@
 //! | [`clawft-llm`](https://crates.io/crates/clawft-llm) | LLM provider abstraction (11 providers + local) |
 //! | [`exo-resource-tree`](https://crates.io/crates/exo-resource-tree) | Hierarchical resource namespace with Merkle integrity |
 //!
-//! Source: <https://github.com/weave-logic-ai/weftos>
+//! Source: <https://github.com/FlexNetOS/weftos>
 
 // ── ECC cognitive substrate modules (K3c) ────────────────────────
 #[cfg(feature = "ecc")]

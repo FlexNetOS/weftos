@@ -39,7 +39,7 @@ if [[ "${1:-}" == "--local" ]]; then
         "$ROOT/scripts/build-kb.sh"
     fi
 else
-    REPO="${GITHUB_REPOSITORY:-weave-logic-ai/weftos}"
+    REPO="${GITHUB_REPOSITORY:-FlexNetOS/weftos}"
     TAG="cdn-assets"
     BASE="https://github.com/$REPO/releases/download/$TAG"
 

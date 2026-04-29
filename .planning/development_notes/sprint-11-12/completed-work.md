@@ -30,7 +30,7 @@ ONNX WordPiece tokenizer, sparse Lanczos spectral analysis, HNSW deferred rebuil
 - GitHub Releases: 3 binaries × 7 native targets + WASI
 - crates.io: 10 crates (weftos, clawft-core/kernel/types/platform/plugin/llm, exo-resource-tree, weftos-rvf-crypto, weftos-rvf-wire)
 - npm: @weftos/core (WASM browser module)
-- Docker: ghcr.io/weave-logic-ai/weftos (distroless, multi-arch)
+- Docker: ghcr.io/FlexNetOS/weftos (distroless, multi-arch)
 - Homebrew: weave-logic-ai/homebrew-tap (3 formulae)
 - Docs: weftos.weavelogic.ai (Fumadocs 65+ pages + 1,014 rustdoc API pages)
 
@@ -42,7 +42,7 @@ ONNX WordPiece tokenizer, sparse Lanczos spectral analysis, HNSW deferred rebuil
 - Landing page with install CTA
 
 ### HP Decisions
-- HP-14: GitHub URL → weave-logic-ai/weftos
+- HP-14: GitHub URL → FlexNetOS/weftos
 - HP-15: Crate names → weftos-* for forks, clawft-* for framework
 - HP-16: WASM target → wasm32-wasip2
 
@@ -96,7 +96,7 @@ See `.claude/skills/weftos-build-deploy/SKILL.md` for the complete release proce
 cargo check --workspace
 git add Cargo.toml Cargo.lock && git commit -m "chore: bump to X.Y.Z"
 git push origin master && git tag vX.Y.Z && git push origin vX.Y.Z
-# Monitor: gh run list --repo weave-logic-ai/weftos --limit 3
+# Monitor: gh run list --repo FlexNetOS/weftos --limit 3
 ```
 
 ### Gotchas

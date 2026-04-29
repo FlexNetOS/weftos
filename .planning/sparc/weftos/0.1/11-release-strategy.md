@@ -119,7 +119,7 @@ Each archive contains: binary, LICENSE, shell completions (bash/zsh/fish), SHA25
 
 | Image | Registry | Platforms | Base |
 |-------|----------|-----------|------|
-| `ghcr.io/weave-logic-ai/weftos` | GHCR (primary) | linux/amd64, linux/arm64 | `distroless/cc-debian12` |
+| `ghcr.io/FlexNetOS/weftos` | GHCR (primary) | linux/amd64, linux/arm64 | `distroless/cc-debian12` |
 | `docker.io/weftos/weftos` | Docker Hub (mirror) | linux/amd64, linux/arm64 | same |
 
 **Tagging strategy**:
@@ -152,12 +152,12 @@ Auto-updater via `tauri-plugin-updater` using GitHub Releases as backend. Ed2551
 | **1** | GitHub Releases | Download binary | ~30 seconds | 1 |
 | **2** | Install script | `curl -fsSL https://install.weftos.dev \| sh` | ~5 seconds | 1 |
 | **3** | cargo binstall | `cargo binstall weftos` | ~10 seconds | 1 |
-| **4** | Docker | `docker run ghcr.io/weave-logic-ai/weftos` | ~15 seconds | 1 |
+| **4** | Docker | `docker run ghcr.io/FlexNetOS/weftos` | ~15 seconds | 1 |
 | **5** | Homebrew | `brew install weavelogic/tap/weftos` | ~10 seconds | 2 |
 | **6** | cargo install | `cargo install weftos` | ~3 minutes | 2 |
 | **7** | npm (WASM) | `npm install @weftos/core` | ~10 seconds | 2 |
 | **8** | npm (binary wrapper) | `npx weftos@latest` | ~10 seconds | 3 |
-| **9** | Nix flake | `nix run github:weave-logic-ai/weftos` | ~seconds | 3 |
+| **9** | Nix flake | `nix run github:FlexNetOS/weftos` | ~seconds | 3 |
 | **10** | AUR | `yay -S weftos-bin` | ~10 seconds | 3 |
 | **11** | Tauri desktop | Download .dmg/.msi/.AppImage | ~30 seconds | 3 |
 

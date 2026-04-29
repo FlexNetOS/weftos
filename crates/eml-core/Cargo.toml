@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "EML (exp-ln) universal function approximation — O(1) learned functions from data"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/weave-logic-ai/weftos"
+repository = "https://github.com/FlexNetOS/weftos"
 keywords = ["machine-learning", "symbolic-regression", "approximation", "eml"]
 
 [features]

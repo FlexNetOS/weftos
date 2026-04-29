@@ -834,7 +834,7 @@ data structure as an interactive, drillable topology graph.
 ### Fixed
 
 - **Browser WASM CI**: Pinned wasm-bindgen-cli to v0.2.108 (matches Cargo.lock)
-- **Wrong URLs**: Fixed all `github.com/clawft/clawft` to `weave-logic-ai/weftos` and `ghcr.io/clawft/clawft` to `weave-logic-ai/weftos` across 6 doc files
+- **Wrong URLs**: Fixed all `github.com/clawft/clawft` to `FlexNetOS/weftos` and `ghcr.io/clawft/clawft` to `FlexNetOS/weftos` across 6 doc files
 - **Test badge**: Updated from 3,300+ to 3,900+ on homepage
 - **Crate count**: Updated from 22 to 23 (added clawft-rpc)
 - **Glossary**: Added entries for clawft-rpc, AssessmentService, Analyzer/AnalyzerRegistry
@@ -953,23 +953,23 @@ data structure as an interactive, drillable topology graph.
 - Release profile with LTO, strip, single codegen unit, and abort-on-panic
 - 1,029 tests across the workspace
 
-[0.6.6]: https://github.com/weave-logic-ai/weftos/compare/v0.6.5...v0.6.6
-[0.6.5]: https://github.com/weave-logic-ai/weftos/compare/v0.6.4...v0.6.5
-[0.6.4]: https://github.com/weave-logic-ai/weftos/compare/v0.6.3...v0.6.4
-[0.6.3]: https://github.com/weave-logic-ai/weftos/compare/v0.6.2...v0.6.3
-[0.6.2]: https://github.com/weave-logic-ai/weftos/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/weave-logic-ai/weftos/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/weave-logic-ai/weftos/compare/v0.5.5...v0.6.0
-[0.5.5]: https://github.com/weave-logic-ai/weftos/compare/v0.5.4...v0.5.5
-[0.5.4]: https://github.com/weave-logic-ai/weftos/compare/v0.5.3...v0.5.4
-[0.5.3]: https://github.com/weave-logic-ai/weftos/compare/v0.5.2...v0.5.3
-[0.5.2]: https://github.com/weave-logic-ai/weftos/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/weave-logic-ai/weftos/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/weave-logic-ai/weftos/compare/v0.4.3...v0.5.0
-[0.4.3]: https://github.com/weave-logic-ai/weftos/compare/v0.4.2...v0.4.3
-[0.4.2]: https://github.com/weave-logic-ai/weftos/compare/v0.4.1...v0.4.2
-[0.4.1]: https://github.com/weave-logic-ai/weftos/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/weave-logic-ai/weftos/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/weave-logic-ai/weftos/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/weave-logic-ai/weftos/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/weave-logic-ai/weftos/releases/tag/v0.1.0
+[0.6.6]: https://github.com/FlexNetOS/weftos/compare/v0.6.5...v0.6.6
+[0.6.5]: https://github.com/FlexNetOS/weftos/compare/v0.6.4...v0.6.5
+[0.6.4]: https://github.com/FlexNetOS/weftos/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/FlexNetOS/weftos/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/FlexNetOS/weftos/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/FlexNetOS/weftos/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/FlexNetOS/weftos/compare/v0.5.5...v0.6.0
+[0.5.5]: https://github.com/FlexNetOS/weftos/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/FlexNetOS/weftos/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/FlexNetOS/weftos/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/FlexNetOS/weftos/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/FlexNetOS/weftos/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/FlexNetOS/weftos/compare/v0.4.3...v0.5.0
+[0.4.3]: https://github.com/FlexNetOS/weftos/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/FlexNetOS/weftos/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/FlexNetOS/weftos/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/FlexNetOS/weftos/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/FlexNetOS/weftos/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/FlexNetOS/weftos/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/FlexNetOS/weftos/releases/tag/v0.1.0
