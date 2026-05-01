@@ -1,0 +1,223 @@
+{
+  "repo": "weftos",
+  "total_md": 226,
+  "considered_md": 225,
+  "exact_duplicate_groups": [],
+  "near_duplicate_pairs": [
+    {
+      "a": ".claude/skills/weftos-ecc/WEAVER.md",
+      "b": "agents/weftos-ecc/WEAVER.md",
+      "jaccard": 0.945
+    },
+    {
+      "a": "gui/README.md",
+      "b": "clawft-ui/README.md",
+      "jaccard": 0.819
+    }
+  ],
+  "potential_contradictions": [
+    {
+      "label": "rust_version",
+      "value_a": "1.93",
+      "value_b": "1.85",
+      "files_a": [
+        "README.md",
+        "docs/deployment/release.md",
+        "docs/deployment/wasm.md",
+        "docs/development/contributing.md",
+        "docs/getting-started/quickstart.md"
+      ],
+      "files_b": [
+        "docs/adr/adr-037-rust-edition-2024-msrv.md"
+      ]
+    },
+    {
+      "label": "rust_version",
+      "value_a": "1.93",
+      "value_b": "1.66",
+      "files_a": [
+        "README.md",
+        "docs/deployment/release.md",
+        "docs/deployment/wasm.md",
+        "docs/development/contributing.md",
+        "docs/getting-started/quickstart.md"
+      ],
+      "files_b": [
+        "docs/architecture/wasm-browser-portability-analysis.md"
+      ]
+    },
+    {
+      "label": "rust_version",
+      "value_a": "1.85",
+      "value_b": "1.66",
+      "files_a": [
+        "docs/adr/adr-037-rust-edition-2024-msrv.md"
+      ],
+      "files_b": [
+        "docs/architecture/wasm-browser-portability-analysis.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "18",
+      "value_b": "2",
+      "files_a": [
+        "README.md",
+        "docs/weftos/INSTALL.md"
+      ],
+      "files_b": [
+        "docs/weftos/k3-symposium/02-lifecycle-chain-integrity.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "18",
+      "value_b": "20",
+      "files_a": [
+        "README.md",
+        "docs/weftos/INSTALL.md"
+      ],
+      "files_b": [
+        "docs/ui/developer-guide.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "18",
+      "value_b": "8",
+      "files_a": [
+        "README.md",
+        "docs/weftos/INSTALL.md"
+      ],
+      "files_b": [
+        "docs/weftos/k5-symposium/04-k6-implementation-plan.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "2",
+      "value_b": "20",
+      "files_a": [
+        "docs/weftos/k3-symposium/02-lifecycle-chain-integrity.md"
+      ],
+      "files_b": [
+        "docs/ui/developer-guide.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "2",
+      "value_b": "8",
+      "files_a": [
+        "docs/weftos/k3-symposium/02-lifecycle-chain-integrity.md"
+      ],
+      "files_b": [
+        "docs/weftos/k5-symposium/04-k6-implementation-plan.md"
+      ]
+    },
+    {
+      "label": "node_version",
+      "value_a": "20",
+      "value_b": "8",
+      "files_a": [
+        "docs/ui/developer-guide.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md"
+      ],
+      "files_b": [
+        "docs/weftos/k5-symposium/04-k6-implementation-plan.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.3.1",
+      "value_b": "0.1",
+      "files_a": [
+        "docs/guides/weftos-deployment-sops.md"
+      ],
+      "files_b": [
+        ".claude/skills/weftos-build-deploy/SKILL.md",
+        "docs/weftos/sprint11-symposium/00-opening-plenary.md",
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/10-symposium-synthesis.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.3.1",
+      "value_b": "0.1.0",
+      "files_a": [
+        "docs/guides/weftos-deployment-sops.md"
+      ],
+      "files_b": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md",
+        "docs/weftos/sprint11-symposium/07-algorithmic-optimization.md",
+        "docs/weftos/sprint11-symposium/09-optimization-plan.md",
+        "docs/weftos/sprint11-symposium/v0.1.0-release-notes.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.3.1",
+      "value_b": "0.2",
+      "files_a": [
+        "docs/guides/weftos-deployment-sops.md"
+      ],
+      "files_b": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/06-mentra-integration.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.1",
+      "value_b": "0.1.0",
+      "files_a": [
+        ".claude/skills/weftos-build-deploy/SKILL.md",
+        "docs/weftos/sprint11-symposium/00-opening-plenary.md",
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/10-symposium-synthesis.md"
+      ],
+      "files_b": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md",
+        "docs/weftos/sprint11-symposium/07-algorithmic-optimization.md",
+        "docs/weftos/sprint11-symposium/09-optimization-plan.md",
+        "docs/weftos/sprint11-symposium/v0.1.0-release-notes.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.1",
+      "value_b": "0.2",
+      "files_a": [
+        ".claude/skills/weftos-build-deploy/SKILL.md",
+        "docs/weftos/sprint11-symposium/00-opening-plenary.md",
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/10-symposium-synthesis.md"
+      ],
+      "files_b": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/06-mentra-integration.md"
+      ]
+    },
+    {
+      "label": "weftos_version",
+      "value_a": "0.1.0",
+      "value_b": "0.2",
+      "files_a": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/03-release-engineering.md",
+        "docs/weftos/sprint11-symposium/07-algorithmic-optimization.md",
+        "docs/weftos/sprint11-symposium/09-optimization-plan.md",
+        "docs/weftos/sprint11-symposium/v0.1.0-release-notes.md"
+      ],
+      "files_b": [
+        "docs/weftos/sprint11-symposium/00-symposium-plan.md",
+        "docs/weftos/sprint11-symposium/06-mentra-integration.md"
+      ]
+    }
+  ]
+}
