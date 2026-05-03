@@ -30,12 +30,20 @@ RESP=$(curl -sS -X POST "${N8N_HOST}/webhook/kb-query" \
 echo "$RESP" | python3 -m json.tool
 
 echo "==> 4/4 assert"
-python3 - <<PY
-import json, sys
-r = json.loads('''$RESP''')
+# Pass the response through the environment, not via heredoc interpolation.
+# An unquoted `<<PY` heredoc lets the shell expand `$RESP` into the script
+# body, after which Python re-interprets backslash sequences inside the
+# resulting string literal — turning JSON-encoded `\n` into raw newlines and
+# making `json.loads` choke on "invalid control character". Quoting the
+# heredoc and reading from os.environ keeps the JSON byte-for-byte intact.
+export _VERIFY_RESP="$RESP"
+python3 - <<'PY'
+import json, os
+r = json.loads(os.environ["_VERIFY_RESP"])
 hits = r.get("hits", [])
 assert hits, f"no hits returned: {r}"
 top = hits[0]
 assert top.get("score", 0) > 0, f"top hit has zero score: {top}"
 print(f"OK — {len(hits)} hits, top score={top['score']:.3f} path={top.get('source_path')}")
 PY
+unset _VERIFY_RESP

@@ -99,6 +99,14 @@ _memories: list[Memory] = []
 
 
 def _persist() -> None:
+    """Write `_memories` to disk via an atomic rename.
+
+    Lock precondition: callers MUST hold ``_lock`` for the duration of this
+    call. We iterate ``_memories`` directly and a concurrent writer (e.g.
+    ``create_memory`` / ``delete_memory``) would otherwise mutate the list
+    mid-iteration. All current call sites are inside ``with _lock:`` blocks;
+    new endpoints that touch ``_memories`` must do the same.
+    """
     tmp = DB_PATH.with_suffix(".tmp")
     with tmp.open("w") as fh:
         for m in _memories:
