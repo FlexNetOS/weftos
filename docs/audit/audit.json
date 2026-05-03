@@ -1,14 +1,9 @@
 {
   "repo": "weftos",
-  "total_md": 226,
-  "considered_md": 225,
+  "total_md": 229,
+  "considered_md": 228,
   "exact_duplicate_groups": [],
   "near_duplicate_pairs": [
-    {
-      "a": ".claude/skills/weftos-ecc/WEAVER.md",
-      "b": "agents/weftos-ecc/WEAVER.md",
-      "jaccard": 0.945
-    },
     {
       "a": "gui/README.md",
       "b": "clawft-ui/README.md",

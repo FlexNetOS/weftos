@@ -26,6 +26,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Keep in sync with scripts/audit/_common.py::EXCLUDE_DIRS. The ingest and
+# audit scripts walk the same markdown tree but live in different
+# top-level dirs (scripts/n8n/ vs scripts/audit/) so we duplicate the
+# constant rather than introduce a cross-dir import. If you add a new
+# cache/output directory here, mirror it there.
 EXCLUDE_DIRS = {
     ".git", "node_modules", "target", ".cargo", "dist", "build",
     ".next", ".turbo", ".pnpm-store", ".planning",
