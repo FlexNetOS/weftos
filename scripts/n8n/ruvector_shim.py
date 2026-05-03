@@ -99,14 +99,6 @@ _memories: list[Memory] = []
 
 
 def _persist() -> None:
-    """Write `_memories` to disk via an atomic rename.
-
-    Lock precondition: callers MUST hold ``_lock`` for the duration of this
-    call. We iterate ``_memories`` directly and a concurrent writer (e.g.
-    ``create_memory`` / ``delete_memory``) would otherwise mutate the list
-    mid-iteration. All current call sites are inside ``with _lock:`` blocks;
-    new endpoints that touch ``_memories`` must do the same.
-    """
     tmp = DB_PATH.with_suffix(".tmp")
     with tmp.open("w") as fh:
         for m in _memories:
@@ -141,8 +133,6 @@ def health() -> dict[str, str]:
 
 @app.get("/v1/status")
 def status() -> dict[str, Any]:
-    # Snapshot under the lock so concurrent writes can't mutate the list
-    # mid-iteration. Subsequent aggregation is over the local snapshot.
     with _lock:
         snapshot = list(_memories)
     by_ns: dict[str, int] = {}
@@ -159,6 +149,9 @@ def status() -> dict[str, Any]:
 @app.post("/v1/memories", status_code=201)
 def create_memory(req: CreateMemory) -> dict[str, Any]:
     content_hash = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
+    # Compute the embedding outside the lock — it's pure CPU work, only
+    # depends on req.content, and would otherwise serialize all writers.
+    embedding = _embed(req.content)
     with _lock:
         # Deduplicate by (namespace, content_hash)
         for m in _memories:
@@ -171,7 +164,7 @@ def create_memory(req: CreateMemory) -> dict[str, Any]:
             namespace=req.namespace,
             tags=list(req.tags),
             metadata=dict(req.metadata),
-            embedding=_embed(req.content),
+            embedding=embedding,
             created_at=time.time(),
             content_hash=content_hash,
         )
@@ -185,8 +178,6 @@ def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
     if not q:
         raise HTTPException(400, "missing q")
     qv = _embed(q)
-    # Snapshot under the lock; cosine scoring is then O(n) over the local
-    # snapshot without blocking writers.
     with _lock:
         snapshot = list(_memories)
     scored: list[tuple[float, Memory]] = []
@@ -216,9 +207,13 @@ def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, An
         snapshot = list(_memories)
     items = [m for m in snapshot if (namespace is None or m.namespace == namespace)]
     items.sort(key=lambda m: -m.created_at)
+    matching_total = len(items)
     items = items[: max(1, min(limit, 1000))]
     return {
-        "total": len(items),
+        # 'total' is the count of matching memories before truncation, so
+        # callers can detect when more rows exist than were returned.
+        "total": matching_total,
+        "returned": len(items),
         "items": [
             {
                 "id": m.id,
@@ -236,9 +231,10 @@ def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, An
 @app.get("/v1/memories/{mid}")
 def get_memory(mid: str) -> dict[str, Any]:
     with _lock:
-        for m in _memories:
-            if m.id == mid:
-                return m.model_dump()
+        snapshot = list(_memories)
+    for m in snapshot:
+        if m.id == mid:
+            return m.model_dump()
     raise HTTPException(404, "not found")
 
 
