@@ -67,6 +67,25 @@ The same workflows work against three RuVector-compatible backends:
 
 Switching backends is a single env-var change with no workflow edits.
 
+### Port-conflict note
+
+Both this dev stack and the root `docker-compose.yml` (which runs
+`weftos-node`) bind host port `8080`. They are independent compose
+projects, so docker won't warn about it — but if you bring both up on
+the same host you'll see a bind error. Resolve by remapping the shim:
+
+```yaml
+# scripts/n8n/docker-compose.yml — override the host side only
+ruvector:
+  ports:
+    - "18080:8080"
+```
+
+…and update `RUVECTOR_BASE_URL` accordingly when running the host-side
+helpers (`import_workflows.py`, `ingest_docs.py`, `verify.sh`). Inside
+the n8n container the upstream URL stays `http://ruvector:8080` because
+the containers share an internal network.
+
 ## Trigger surface
 
 | Webhook                                 | Method | Purpose |
