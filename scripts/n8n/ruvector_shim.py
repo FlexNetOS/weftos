@@ -133,11 +133,15 @@ def health() -> dict[str, str]:
 
 @app.get("/v1/status")
 def status() -> dict[str, Any]:
+    # Snapshot under the lock so concurrent writes can't mutate the list
+    # mid-iteration. Subsequent aggregation is over the local snapshot.
+    with _lock:
+        snapshot = list(_memories)
     by_ns: dict[str, int] = {}
-    for m in _memories:
+    for m in snapshot:
         by_ns[m.namespace] = by_ns.get(m.namespace, 0) + 1
     return {
-        "total": len(_memories),
+        "total": len(snapshot),
         "namespaces": by_ns,
         "embed_dim": EMBED_DIM,
         "backend": "ruvector-shim (NOT for production use)",
@@ -173,8 +177,12 @@ def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
     if not q:
         raise HTTPException(400, "missing q")
     qv = _embed(q)
+    # Snapshot under the lock; cosine scoring is then O(n) over the local
+    # snapshot without blocking writers.
+    with _lock:
+        snapshot = list(_memories)
     scored: list[tuple[float, Memory]] = []
-    for m in _memories:
+    for m in snapshot:
         if namespace and m.namespace != namespace:
             continue
         scored.append((_cosine(qv, m.embedding), m))
@@ -196,7 +204,9 @@ def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
 
 @app.get("/v1/memories/list")
 def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, Any]:
-    items = [m for m in _memories if (namespace is None or m.namespace == namespace)]
+    with _lock:
+        snapshot = list(_memories)
+    items = [m for m in snapshot if (namespace is None or m.namespace == namespace)]
     items.sort(key=lambda m: -m.created_at)
     items = items[: max(1, min(limit, 1000))]
     return {
@@ -217,9 +227,10 @@ def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, An
 
 @app.get("/v1/memories/{mid}")
 def get_memory(mid: str) -> dict[str, Any]:
-    for m in _memories:
-        if m.id == mid:
-            return m.model_dump()
+    with _lock:
+        for m in _memories:
+            if m.id == mid:
+                return m.model_dump()
     raise HTTPException(404, "not found")
 
 

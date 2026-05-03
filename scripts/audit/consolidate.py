@@ -8,14 +8,8 @@ verbatim in `docs/audit/AUDIT_REPORT.md` so no information is lost.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
-
-
-def repo_relpath(canonical: Path, duplicate: Path) -> str:
-    """Compute the canonical path relative to the duplicate's directory."""
-    return os.path.relpath(canonical, duplicate.parent)
 
 
 def stub_for(canonical_rel_to_root: str, repo_label: str) -> str:
