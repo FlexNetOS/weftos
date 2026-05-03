@@ -51,6 +51,17 @@ WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 _lock = threading.Lock()
 
 
+def _norm_ns(ns: str | None) -> str | None:
+    """Coerce empty-string namespace to ``None`` so all read endpoints agree.
+
+    FastAPI maps absent query params to ``None`` and present-but-empty to
+    ``""``. Without this normalisation, ``search`` and ``list_memories``
+    treat ``""`` differently (truthiness vs equality), which would give a
+    direct API caller surprising results.
+    """
+    return ns or None
+
+
 def _embed(text: str) -> list[float]:
     """Deterministic, dependency-free dense embedding (NOT semantic).
 
@@ -99,6 +110,14 @@ _memories: list[Memory] = []
 
 
 def _persist() -> None:
+    """Write ``_memories`` to disk via an atomic rename.
+
+    Lock precondition: callers MUST hold ``_lock`` for the duration of this
+    call. We iterate ``_memories`` directly and a concurrent writer (e.g.
+    ``create_memory`` / ``delete_memory``) would otherwise mutate the list
+    mid-iteration. All current call sites are inside ``with _lock:`` blocks;
+    new endpoints that touch ``_memories`` must do the same.
+    """
     tmp = DB_PATH.with_suffix(".tmp")
     with tmp.open("w") as fh:
         for m in _memories:
@@ -147,16 +166,21 @@ def status() -> dict[str, Any]:
 
 
 @app.post("/v1/memories", status_code=201)
-def create_memory(req: CreateMemory) -> dict[str, Any]:
+def create_memory(req: CreateMemory) -> Any:
     content_hash = hashlib.sha256(req.content.encode("utf-8")).hexdigest()
     # Compute the embedding outside the lock — it's pure CPU work, only
     # depends on req.content, and would otherwise serialize all writers.
     embedding = _embed(req.content)
     with _lock:
-        # Deduplicate by (namespace, content_hash)
+        # Deduplicate by (namespace, content_hash). On a hit, return 200 OK
+        # because no resource was created; the route default of 201 only
+        # applies on the create-path return below.
         for m in _memories:
             if m.namespace == req.namespace and m.content_hash == content_hash:
-                return {"id": m.id, "deduplicated": True, "content_hash": content_hash}
+                return JSONResponse(
+                    status_code=200,
+                    content={"id": m.id, "deduplicated": True, "content_hash": content_hash},
+                )
         m = Memory(
             id=uuid.uuid4().hex,
             content=req.content,
@@ -177,12 +201,13 @@ def create_memory(req: CreateMemory) -> dict[str, Any]:
 def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
     if not q:
         raise HTTPException(400, "missing q")
+    namespace = _norm_ns(namespace)
     qv = _embed(q)
     with _lock:
         snapshot = list(_memories)
     scored: list[tuple[float, Memory]] = []
     for m in snapshot:
-        if namespace and m.namespace != namespace:
+        if namespace is not None and m.namespace != namespace:
             continue
         scored.append((_cosine(qv, m.embedding), m))
     scored.sort(key=lambda t: -t[0])
@@ -203,6 +228,7 @@ def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
 
 @app.get("/v1/memories/list")
 def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, Any]:
+    namespace = _norm_ns(namespace)
     with _lock:
         snapshot = list(_memories)
     items = [m for m in snapshot if (namespace is None or m.namespace == namespace)]

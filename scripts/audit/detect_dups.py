@@ -20,9 +20,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
-EXCLUDE_DIRS = {".git", "node_modules", "target", ".cargo", "dist", "build",
-                ".next", ".turbo", ".pnpm-store", ".planning"}
-# .planning in weftos is session-scratch, not knowledge.
+from _common import EXCLUDE_DIRS
 
 WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 

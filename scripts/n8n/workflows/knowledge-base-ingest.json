@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalise both single-doc and batch payloads into a flat list of docs.\nconst items = [];\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const namespace = body.namespace || 'ruvector-docs';\n  if (Array.isArray(body.docs)) {\n    for (const d of body.docs) items.push({ json: { ...d, namespace } });\n  } else if (body.content) {\n    items.push({ json: { ...body, namespace } });\n  }\n}\nreturn items;\n"
+        "jsCode": "// Normalise both single-doc and batch payloads into a flat list of docs.\nconst defaultNs = $env.RUVECTOR_NAMESPACE || 'weftos-docs';\nconst items = [];\nfor (const item of $input.all()) {\n  const body = item.json.body || item.json;\n  const namespace = body.namespace || defaultNs;\n  if (Array.isArray(body.docs)) {\n    for (const d of body.docs) items.push({ json: { ...d, namespace } });\n  } else if (body.content) {\n    items.push({ json: { ...body, namespace } });\n  }\n}\nreturn items;\n"
       },
       "id": "fn-flatten",
       "name": "Flatten payload",

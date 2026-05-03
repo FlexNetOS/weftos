@@ -13,10 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-
-def repo_relpath(canonical: Path, duplicate: Path) -> str:
-    """Compute the canonical path relative to the duplicate's directory."""
-    return os.path.relpath(canonical, duplicate.parent)
+from _common import EXCLUDE_DIRS
 
 
 def stub_for(canonical_rel_to_root: str, repo_label: str) -> str:
@@ -32,49 +29,81 @@ def stub_for(canonical_rel_to_root: str, repo_label: str) -> str:
     )
 
 
-_EXCLUDE_DIRS = {".git", "node_modules", "target", "dist", "build", ".next", ".turbo"}
-
-
 def _iter_md_files(root: Path) -> list[Path]:
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _EXCLUDE_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for fn in filenames:
             if fn.lower().endswith(".md"):
                 out.append(Path(dirpath) / fn)
     return out
 
 
-def find_incoming_links(root: Path, target: Path) -> list[tuple[Path, int, str]]:
-    """Return [(file, line_number, link_text)] of markdown links pointing at *target*.
+# Markdown-style link: `](href)`. Captured group is the href.
+_MD_LINK_RE = re.compile(r"\]\(([^)#?\s]+)")
+# Backtick-quoted .md path reference, e.g. `` `agents/weftos-ecc/WEAVER.md` ``.
+# We require the path to end in .md so plain inline-code spans like
+# `_lock` or `serde_json` don't match.
+_BACKTICK_MD_RE = re.compile(r"`([^`\s]+\.md)`")
 
-    A link is considered to point at *target* if the link path, resolved
-    relative to the linking file's directory, equals *target*.
+
+def _iter_link_hrefs(line: str) -> list[tuple[str, str]]:
+    """Yield ``(kind, href)`` for markdown links and backtick .md refs on a line.
+
+    ``kind`` is ``"md"`` for ``](href)`` matches and ``"bt"`` for backtick
+    refs. The two are resolved differently: markdown links are relative to
+    the linking file (or repo-root if ``/``-prefixed), while backtick refs
+    are typically repo-root paths used as prose labels and should be resolved
+    that way first.
+    """
+    out: list[tuple[str, str]] = []
+    out.extend(("md", h) for h in _MD_LINK_RE.findall(line))
+    out.extend(("bt", h) for h in _BACKTICK_MD_RE.findall(line))
+    return out
+
+
+def _resolve_candidates(root: Path, md: Path, kind: str, href: str) -> list[Path]:
+    """Return possible filesystem resolutions of ``href`` from file ``md``."""
+    if href.startswith(("http://", "https://", "mailto:")):
+        return []
+    candidates: list[Path] = []
+    try:
+        if href.startswith("/"):
+            candidates.append((root / href.lstrip("/")).resolve())
+        elif kind == "bt":
+            # Backtick refs are usually repo-root paths in prose. Try root
+            # first, then fall back to relative-to-file in case the author
+            # actually meant a sibling path.
+            candidates.append((root / href).resolve())
+            candidates.append((md.parent / href).resolve())
+        else:
+            candidates.append((md.parent / href).resolve())
+    except Exception:
+        return []
+    return candidates
+
+
+def find_incoming_links(root: Path, target: Path) -> list[tuple[Path, int, str]]:
+    """Return [(file, line_number, link_text)] of references pointing at *target*.
+
+    Detects both markdown link syntax ``](href)`` and backtick-quoted .md
+    path references ``` `path/to/x.md` ```. Backtick refs are resolved as
+    repo-root paths first (the dominant convention in our docs), then as
+    paths relative to the linking file's directory.
     """
     root = root.resolve()
     target = target.resolve()
     hits: list[tuple[Path, int, str]] = []
-    link_re = re.compile(r"\]\(([^)#?\s]+)")
     for md in _iter_md_files(root):
         if md.resolve() == target:
             continue
         try:
             for lineno, line in enumerate(md.read_text(errors="replace").splitlines(), 1):
-                for m in link_re.finditer(line):
-                    href = m.group(1)
-                    if href.startswith(("http://", "https://", "mailto:")):
-                        continue
-                    try:
-                        if href.startswith("/"):
-                            # Treat root-relative hrefs (the form used by our own
-                            # consolidation stubs) as relative to the repo root.
-                            resolved = (root / href.lstrip("/")).resolve()
-                        else:
-                            resolved = (md.parent / href).resolve()
-                    except Exception:
-                        continue
-                    if resolved == target:
-                        hits.append((md, lineno, line.strip()))
+                for kind, href in _iter_link_hrefs(line):
+                    for resolved in _resolve_candidates(root, md, kind, href):
+                        if resolved == target:
+                            hits.append((md, lineno, line.strip()))
+                            break
         except Exception:
             continue
     return hits

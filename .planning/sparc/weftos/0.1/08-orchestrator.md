@@ -314,7 +314,7 @@ The WeaverEngine (K3c gaps) has two companion documents:
   runs the HYPOTHESIZE-OBSERVE-EVALUATE-ADJUST loop on causal models via the
   WeaverEngine SystemService.
 
-- **Operator skill**: `agents/weftos-ecc/WEAVER.md` -- the Claude interaction
+- **Operator skill**: `.claude/skills/weftos-ecc/WEAVER.md` -- the Claude interaction
   guide that describes HOW to interact with the WeaverEngine (session
   workflows, CLI commands, confidence interpretation, modeling strategy). This
   skill describes the operator interface; the K3c implementation is the kernel

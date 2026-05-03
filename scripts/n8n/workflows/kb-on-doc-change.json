@@ -31,7 +31,7 @@
         "url": "={{$env.N8N_WEBHOOK_URL || 'http://localhost:5678'}}/webhook/kb-ingest",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"namespace\": \"ruvector-docs\",\n  \"content\": $json.path ? `Doc updated: ${$json.path}` : \"\",\n  \"tags\": [\"ci\", `repo:${$json.repo}`, `sha:${$json.sha}`, `path:${$json.path}`],\n  \"metadata\": { \"repo\": $json.repo, \"sha\": $json.sha, \"source_path\": $json.path, \"trigger\": \"doc-change\" }\n}",
+        "jsonBody": "={\n  \"namespace\": $env.RUVECTOR_NAMESPACE || \"weftos-docs\",\n  \"content\": $json.path ? `Doc updated: ${$json.path}` : \"\",\n  \"tags\": [\"ci\", `repo:${$json.repo}`, `sha:${$json.sha}`, `path:${$json.path}`],\n  \"metadata\": { \"repo\": $json.repo, \"sha\": $json.sha, \"source_path\": $json.path, \"trigger\": \"doc-change\" }\n}",
         "options": {}
       },
       "id": "http-fwd",

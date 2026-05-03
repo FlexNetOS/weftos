@@ -88,7 +88,7 @@ Source: `.weftos/weaver_todo.md` (41 checked items)
 | Document | Covers Weaver | Status |
 |----------|---------------|--------|
 | `docs/src/content/docs/weftos/ecc.mdx` | Yes (updated) | Complete |
-| `agents/weftos-ecc/WEAVER.md` | Yes (updated) | Complete |
+| `.claude/skills/weftos-ecc/WEAVER.md` | Yes (updated) | Complete |
 | `agents/weftos/weaver.md` | Yes | Complete |
 | `docs/weftos/weaver-analysis-clawft.md` | Yes | Complete |
 | `.planning/sparc/weftos/09-ecc-weaver-crate.md` | Yes | Complete |

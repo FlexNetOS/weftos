@@ -12,7 +12,7 @@ Two modes:
 
 Usage:
 
-    python3 scripts/n8n/ingest_docs.py --root . --namespace ruvector-docs
+    python3 scripts/n8n/ingest_docs.py --root . --namespace weftos-docs
     python3 scripts/n8n/ingest_docs.py --root . --target n8n --dry-run
 """
 from __future__ import annotations
@@ -118,7 +118,7 @@ def ingest_via_n8n(url: str, namespace: str, docs: list[dict], dry: bool) -> int
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".", help="repo root to scan")
-    ap.add_argument("--namespace", default=os.environ.get("RUVECTOR_NAMESPACE", "ruvector-docs"))
+    ap.add_argument("--namespace", default=os.environ.get("RUVECTOR_NAMESPACE", "weftos-docs"))
     ap.add_argument(
         "--target",
         choices=["ruvector", "n8n"],

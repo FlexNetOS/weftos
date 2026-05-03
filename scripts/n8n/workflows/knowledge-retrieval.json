@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  q: body.q || body.query || '',\n  k: body.k || 5,\n  namespace: body.namespace || 'ruvector-docs'\n}}];\n"
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  q: body.q || body.query || '',\n  k: body.k || 5,\n  namespace: body.namespace || $env.RUVECTOR_NAMESPACE || 'weftos-docs'\n}}];\n"
       },
       "id": "fn-args",
       "name": "Read args",
