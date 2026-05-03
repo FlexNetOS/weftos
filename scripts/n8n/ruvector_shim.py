@@ -221,7 +221,7 @@ def search(q: str, k: int = 5, namespace: str | None = None) -> dict[str, Any]:
             "metadata": m.metadata,
             "snippet": m.content[:512],
         }
-        for score, m in scored[: max(1, min(k, 50))]
+        for score, m in scored[: min(max(k, 0), 50)]
     ]
     return {"query": q, "k": k, "namespace": namespace, "hits": hits}
 
@@ -234,7 +234,7 @@ def list_memories(namespace: str | None = None, limit: int = 50) -> dict[str, An
     items = [m for m in snapshot if (namespace is None or m.namespace == namespace)]
     items.sort(key=lambda m: -m.created_at)
     matching_total = len(items)
-    items = items[: max(1, min(limit, 1000))]
+    items = items[: min(max(limit, 0), 1000)]
     return {
         # 'total' is the count of matching memories before truncation, so
         # callers can detect when more rows exist than were returned.
