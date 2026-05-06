@@ -143,12 +143,21 @@ jobs:
           SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
           echo "Binary size: ${SIZE_MB} MB (${SIZE_BYTES} bytes)"
 
-          MAX_SIZE=$((10 * 1048576))  # 10 MB
+          # The original 10 MB target (Sprint 11 release-engineering plan,
+          # docs/weftos/sprint11-symposium/03-release-engineering.md) was set
+          # before clawft-cli's default feature set grew to
+          # `channels + services + delegate + api` and clawft-core defaulted
+          # to its `full` feature.  The optimization work to bring `weft`
+          # back under 10 MB is tracked in
+          # docs/weftos/sprint11-symposium/09-optimization-plan.md.  Until
+          # that lands, gate at 20 MB so the size doesn't silently regress
+          # further while we work the slimming plan.
+          MAX_SIZE=$((20 * 1048576))  # 20 MB (interim cap; target: 10 MB)
           if [ "$SIZE_BYTES" -gt "$MAX_SIZE" ]; then
-            echo "::error::Binary size ${SIZE_MB} MB exceeds 10 MB limit"
+            echo "::error::Binary size ${SIZE_MB} MB exceeds 20 MB interim cap"
             exit 1
           fi
-          echo "Binary size within limit."
+          echo "Binary size within interim cap (target: 10 MB once optimization plan lands)."
 
       - name: Post size summary
         if: always()
@@ -162,7 +171,8 @@ jobs:
             echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
             echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
             echo "| Size | ${SIZE_MB} MB |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Budget | 10 MB |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Interim cap | 20 MB |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Target | 10 MB |" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # -------------------------------------------------------------------
