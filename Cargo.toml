@@ -39,6 +39,10 @@ members = [
 ]
 exclude = [
     "gui/src-tauri",
+    # Vendored cognitum-one SDK source. Excluded from the workspace so it
+    # keeps its own (upstream) lint surface and `cargo {check,clippy} --workspace`
+    # never touches it. See `vendor/cognitum-one/VENDORED.md`.
+    "vendor/cognitum-one",
 ]
 
 [workspace.package]
