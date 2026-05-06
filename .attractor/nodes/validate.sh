@@ -2,8 +2,10 @@
 #
 # Attractor node 3: Validate (weftos runtime side).
 #
-# The validate node is the non-negotiable contract: if it fails, the
-# pipeline does NOT distill the trajectory.
+# The validate node is the contract gate: if it fails, the trajectory is
+# still distilled (verdict=fail, see distill.sh "failures train the bank
+# too") but optimize is skipped — there's nothing to optimize when the
+# build is broken. The runner enforces this; nodes don't decide routing.
 #
 # Per CLAUDE.md (lines 43-47), this node MUST go through
 # `scripts/build.sh`, not raw cargo. The full Phase gate is:
@@ -40,14 +42,21 @@ if [ ! -x "$ROOT/scripts/build.sh" ]; then
     exit 1
 fi
 
+# Capture stderr so that when validate fails the operator (or the
+# self-learning loop's identify node) can read why. Stdout stays the
+# pure JSON contract; the audit lives at $stderr_log and is referenced
+# from the JSON output.
+stderr_log="${ROOT}/.attractor/runs/validate.stderr"
+mkdir -p "$(dirname "$stderr_log")"
+
 # Cheapest signal that still uses the canonical entrypoint. The full
 # gate (`scripts/build.sh gate`) runs in CI; this stub keeps local
 # iteration fast while still proving the workspace compiles via the
 # documented entrypoint.
-if "$ROOT/scripts/build.sh" check >/dev/null 2>&1; then
-    echo '{"validated":true,"check":"scripts/build.sh check"}'
+if "$ROOT/scripts/build.sh" check >"$stderr_log" 2>&1; then
+    printf '{"validated":true,"check":"scripts/build.sh check","stderr_log":"%s"}\n' "$stderr_log"
     exit 0
 fi
 
-echo '{"validated":false,"check":"scripts/build.sh check"}'
+printf '{"validated":false,"check":"scripts/build.sh check","stderr_log":"%s","hint":"see stderr_log for build.sh check diagnostics"}\n' "$stderr_log"
 exit 1
