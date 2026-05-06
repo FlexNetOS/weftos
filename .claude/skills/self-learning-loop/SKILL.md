@@ -107,22 +107,27 @@ flags through `scripts/build.sh`**.
 `scripts/build.sh gate` is the single source of truth for "did this
 change pass". The 11 checks (in order):
 
-Source of truth: `scripts/build.sh` lines 367–425. Mirror this list —
-adding/removing items here without updating the script (and vice versa)
-is a documented divergence and a real bug.
+Source of truth: `scripts/build.sh`, in the function dispatched by
+`scripts/build.sh gate` (search for the comment `# 1. Workspace tests`
+and walk down). Mirror this list — adding/removing items here without
+updating the script (and vice versa) is a documented divergence and a
+real bug. Comment-anchor pinning is preferred over line numbers because
+the line numbers drift every time `build.sh` is touched.
 
 1. `cargo test --workspace` — workspace test suite (hard fail).
 2. `cargo build --release --bin weft --bin weaver` — release binaries
    for the daemon and orchestrator (hard fail).
 3. WASI WASM — `cargo build --target wasm32-wasip2 --profile release-wasm
    -p clawft-wasm` (skipped if `wasm32-wasip2` is not installed).
-4. Browser WASM: `clawft-types` (`--target wasm32-unknown-unknown
-   --no-default-features --features browser`, soft fail).
-5. Browser WASM: `clawft-platform` (same flags, soft fail).
-6. Browser WASM: `clawft-core` (same flags, soft fail).
-7. Browser WASM: `clawft-llm` (same flags, soft fail).
-8. Browser WASM: `clawft-tools` (same flags, soft fail).
-9. Browser WASM: `clawft-wasm` (same flags, soft fail).
+4. Browser WASM: `clawft-types` — `cargo check --target
+   wasm32-unknown-unknown --no-default-features --features browser`
+   (soft fail; the script uses `cargo check`, not `cargo build`, to keep
+   the gate fast).
+5. Browser WASM: `clawft-platform` (same `cargo check` invocation, soft fail).
+6. Browser WASM: `clawft-core` (same `cargo check` invocation, soft fail).
+7. Browser WASM: `clawft-llm` (same `cargo check` invocation, soft fail).
+8. Browser WASM: `clawft-tools` (same `cargo check` invocation, soft fail).
+9. Browser WASM: `clawft-wasm` (same `cargo check` invocation, soft fail).
 10. UI build — `(cd ui && npm run build)` (skipped if `ui/` is missing).
 11. Voice feature — `cargo check --features voice -p clawft-plugin`
     (soft fail; tracks optional voice plugin compile).
