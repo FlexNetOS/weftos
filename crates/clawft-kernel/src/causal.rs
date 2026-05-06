@@ -1114,13 +1114,6 @@ impl CausalGraph {
         }
 
         // Step 3: Eigendecompose the small m x m matrix.
-        let _diag: Vec<f64> = (0..m).map(|i| c_mat[i][i]).collect();
-        let _off: Vec<f64> = if m > 1 {
-            (0..m - 1).map(|i| c_mat[i][i + 1]).collect()
-        } else {
-            Vec::new()
-        };
-
         // Use the Jacobi solver on the full matrix (not just tridiagonal).
         let (evals, evecs) = dense_jacobi_eigen(&c_mat, m, max_iter);
 
