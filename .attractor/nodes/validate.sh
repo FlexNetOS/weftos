@@ -42,21 +42,26 @@ if [ ! -x "$ROOT/scripts/build.sh" ]; then
     exit 1
 fi
 
-# Capture stderr so that when validate fails the operator (or the
-# self-learning loop's identify node) can read why. Stdout stays the
-# pure JSON contract; the audit lives at $stderr_log and is referenced
-# from the JSON output.
-stderr_log="${ROOT}/.attractor/runs/validate.stderr"
-mkdir -p "$(dirname "$stderr_log")"
+# Capture build.sh's stdout+stderr to a sidecar build log so the operator
+# (and the self-learning loop's identify node) can diagnose failures.
+# This script's own stdout stays the pure JSON contract.
+build_log="${ROOT}/.attractor/runs/validate.stderr"
+mkdir -p "$(dirname "$build_log")"
+
+# JSON-escape the build_log path before embedding in the contract so a
+# repo root containing \ or " doesn't corrupt the JSONL audit record
+# the runner parses. Mirrors the escape in distill.sh.
+escaped_log="${build_log//\\/\\\\}"
+escaped_log="${escaped_log//\"/\\\"}"
 
 # Cheapest signal that still uses the canonical entrypoint. The full
 # gate (`scripts/build.sh gate`) runs in CI; this stub keeps local
 # iteration fast while still proving the workspace compiles via the
 # documented entrypoint.
-if "$ROOT/scripts/build.sh" check >"$stderr_log" 2>&1; then
-    printf '{"validated":true,"check":"scripts/build.sh check","stderr_log":"%s"}\n' "$stderr_log"
+if "$ROOT/scripts/build.sh" check >"$build_log" 2>&1; then
+    printf '{"validated":true,"check":"scripts/build.sh check","stderr_log":"%s"}\n' "$escaped_log"
     exit 0
 fi
 
-printf '{"validated":false,"check":"scripts/build.sh check","stderr_log":"%s","hint":"see stderr_log for build.sh check diagnostics"}\n' "$stderr_log"
+printf '{"validated":false,"check":"scripts/build.sh check","stderr_log":"%s","hint":"see stderr_log for build.sh check diagnostics"}\n' "$escaped_log"
 exit 1
