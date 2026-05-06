@@ -355,10 +355,11 @@ impl VectorBackend for DiskAnnBackend {
 
         // Effective capacity check.
         let live = entries.len().saturating_sub(ts.len());
-        if let Some(max) = self.effective_max() {
-            if live >= max && !entries.contains_key(&id) {
-                return Err(VectorError::StoreFull { max, current: live });
-            }
+        if let Some(max) = self.effective_max()
+            && live >= max
+            && !entries.contains_key(&id)
+        {
+            return Err(VectorError::StoreFull { max, current: live });
         }
 
         drop(ts);

@@ -947,6 +947,7 @@ pub struct ProbeReport {
 ///
 /// This is the "oracle" call — run it at index build time or when the
 /// corpus distribution shifts significantly.
+#[allow(clippy::needless_range_loop)]
 pub fn probe_corpus(
     corpus: &[Vec<f32>],
     dims: usize,
@@ -1532,7 +1533,7 @@ pub fn run_hnsw_benchmark(
     // but don't change ef.
     let mut store_overhead = build_store(&corpus, static_ef);
     {
-        let mut eml_overhead = HnswEmlManager::new(HnswEmlConfig {
+        let eml_overhead = HnswEmlManager::new(HnswEmlConfig {
             enabled: true,
             ..Default::default()
         });

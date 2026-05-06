@@ -294,11 +294,10 @@ impl A2ARouter {
                 if sinks
                     .iter()
                     .any(|(_, s)| matches!(s, SubscriberSink::ExternalStream(_)))
+                    && let Ok(mut bytes) = serde_json::to_vec(&msg)
                 {
-                    if let Ok(mut bytes) = serde_json::to_vec(&msg) {
-                        bytes.push(b'\n');
-                        external_line = Some(bytes);
-                    }
+                    bytes.push(b'\n');
+                    external_line = Some(bytes);
                 }
 
                 for (_id, sink) in &sinks {
@@ -457,25 +456,25 @@ impl A2ARouter {
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(msg)) => {
-                let rejected_msg = msg;
+                let _rejected_msg = msg;
                 warn!(pid, "inbox full, dead-lettering");
                 #[cfg(feature = "os-patterns")]
                 if let Some(dlq) = self.dead_letter_queue.get() {
                     dlq.intake(
-                        rejected_msg,
+                        _rejected_msg,
                         crate::dead_letter::DeadLetterReason::InboxFull { pid },
                     );
                 }
                 Err(KernelError::Ipc(format!("inbox full for PID {pid}")))
             }
             Err(mpsc::error::TrySendError::Closed(msg)) => {
-                let rejected_msg = msg;
+                let _rejected_msg = msg;
                 warn!(pid, "inbox closed, removing and dead-lettering");
                 self.inboxes.remove(&pid);
                 #[cfg(feature = "os-patterns")]
                 if let Some(dlq) = self.dead_letter_queue.get() {
                     dlq.intake(
-                        rejected_msg,
+                        _rejected_msg,
                         crate::dead_letter::DeadLetterReason::AgentExited { pid },
                     );
                 }

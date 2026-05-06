@@ -1542,16 +1542,16 @@ impl ChainManager {
         // There may be one (Ed25519) or two (Ed25519 + ML-DSA-65) footers.
         let mut has_signature = false;
         let mut has_dual_signature = false;
-        if offset < data.len() {
-            if let Ok(first_footer) = decode_signature_footer(&data[offset..]) {
-                has_signature = true;
-                let first_footer_size = first_footer.footer_length as usize;
-                let next_offset = offset + first_footer_size;
-                if next_offset < data.len() {
-                    if decode_signature_footer(&data[next_offset..]).is_ok() {
-                        has_dual_signature = true;
-                    }
-                }
+        if offset < data.len()
+            && let Ok(first_footer) = decode_signature_footer(&data[offset..])
+        {
+            has_signature = true;
+            let first_footer_size = first_footer.footer_length as usize;
+            let next_offset = offset + first_footer_size;
+            if next_offset < data.len()
+                && decode_signature_footer(&data[next_offset..]).is_ok()
+            {
+                has_dual_signature = true;
             }
         }
 
@@ -1979,7 +1979,7 @@ impl ChainManager {
 
         let ml_sig = self.ml_dsa_key.as_ref().map(|ml_key| {
             // Use SHAKE-256 HMAC-like construction matching rvf-crypto placeholder.
-            ml_dsa_sign_raw(&ml_key, data)
+            ml_dsa_sign_raw(ml_key, data)
         });
 
         Some(DualSignature {
@@ -2005,20 +2005,18 @@ impl ChainManager {
         if sig.ed25519.len() != 64 {
             return false;
         }
-        let ed_sig = match Signature::from_bytes(
+        let ed_sig = Signature::from_bytes(
             sig.ed25519.as_slice().try_into().unwrap_or(&[0u8; 64]),
-        ) {
-            s => s,
-        };
+        );
         if ed25519_pubkey.verify(data, &ed_sig).is_err() {
             return false;
         }
 
         // ML-DSA-65 when both signature and key are present.
-        if let (Some(ml_sig), Some(ml_key)) = (&sig.ml_dsa65, ml_dsa_pubkey) {
-            if !ml_dsa_verify_raw(ml_key, data, ml_sig) {
-                return false;
-            }
+        if let (Some(ml_sig), Some(ml_key)) = (&sig.ml_dsa65, ml_dsa_pubkey)
+            && !ml_dsa_verify_raw(ml_key, data, ml_sig)
+        {
+            return false;
         }
 
         true

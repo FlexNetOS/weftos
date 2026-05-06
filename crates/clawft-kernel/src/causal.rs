@@ -819,26 +819,27 @@ impl CausalGraph {
 
             // Forward edges.
             for edge in self.get_forward_edges(id) {
-                if let Some(&j) = id_to_idx.get(&edge.target) {
-                    if i != j {
-                        let w = edge.weight as f64;
-                        adj[i].push((j, w));
-                        adj[j].push((i, w));
-                        degree[i] += w;
-                        degree[j] += w;
-                    }
+                if let Some(&j) = id_to_idx.get(&edge.target)
+                    && i != j
+                {
+                    let w = edge.weight as f64;
+                    adj[i].push((j, w));
+                    adj[j].push((i, w));
+                    degree[i] += w;
+                    degree[j] += w;
                 }
             }
             // Reverse edges — only upper triangle to avoid double-counting.
             for edge in self.get_reverse_edges(id) {
-                if let Some(&j) = id_to_idx.get(&edge.source) {
-                    if i != j && j > i {
-                        let w = edge.weight as f64;
-                        adj[i].push((j, w));
-                        adj[j].push((i, w));
-                        degree[i] += w;
-                        degree[j] += w;
-                    }
+                if let Some(&j) = id_to_idx.get(&edge.source)
+                    && i != j
+                    && j > i
+                {
+                    let w = edge.weight as f64;
+                    adj[i].push((j, w));
+                    adj[j].push((i, w));
+                    degree[i] += w;
+                    degree[j] += w;
                 }
             }
         }
@@ -1026,25 +1027,26 @@ impl CausalGraph {
         for &id in &sorted_ids {
             let i = id_to_idx[&id];
             for edge in self.get_forward_edges(id) {
-                if let Some(&j) = id_to_idx.get(&edge.target) {
-                    if i != j {
-                        let w = edge.weight as f64;
-                        adj[i].push((j, w));
-                        adj[j].push((i, w));
-                        degree[i] += w;
-                        degree[j] += w;
-                    }
+                if let Some(&j) = id_to_idx.get(&edge.target)
+                    && i != j
+                {
+                    let w = edge.weight as f64;
+                    adj[i].push((j, w));
+                    adj[j].push((i, w));
+                    degree[i] += w;
+                    degree[j] += w;
                 }
             }
             for edge in self.get_reverse_edges(id) {
-                if let Some(&j) = id_to_idx.get(&edge.source) {
-                    if i != j && j > i {
-                        let w = edge.weight as f64;
-                        adj[i].push((j, w));
-                        adj[j].push((i, w));
-                        degree[i] += w;
-                        degree[j] += w;
-                    }
+                if let Some(&j) = id_to_idx.get(&edge.source)
+                    && i != j
+                    && j > i
+                {
+                    let w = edge.weight as f64;
+                    adj[i].push((j, w));
+                    adj[j].push((i, w));
+                    degree[i] += w;
+                    degree[j] += w;
                 }
             }
         }
@@ -1070,7 +1072,7 @@ impl CausalGraph {
         // Generate deterministic pseudo-random vectors using a simple LCG.
         // We avoid pulling in rand to keep dependencies minimal.
         let mut seed: u64 = 0xDEAD_BEEF_CAFE_BABEu64;
-        let mut next_gaussian = |seed: &mut u64| -> f64 {
+        let next_gaussian = |seed: &mut u64| -> f64 {
             // Box-Muller from two uniform values via LCG.
             let uniform = |s: &mut u64| -> f64 {
                 *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -1112,8 +1114,8 @@ impl CausalGraph {
         }
 
         // Step 3: Eigendecompose the small m x m matrix.
-        let diag: Vec<f64> = (0..m).map(|i| c_mat[i][i]).collect();
-        let off: Vec<f64> = if m > 1 {
+        let _diag: Vec<f64> = (0..m).map(|i| c_mat[i][i]).collect();
+        let _off: Vec<f64> = if m > 1 {
             (0..m - 1).map(|i| c_mat[i][i + 1]).collect()
         } else {
             Vec::new()
@@ -1459,6 +1461,7 @@ fn normalize_vec(v: &mut [f64]) {
 /// built from the tridiagonal.  Since m is small (Lanczos iteration count,
 /// typically 20-50), the O(m^3) cost is negligible compared to the O(k*m)
 /// sparse mat-vecs.
+#[allow(clippy::needless_range_loop)]
 fn tridiag_eigen(diag: &[f64], off: &[f64], m: usize) -> (Vec<f64>, Vec<Vec<f64>>) {
     if m == 0 {
         return (Vec::new(), Vec::new());
@@ -1559,6 +1562,7 @@ fn tridiag_eigen(diag: &[f64], off: &[f64], m: usize) -> (Vec<f64>, Vec<Vec<f64>
 ///
 /// Returns `(eigenvalues, eigenvectors)` where `eigenvectors[i]` is the
 /// eigenvector for `eigenvalues[i]`.
+#[allow(clippy::needless_range_loop)]
 fn dense_jacobi_eigen(mat: &[Vec<f64>], m: usize, max_iter: usize) -> (Vec<f64>, Vec<Vec<f64>>) {
     if m == 0 {
         return (Vec::new(), Vec::new());
@@ -1989,6 +1993,7 @@ impl VqCodebook {
     /// each entity type is assigned to its nearest centroid.
     ///
     /// Uses K-means++ initialization for better convergence.
+    #[allow(clippy::needless_range_loop)]
     pub fn train(&mut self, embeddings: &[(String, Vec<f32>)]) {
         if embeddings.is_empty() || self.centroids.is_empty() {
             return;

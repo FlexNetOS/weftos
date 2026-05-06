@@ -474,16 +474,16 @@ impl AuthService {
         let removed = self.active_tokens.remove(token_id).is_some();
 
         #[cfg(feature = "exochain")]
-        if removed {
-            if let Some(ref cm) = self.chain_manager {
-                cm.append(
-                    "auth",
-                    crate::chain::EVENT_KIND_AUTH_TOKEN_REVOKE,
-                    Some(serde_json::json!({
-                        "token_id": token_id,
-                    })),
-                );
-            }
+        if removed
+            && let Some(ref cm) = self.chain_manager
+        {
+            cm.append(
+                "auth",
+                crate::chain::EVENT_KIND_AUTH_TOKEN_REVOKE,
+                Some(serde_json::json!({
+                    "token_id": token_id,
+                })),
+            );
         }
 
         removed
