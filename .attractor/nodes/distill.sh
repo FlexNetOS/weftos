@@ -15,9 +15,12 @@
 #       --content "$trajectory_json" \
 #       --tags 'weftos,gate,attractor'
 #
-# Stub: writes a single record into .attractor/runs/<stamp>.distill.jsonl
-# so the run history is auditable even before the cross-repo bridge is
-# wired (see Phase 4 + Phase 7).
+# Stub: writes a single JSONL record per invocation. Output dir is
+# $ATTRACTOR_RUN_DIR when set by the runner (so the record colocates
+# with that iteration's other artifacts) and falls back to the shared
+# .attractor/runs/ when invoked standalone via `attractor.sh node
+# distill`. Either way the audit trail is preserved before the
+# cross-repo bridge is wired (see Phase 4 + Phase 7).
 
 set -euo pipefail
 
