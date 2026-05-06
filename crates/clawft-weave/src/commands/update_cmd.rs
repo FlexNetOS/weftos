@@ -187,24 +187,23 @@ fn is_musl() -> bool {
 
 fn find_install_path(bin_name: &str) -> anyhow::Result<PathBuf> {
     // 1. Check where the current binary lives
-    if bin_name == "weaver" {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                return Ok(dir.join(bin_name));
-            }
-        }
+    if bin_name == "weaver"
+        && let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        return Ok(dir.join(bin_name));
     }
 
     // 2. Check PATH for existing installation
     let which = std::process::Command::new("which")
         .arg(bin_name)
         .output();
-    if let Ok(output) = which {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path));
-            }
+    if let Ok(output) = which
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
         }
     }
 
@@ -230,18 +229,18 @@ fn replace_binary(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Resul
     let backup = dst.with_extension("old");
 
     // Try rename-then-copy (handles "Text file busy").
-    if dst.exists() {
-        if std::fs::rename(dst, &backup).is_ok() {
-            match std::fs::copy(src, dst) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&backup);
-                    return Ok(());
-                }
-                Err(e) => {
-                    // Restore backup if copy fails.
-                    let _ = std::fs::rename(&backup, dst);
-                    eprintln!("  Copy failed after rename: {e}");
-                }
+    if dst.exists()
+        && std::fs::rename(dst, &backup).is_ok()
+    {
+        match std::fs::copy(src, dst) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&backup);
+                return Ok(());
+            }
+            Err(e) => {
+                // Restore backup if copy fails.
+                let _ = std::fs::rename(&backup, dst);
+                eprintln!("  Copy failed after rename: {e}");
             }
         }
     }
