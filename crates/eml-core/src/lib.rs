@@ -39,6 +39,13 @@
 //! let prediction = model.predict_primary(&[0.5, 1.0, 0.25]);
 //! assert!(prediction.is_finite());
 //! ```
+//!
+//! Numerical / research-tier code: index-based iteration is clearer than
+//! `iter_mut().enumerate()` when `i` is also used to index sibling arrays
+//! or to compute parameter offsets, and `(n + 1) / 2` reads more naturally
+//! than `n.div_ceil(2)` in dimension-arithmetic.
+
+#![allow(clippy::needless_range_loop, clippy::manual_div_ceil)]
 
 pub mod events;
 pub mod features;

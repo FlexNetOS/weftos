@@ -92,37 +92,35 @@ pub async fn load_config_raw(
     let home = fs.home_dir();
     let json_path = discover_config_path(env, home);
 
-    if let Some(path) = json_path {
-        if fs.exists(&path).await {
-            tracing::debug!(path = %path.display(), "loading JSON config");
-            match fs.read_to_string(&path).await {
-                Ok(contents) => {
-                    match serde_json::from_str::<Value>(&contents) {
-                        Ok(json_value) => {
-                            let normalized = normalize_keys(json_value);
-                            deep_merge(&mut merged, &normalized);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                path = %path.display(),
-                                error = %e,
-                                "failed to parse JSON config, using weave.toml only"
-                            );
-                        }
-                    }
+    if let Some(path) = json_path
+        && fs.exists(&path).await
+    {
+        tracing::debug!(path = %path.display(), "loading JSON config");
+        match fs.read_to_string(&path).await {
+            Ok(contents) => match serde_json::from_str::<Value>(&contents) {
+                Ok(json_value) => {
+                    let normalized = normalize_keys(json_value);
+                    deep_merge(&mut merged, &normalized);
                 }
                 Err(e) => {
                     tracing::warn!(
                         path = %path.display(),
                         error = %e,
-                        "failed to read JSON config"
+                        "failed to parse JSON config, using weave.toml only"
                     );
                 }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "failed to read JSON config"
+                );
             }
         }
     }
 
-    if merged.as_object().map_or(true, |m| m.is_empty()) {
+    if merged.as_object().is_none_or(|m| m.is_empty()) {
         tracing::info!("no config found (checked weave.toml + JSON), using defaults");
     }
 
