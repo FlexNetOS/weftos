@@ -49,9 +49,17 @@ digraph weftos_self_learning {
     ]
 
     // ---- 3. Validate ----------------------------------------------------
-    // The phase gate is the validation contract. 11 checks must pass:
-    //   fmt, check, clippy -D warnings, test, native release, wasi,
-    //   browser, bundle size, publish dry-run, doc build, schema lint.
+    // The phase gate is the validation contract. 11 checks must pass,
+    // matching scripts/build.sh cmd_gate() (the comment-anchored steps in
+    // that function are the source of truth):
+    //   1. workspace tests          (cargo test --workspace)
+    //   2. release binaries         (cargo build --release --bin weft --bin weaver)
+    //   3. WASI WASM                (wasm32-wasip2)
+    //   4–9. browser WASM per crate (cargo check --target wasm32-unknown-unknown
+    //                                for clawft-types, clawft-platform, clawft-core,
+    //                                clawft-llm, clawft-tools, clawft-wasm)
+    //   10. UI build                (ui/ npm run build)
+    //   11. voice feature           (cargo check --features voice -p clawft-plugin)
     validate [
         shape   = "parallelogram",
         type    = "tool",

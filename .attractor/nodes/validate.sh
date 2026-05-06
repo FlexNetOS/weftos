@@ -51,6 +51,12 @@ fi
 # every concurrent or back-to-back pipeline run its own isolated
 # build_log. When invoked standalone (`scripts/attractor.sh node
 # validate`), we fall back to the fixed runs/ path.
+#
+# IMPORTANT: pass --verbose so build.sh's run_cmd does NOT pipe cargo
+# through `tail -5`. Without --verbose, the sidecar log captures only
+# the final 5 lines of cargo output — useless for diagnosing real
+# failures (the actual error usually lives further up). With --verbose,
+# we get the full diagnostics.
 build_log="${ATTRACTOR_RUN_DIR:-${ROOT}/.attractor/runs}/validate.stderr"
 mkdir -p "$(dirname "$build_log")"
 
@@ -64,10 +70,10 @@ escaped_log="${escaped_log//\"/\\\"}"
 # gate (`scripts/build.sh gate`) runs in CI; this stub keeps local
 # iteration fast while still proving the workspace compiles via the
 # documented entrypoint.
-if "$ROOT/scripts/build.sh" check >"$build_log" 2>&1; then
-    printf '{"validated":true,"check":"scripts/build.sh check","stderr_log":"%s"}\n' "$escaped_log"
+if "$ROOT/scripts/build.sh" check --verbose >"$build_log" 2>&1; then
+    printf '{"validated":true,"check":"scripts/build.sh check --verbose","stderr_log":"%s"}\n' "$escaped_log"
     exit 0
 fi
 
-printf '{"validated":false,"check":"scripts/build.sh check","stderr_log":"%s","hint":"see stderr_log for build.sh check diagnostics"}\n' "$escaped_log"
+printf '{"validated":false,"check":"scripts/build.sh check --verbose","stderr_log":"%s","hint":"see stderr_log for build.sh check diagnostics"}\n' "$escaped_log"
 exit 1
