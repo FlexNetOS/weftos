@@ -1,6 +1,17 @@
 ---
 name: cross-repo-integration
 description: Map and execute the FlexNetOS/weftos ↔ FlexNetOS/ruvector integration topology. Use when a task spans both repos — e.g. wiring weft kernel to ruvector's mcp-brain-server, calling AgentDB HNSW from a clawft-* crate, or surfacing ReasoningBank trajectories in weaver. weftos is the RUNTIME; ruvector is the BRAIN.
+triggers:
+  - cross-repo
+  - ruvector integration
+  - brain integration
+  - mcp-brain-server
+  - pi.ruv.io
+  - reasoningbank
+  - agentdb
+  - hnsw from weftos
+  - share to brain
+  - distill trajectory
 ---
 
 # Cross-Repo Integration — WeftOS (runtime) ↔ RuVector (brain)
@@ -68,7 +79,7 @@ has these touch points:
   ingestion consumes for `ReasoningBank` trajectories.
 - `crates/clawft-kernel/src/causal*` — causal-graph snapshots that map
   cleanly onto ruvector's `mincut` / `prime-radiant` graph store.
-- `crates/clawft-weave/src/commands/graphify.rs` — produces the same
+- `crates/clawft-weave/src/commands/graphify_cmd.rs` — produces the same
   tree-sitter graph that ruvector's `ruvector-cnn` ingests.
 
 ## What weftos consumes from ruvector

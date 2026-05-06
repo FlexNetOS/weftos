@@ -1,6 +1,17 @@
 ---
 name: self-learning-loop
 description: Run the FlexNetOS self-learning agent loop — Identify → Implement → Validate → Optimize → Distill — using the Attractor NLSpec as the blueprint and weftos's weaver + kernel as the runtime. Use when designing or extending agent behavior that should accumulate experience over multiple runs.
+triggers:
+  - self-learning
+  - learning loop
+  - identify implement validate optimize distill
+  - reasoning bank
+  - reasoningbank
+  - attractor pipeline
+  - phase gate
+  - witness chain
+  - distill trajectory
+  - close the loop
 ---
 
 # Self-Learning Loop — Attractor pipeline on weftos
@@ -96,17 +107,29 @@ flags through `scripts/build.sh`**.
 `scripts/build.sh gate` is the single source of truth for "did this
 change pass". The 11 checks (in order):
 
-1. `cargo fmt --all -- --check`
-2. `cargo check --workspace`
-3. `cargo clippy --workspace -- -D warnings`
-4. `cargo test --workspace`
-5. Release build of `weft` and `weaver`
-6. WASI build (`wasm32-wasip2`)
-7. Browser build (`wasm32-unknown-unknown` + wasm-bindgen)
-8. Browser bundle size assertion (`<300KB raw, <120KB gzipped`)
-9. Crate publish dry-run check
-10. Doc build (`cargo doc --workspace --no-deps`)
-11. Schema/manifest validation for app/substrate/surface
+Source of truth: `scripts/build.sh` lines 367–425. Mirror this list —
+adding/removing items here without updating the script (and vice versa)
+is a documented divergence and a real bug.
+
+1. `cargo test --workspace` — workspace test suite (hard fail).
+2. `cargo build --release --bin weft --bin weaver` — release binaries
+   for the daemon and orchestrator (hard fail).
+3. WASI WASM — `cargo build --target wasm32-wasip2 --profile release-wasm
+   -p clawft-wasm` (skipped if `wasm32-wasip2` is not installed).
+4. Browser WASM: `clawft-types` (`--target wasm32-unknown-unknown
+   --no-default-features --features browser`, soft fail).
+5. Browser WASM: `clawft-platform` (same flags, soft fail).
+6. Browser WASM: `clawft-core` (same flags, soft fail).
+7. Browser WASM: `clawft-llm` (same flags, soft fail).
+8. Browser WASM: `clawft-tools` (same flags, soft fail).
+9. Browser WASM: `clawft-wasm` (same flags, soft fail).
+10. UI build — `(cd ui && npm run build)` (skipped if `ui/` is missing).
+11. Voice feature — `cargo check --features voice -p clawft-plugin`
+    (soft fail; tracks optional voice plugin compile).
+
+Soft-fail steps record failure into the gate summary but do not abort
+the gate; hard-fail steps abort. Treat any failure as a regression to
+distill into the brain regardless of severity.
 
 The gate is mandatory — do **not** skip it for "trivial" fixes. A node-3
 verdict is invalid if the gate didn't run.
