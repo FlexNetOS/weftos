@@ -119,7 +119,7 @@ pub enum ArtifactBackend {
 
 ### K3c Gaps: ECC Cognitive Substrate (Weaver)
 
-**Operator interface**: The Weaver skill at `agents/weftos-ecc/WEAVER.md`
+**Operator interface**: The Weaver skill at `.claude/skills/weftos-ecc/WEAVER.md`
 describes HOW an operator (human or Claude agent) interacts with the
 WeaverEngine -- session workflows, CLI commands, confidence interpretation,
 and modeling strategy. The implementation below is the kernel `SystemService`

@@ -84,7 +84,7 @@ Key files:
 - `crates/clawft-kernel/src/hnsw_service.rs` — HNSW vector index
 - `crates/clawft-kernel/src/impulse.rs` — ImpulseQueue
 - `crates/clawft-kernel/src/crossref.rs` — CrossRefStore
-- `agents/weftos-ecc/WEAVER.md` — full specification
+- `.claude/skills/weftos-ecc/WEAVER.md` — full specification
 
 Skills used:
 - `/weftos-ecc/WEAVER` — full Weaver specification and workflow examples

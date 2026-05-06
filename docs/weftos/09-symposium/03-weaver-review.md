@@ -45,7 +45,7 @@ Source: `.weftos/weaver_todo.md` (41 checked items)
 | 33 | WeaverCommand/WeaverResponse IPC (13 command variants) | Yes (13 variants) | Yes (IPC tests) | Yes (ecc.mdx) | PASS |
 | 34 | DataSource enum (7 variants) | Yes (7 after fix) | Yes | Yes (WEAVER.md) | PASS (fixed) |
 | 35 | Codebase analysis report (weaver-analysis-clawft.md) | Yes | N/A (docs) | Yes | PASS |
-| 36 | WEAVER.md operator skill (agents/weftos-ecc/WEAVER.md) | Yes | N/A (docs) | Yes | PASS (updated) |
+| 36 | WEAVER.md operator skill (.claude/skills/weftos-ecc/WEAVER.md) | Yes | N/A (docs) | Yes | PASS (updated) |
 | 37 | SPARC crate plan (09-ecc-weaver-crate.md) | Yes | N/A (docs) | Yes | PASS |
 | 38 | weftos init creates .weftos/ + weave.toml | Yes | N/A (init.rs) | Yes (weave.toml) | PASS |
 | 39 | 12 WeftOS agents defined (agents/weftos/) | Yes (12 files) | N/A (config) | Yes | PASS |
@@ -88,7 +88,7 @@ Source: `.weftos/weaver_todo.md` (41 checked items)
 | Document | Covers Weaver | Status |
 |----------|---------------|--------|
 | `docs/src/content/docs/weftos/ecc.mdx` | Yes (updated) | Complete |
-| `agents/weftos-ecc/WEAVER.md` | Yes (updated) | Complete |
+| `.claude/skills/weftos-ecc/WEAVER.md` | Yes (updated) | Complete |
 | `agents/weftos/weaver.md` | Yes | Complete |
 | `docs/weftos/weaver-analysis-clawft.md` | Yes | Complete |
 | `.planning/sparc/weftos/09-ecc-weaver-crate.md` | Yes | Complete |
