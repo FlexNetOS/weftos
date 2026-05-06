@@ -1504,9 +1504,12 @@ pub async fn process_batch(&self, items: Vec<Item>) -> Result<(), Error> {
     // =====================================================================
 
     /// Create a small test vocab file for WordPiece tests.
-    /// Returns the path to the written file.
+    /// Returns the path to the written file. Each call returns a unique path so
+    /// concurrent test runs do not race on the same file.
     fn make_test_vocab() -> PathBuf {
         use std::fmt::Write as FmtWrite;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         let mut content = String::new();
         // Build a minimal BERT-style vocab (needs >1000 entries).
         // IDs 0-99: [unused0]..[unused99]
@@ -1537,9 +1540,10 @@ pub async fn process_batch(&self, items: Vec<Item>) -> Result<(), Error> {
             writeln!(content, "extra{}", i).unwrap();
         }
 
-        let path = PathBuf::from(format!(
-            "/tmp/clawft_test_vocab_{}.txt",
-            std::process::id()
+        let path = std::env::temp_dir().join(format!(
+            "clawft_test_vocab_{}_{}.txt",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed),
         ));
         std::fs::write(&path, &content).expect("failed to write test vocab");
         path
