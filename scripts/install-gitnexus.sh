@@ -66,7 +66,18 @@ fi
 # We invoke setup unconditionally (not gated on a specific CLI being
 # present) because it auto-detects and skips missing editors.
 log "registering MCP server for any installed agent runtime"
-npx -y "gitnexus@${GITNEXUS_VERSION}" setup || warn "gitnexus setup returned non-zero — MCP may need manual config; see .gitnexus/README.md"
+npx -y "gitnexus@${GITNEXUS_VERSION}" setup || warn "gitnexus setup returned non-zero — MCP may need manual config; see https://github.com/abhigyanpatwari/GitNexus#mcp-setup"
+
+# GitNexus 1.x always installs 6 helper SKILLs at .claude/skills/gitnexus/
+# (verified in dist/cli/ai-context.js). They're auto-generated, repo-local,
+# and useful at runtime — the repo's top-level .gitignore (`.claude`)
+# already keeps them untracked.
+#
+# Repo scope: gui/src-tauri/ is excluded via .gitnexusignore at the repo
+# root. GitNexus' walker honors .gitnexusignore in addition to .gitignore
+# (verified in dist/config/ignore-service.js). To index the Tauri app
+# separately, run `npx gitnexus analyze gui/src-tauri/ --skip-agents-md`
+# from the repo root — it'll register as a distinct repo in the registry.
 
 # ── Done ─────────────────────────────────────────────────────────────
 log "GitNexus install complete."

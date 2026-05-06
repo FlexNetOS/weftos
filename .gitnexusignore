@@ -1,0 +1,16 @@
+# GitNexus walker ignore file (honored by gitnexus' ignore-service in
+# addition to .gitignore). Use this to scope GitNexus' index without
+# adding paths to .gitignore (which git itself respects).
+#
+# gui/src-tauri/ is intentionally **out of the cargo workspace** — it's
+# a standalone Tauri shell that ships separately and uses different
+# build/runtime tooling. Including it in the main GitNexus graph would
+# (a) inflate impact-analysis blast radius across an unrelated build
+# graph, and (b) confuse symbol resolution when the same crate names
+# appear in both trees.
+#
+# To index the Tauri app on its own (registered as a distinct repo in
+# the GitNexus registry), run from the repo root:
+#
+#   npx -y gitnexus@latest analyze gui/src-tauri/ --skip-agents-md
+gui/src-tauri/
