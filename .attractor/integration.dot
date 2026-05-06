@@ -1,0 +1,123 @@
+// FlexNetOS/weftos self-learning pipeline (Attractor NLSpec, DOT)
+//
+// Runtime side of the cross-repo loop. weftos is the kernel + weaver
+// runtime; ruvector is the brain it consumes. The validate node is the
+// non-negotiable contract — `scripts/build.sh gate` must pass.
+// Every node is fully automatable; there is no human-in-the-loop.
+//
+// Reference: https://github.com/strongdm/attractor/blob/main/attractor-spec.md
+//
+// Render to SVG locally:    dot -Tsvg .attractor/integration.dot -o pipeline.svg
+// Validate without running: scripts/attractor.sh validate
+// Dry-run topology:         scripts/attractor.sh dry-run
+// Execute one iteration:    scripts/attractor.sh run
+
+digraph weftos_self_learning {
+    label = "weftos self-learning loop"
+    goal = "Detect a substrate drift signal, apply a change, run scripts/build.sh gate, optimize via EML, and distill the trajectory back into ruvector's ReasoningBank."
+    rankdir = "LR"
+    default_max_retries = 1
+    retry_target = "identify"
+    fallback_retry_target = "exit"
+
+    // ---- Entry ----------------------------------------------------------
+    start [shape="mdiamond", label="start"]
+
+    // ---- 1. Identify ----------------------------------------------------
+    // Read DEMOCRITUS drift signals from the cognitive substrate plus
+    // the latest ReasoningBank query (via brain MCP) and pick a target.
+    identify [
+        shape    = "box",
+        type     = "codergen",
+        label    = "identify",
+        prompt   = "Goal: $goal\nQuery the cognitive substrate (weaver substrate dump --topic substrate/cognitive) for drift signals. Cross-reference with ReasoningBank patterns whose confidence is below 0.6 in the runtime namespace. Return one drift_id + the matching pattern_id (if any) + a one-sentence hypothesis for the change. If no drift exceeds threshold, fall through to exit with verdict=skipped.",
+        max_retries = 1,
+        goal_gate = false
+    ]
+
+    // ---- 2. Implement ---------------------------------------------------
+    // Apply the candidate change. In weftos this is typically a kernel
+    // tunable, a clawft-llm provider tweak, or an eml-core descent step.
+    // The codergen handler MUST route any cargo invocation through
+    // scripts/build.sh — raw cargo is forbidden.
+    implement [
+        shape    = "box",
+        type     = "codergen",
+        label    = "implement",
+        prompt   = "Apply the candidate change for drift_id from $identify.drift_id. Stay inside the weftos workspace. Do NOT exclude crates from the workspace. Do NOT touch gui/src-tauri/ (out-of-workspace Tauri app). Do NOT invoke raw cargo — every build / test / clippy goes through scripts/build.sh.",
+        max_retries = 2
+    ]
+
+    // ---- 3. Validate ----------------------------------------------------
+    // The phase gate is the validation contract. 11 checks must pass,
+    // matching scripts/build.sh cmd_gate() (the comment-anchored steps in
+    // that function are the source of truth):
+    //   1. workspace tests          (cargo test --workspace)
+    //   2. release binaries         (cargo build --release --bin weft --bin weaver)
+    //   3. WASI WASM                (wasm32-wasip2)
+    //   4–9. browser WASM per crate (cargo check --target wasm32-unknown-unknown
+    //                                for clawft-types, clawft-platform, clawft-core,
+    //                                clawft-llm, clawft-tools, clawft-wasm)
+    //   10. UI build                (ui/ npm run build)
+    //   11. voice feature           (cargo check --features voice -p clawft-plugin)
+    validate [
+        shape   = "parallelogram",
+        type    = "tool",
+        label   = "validate",
+        command = "scripts/attractor.sh node validate",
+        goal_gate = true,
+        max_retries = 0
+    ]
+
+    // ---- 4. Optimize ----------------------------------------------------
+    // Hand the verdict to the EML coordinate-descent tuner; only accept
+    // deltas that strictly improve the post-hoc score and keep the
+    // browser bundle inside the 300KB / 120KB envelope.
+    optimize [
+        shape    = "box",
+        type     = "codergen",
+        label    = "optimize",
+        prompt   = "Take the validate-step output and propose an EML coordinate-descent tuning delta that strictly improves post-hoc score without regressing the bundle-size envelope. If optimization requires a code edit, abort and route back to identify.",
+        max_retries = 1
+    ]
+
+    // ---- 5. Distill -----------------------------------------------------
+    // Push the trajectory into ruvector's ReasoningBank over the brain
+    // MCP. Always include the workspace version pin (lockstep semver).
+    distill [
+        shape   = "parallelogram",
+        type    = "tool",
+        label   = "distill",
+        command = "scripts/attractor.sh node distill",
+        goal_gate = true,
+        max_retries = 0
+    ]
+
+    // ---- 6. Branch on verdict -------------------------------------------
+    decide [
+        shape = "diamond",
+        type  = "conditional",
+        label = "verdict?"
+    ]
+
+    // ---- Exit ----------------------------------------------------------
+    exit [shape="msquare", label="exit"]
+
+    // ---- Edges ----------------------------------------------------------
+    start     -> identify
+    identify  -> implement   [label = "drift selected"]
+    identify  -> exit        [label = "no candidates",        condition = "$identify.verdict == 'skipped'"]
+    implement -> validate
+    validate  -> optimize    [label = "gate green"]
+    // CONTRACT: a red validate gate STILL distills, but with verdict=fail.
+    // The trajectory is recorded so ReasoningBank learns from failures
+    // (see distill.sh "failures train the bank too"). What's skipped is
+    // OPTIMIZE — there is nothing to optimize when the gate is broken.
+    // The runner enforces this by setting skip_optimize when validate
+    // fails, not by breaking the loop.
+    validate  -> distill     [label = "gate red",             condition = "$validate.exit_code != 0"]
+    optimize  -> distill
+    distill   -> decide
+    decide    -> identify    [label = "score improved",       condition = "$distill.verdict == 'pass'"]
+    decide    -> exit        [label = "regression / max iters"]
+}
