@@ -349,7 +349,7 @@ pub struct GatewayConfig {
 }
 
 fn default_gateway_host() -> String {
-    "0.0.0.0".into()
+    "127.0.0.1".into()
 }
 fn default_gateway_port() -> u16 {
     18790
@@ -542,7 +542,7 @@ mod tests {
         assert!(cfg.providers.deepseek.api_key.is_empty());
 
         // Gateway
-        assert_eq!(cfg.gateway.host, "0.0.0.0");
+        assert_eq!(cfg.gateway.host, "127.0.0.1");
         assert_eq!(cfg.gateway.port, 18790);
 
         // Tools
@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(cfg.channels.discord.intents, 37377);
 
         // Gateway defaults
-        assert_eq!(cfg.gateway.host, "0.0.0.0");
+        assert_eq!(cfg.gateway.host, "127.0.0.1");
         assert_eq!(cfg.gateway.port, 18790);
 
         // Tool defaults

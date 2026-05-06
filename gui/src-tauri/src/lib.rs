@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Tauri commands — thin wrappers that will call kernel APIs once integrated
+// Tauri commands — wired to kernel gateway HTTP API at 127.0.0.1:18789
 // ---------------------------------------------------------------------------
+
+/// Default gateway URL for the local kernel daemon.
+const GATEWAY_URL: &str = "http://127.0.0.1:18789";
 
 /// Response envelope for all commands
 #[derive(Serialize)]
@@ -16,16 +19,15 @@ impl<T: Serialize> CmdResponse<T> {
     fn success(data: T) -> Self {
         Self { ok: true, data: Some(data), error: None }
     }
-}
 
-#[allow(dead_code)]
-fn err_response(msg: &str) -> CmdResponse<()> {
-    CmdResponse { ok: false, data: None, error: Some(msg.to_string()) }
+    fn err(msg: impl Into<String>) -> Self {
+        Self { ok: false, data: None, error: Some(msg.into()) }
+    }
 }
 
 // -- Kernel status -----------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct KernelStatus {
     version: String,
     uptime_secs: u64,
@@ -34,16 +36,48 @@ struct KernelStatus {
     health: String,
 }
 
+/// Query the kernel gateway health endpoint and return status.
+/// Falls back to a "disconnected" status if the daemon is unreachable.
 #[tauri::command]
-fn kernel_status() -> CmdResponse<KernelStatus> {
-    // TODO: Wire to real kernel via ServiceApi
-    CmdResponse::success(KernelStatus {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: 0,
-        process_count: 0,
-        chain_height: 0,
-        health: "starting".to_string(),
-    })
+async fn kernel_status() -> CmdResponse<KernelStatus> {
+    let url = format!("{GATEWAY_URL}/api/health");
+    match reqwest::get(&url).await {
+        Ok(resp) => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                CmdResponse::success(KernelStatus {
+                    version: body.get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    uptime_secs: body.get("uptime_secs")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    process_count: body.get("process_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                    chain_height: body.get("chain_height")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    health: body.get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                })
+            } else {
+                CmdResponse::err("Failed to parse gateway response")
+            }
+        }
+        Err(_) => {
+            // Daemon not running — return disconnected status rather than error
+            CmdResponse::success(KernelStatus {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                uptime_secs: 0,
+                process_count: 0,
+                chain_height: 0,
+                health: "disconnected".to_string(),
+            })
+        }
+    }
 }
 
 // -- Agent management --------------------------------------------------------

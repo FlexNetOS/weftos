@@ -153,6 +153,33 @@ pub struct JoinRequest {
     pub tree_root_hash: [u8; 32],
 }
 
+/// Validate that a join request's governance genesis hash matches our local one.
+///
+/// Returns `Ok(())` if the hashes match, or an `Err` with a rejection reason.
+/// A zeroed hash (`[0u8; 32]`) on the remote side is rejected — nodes must
+/// provide a real governance root.
+pub fn validate_genesis_hash(
+    local_genesis_hash: &[u8; 32],
+    remote: &JoinRequest,
+) -> Result<(), String> {
+    // Reject peers that send an all-zero genesis hash (uninitialised).
+    if remote.governance_genesis_hash == [0u8; 32] {
+        return Err("remote governance_genesis_hash is zeroed (uninitialised)".into());
+    }
+    if remote.governance_genesis_hash != *local_genesis_hash {
+        // Format first 8 bytes as hex for a readable error message.
+        let fmt_hash = |h: &[u8; 32]| -> String {
+            h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>() + "..."
+        };
+        return Err(format!(
+            "governance genesis hash mismatch: local={} remote={}",
+            fmt_hash(local_genesis_hash),
+            fmt_hash(&remote.governance_genesis_hash),
+        ));
+    }
+    Ok(())
+}
+
 /// Response to a join request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JoinResponse {

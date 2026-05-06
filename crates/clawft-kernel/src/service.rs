@@ -581,21 +581,62 @@ impl ServiceApi for KernelServiceApi {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         // Verify the service exists in the registry.
-        let _svc = self
+        let svc = self
             .registry
             .get(service)
             .ok_or_else(|| format!("service not found: {service}"))?;
 
-        // Build a JSON envelope describing the call. In a full integration
-        // this would dispatch to the service's message inbox or method table.
-        // For now, return an acknowledgement so the protocol wire path is
-        // exercisable end-to-end.
-        Ok(serde_json::json!({
-            "service": service,
-            "method": method,
-            "params": params,
-            "status": "dispatched",
-        }))
+        // Dispatch well-known methods through the SystemService trait.
+        match method {
+            "health" => {
+                let status = svc.health_check().await;
+                Ok(serde_json::json!({
+                    "service": service,
+                    "method": "health",
+                    "status": format!("{:?}", status),
+                }))
+            }
+            "start" => {
+                svc.start().await.map_err(|e| {
+                    format!("service {service} start failed: {e}")
+                })?;
+                Ok(serde_json::json!({
+                    "service": service,
+                    "method": "start",
+                    "status": "started",
+                }))
+            }
+            "stop" => {
+                svc.stop().await.map_err(|e| {
+                    format!("service {service} stop failed: {e}")
+                })?;
+                Ok(serde_json::json!({
+                    "service": service,
+                    "method": "stop",
+                    "status": "stopped",
+                }))
+            }
+            "info" => {
+                let health = svc.health_check().await;
+                Ok(serde_json::json!({
+                    "service": service,
+                    "method": "info",
+                    "service_type": svc.service_type().to_string(),
+                    "healthy": health == HealthStatus::Healthy,
+                }))
+            }
+            _ => {
+                // Unknown methods are acknowledged with the params echoed
+                // back so protocol adapters can extend per-service dispatch
+                // without kernel changes.
+                Ok(serde_json::json!({
+                    "service": service,
+                    "method": method,
+                    "params": params,
+                    "status": "dispatched",
+                }))
+            }
+        }
     }
 
     async fn list_services(&self) -> Vec<ServiceInfo> {

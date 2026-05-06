@@ -305,14 +305,9 @@ pub fn build_router(state: ApiState, cors_origins: &[String], static_dir: Option
     };
 
     let mut router = Router::new()
-        .nest("/api", handlers::api_routes())
-        // NOTE: To enable auth middleware on protected API routes, wrap the
-        // `/api` nest with:
-        //   .nest("/api", handlers::api_routes()
-        //       .layer(axum::middleware::from_fn_with_state(
-        //           state.clone(), auth::auth_middleware)))
-        // This is intentionally disabled for now to keep the dev workflow
-        // simple (no token required). Enable once the UI has a login flow.
+        .nest("/api", handlers::api_routes()
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(), auth::auth_middleware)))
         .route("/ws", axum::routing::get(ws::ws_handler));
 
     // Serve built UI as SPA fallback when a static directory is provided.
