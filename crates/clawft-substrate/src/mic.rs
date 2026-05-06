@@ -48,8 +48,10 @@ use crate::adapter::{
 };
 use crate::delta::StateDelta;
 use crate::physical::{
-    AudioDirection, Characterization, PhysicalSensorAdapter, SensorCalibration, SensorInterface,
+    Characterization, PhysicalSensorAdapter, SensorCalibration, SensorInterface,
 };
+#[cfg(test)]
+use crate::physical::AudioDirection;
 
 /// Window size in samples read per tick. At 16 kHz / 500 ms that's
 /// 8000 samples = 16 000 bytes.

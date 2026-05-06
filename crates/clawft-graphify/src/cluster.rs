@@ -81,7 +81,7 @@ pub fn cluster(kg: &KnowledgeGraph) -> HashMap<usize, Vec<EntityId>> {
     }
 
     // Re-index by size descending
-    final_communities.sort_by(|a, b| b.len().cmp(&a.len()));
+    final_communities.sort_by_key(|b| std::cmp::Reverse(b.len()));
     final_communities
         .into_iter()
         .enumerate()
@@ -172,7 +172,7 @@ pub fn cluster_eml(
         }
     }
 
-    final_communities.sort_by(|a, b| b.len().cmp(&a.len()));
+    final_communities.sort_by_key(|b| std::cmp::Reverse(b.len()));
     final_communities
         .into_iter()
         .enumerate()
@@ -252,14 +252,12 @@ fn label_propagation(kg: &KnowledgeGraph, nodes: &[EntityId]) -> HashMap<EntityI
 
     // Remap labels to contiguous community IDs
     let mut label_to_cid: HashMap<usize, usize> = HashMap::new();
-    let mut next_cid = 0;
     // Ensure deterministic ordering of community IDs
     let mut unique_labels: Vec<usize> = labels.values().copied().collect();
     unique_labels.sort();
     unique_labels.dedup();
-    for label in unique_labels {
+    for (next_cid, label) in unique_labels.into_iter().enumerate() {
         label_to_cid.insert(label, next_cid);
-        next_cid += 1;
     }
 
     labels
@@ -420,17 +418,16 @@ pub fn auto_label(kg: &KnowledgeGraph, community: &[EntityId]) -> String {
     // Count source file stems
     let mut stem_counts: HashMap<String, usize> = HashMap::new();
     for id in community {
-        if let Some(entity) = kg.entity(id) {
-            if let Some(ref source) = entity.source_file {
-                if !source.is_empty() {
-                    let stem = std::path::Path::new(source.as_str())
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or(source.as_str())
-                        .to_owned();
-                    *stem_counts.entry(stem).or_insert(0) += 1;
-                }
-            }
+        if let Some(entity) = kg.entity(id)
+            && let Some(ref source) = entity.source_file
+            && !source.is_empty()
+        {
+            let stem = std::path::Path::new(source.as_str())
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(source.as_str())
+                .to_owned();
+            *stem_counts.entry(stem).or_insert(0) += 1;
         }
     }
 

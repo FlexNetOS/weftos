@@ -26,9 +26,7 @@ fn safe_filename(name: &str) -> String {
     name.replace('/', "-")
         .replace(' ', "_")
         .replace(':', "-")
-        .replace('<', "")
-        .replace('>', "")
-        .replace('"', "")
+        .replace(['<', '>', '"'], "")
 }
 
 fn cross_community_links(
@@ -42,14 +40,14 @@ fn cross_community_links(
 
     for nid in nodes {
         for neighbor in kg.neighbors(nid) {
-            if let Some(&ncid) = entity_comm.get(&neighbor.id.to_hex()) {
-                if ncid != own_cid {
-                    let label = labels
-                        .get(&ncid)
-                        .cloned()
-                        .unwrap_or_else(|| format!("Community {ncid}"));
-                    *counts.entry(label).or_default() += 1;
-                }
+            if let Some(&ncid) = entity_comm.get(&neighbor.id.to_hex())
+                && ncid != own_cid
+            {
+                let label = labels
+                    .get(&ncid)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Community {ncid}"));
+                *counts.entry(label).or_default() += 1;
             }
         }
     }
@@ -90,12 +88,11 @@ fn community_article(
 
     let mut sources = std::collections::BTreeSet::new();
     for nid in nodes {
-        if let Some(entity) = kg.entity(nid) {
-            if let Some(ref src) = entity.source_file {
-                if !src.is_empty() {
-                    sources.insert(src.clone());
-                }
-            }
+        if let Some(entity) = kg.entity(nid)
+            && let Some(ref src) = entity.source_file
+            && !src.is_empty()
+        {
+            sources.insert(src.clone());
         }
     }
 

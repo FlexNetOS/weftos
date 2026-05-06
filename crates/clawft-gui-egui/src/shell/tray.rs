@@ -54,10 +54,7 @@ impl ChipId {
 }
 
 /// Return the raw substrate value backing this chip, if present.
-pub fn chip_subtree<'a>(
-    chip: ChipId,
-    snap: &'a Snapshot,
-) -> Option<&'a serde_json::Value> {
+pub fn chip_subtree(chip: ChipId, snap: &Snapshot) -> Option<&serde_json::Value> {
     match chip {
         ChipId::Kernel => snap.status.as_ref(),
         ChipId::Mesh => snap.mesh_status.as_ref(),

@@ -40,11 +40,10 @@ pub fn infer_schema(kg: &KnowledgeGraph, name: &str) -> TopologySchema {
         "#a855f7", "#8b5cf6", "#78716c",
     ];
 
-    let mut color_idx = 0;
     let mut sorted_types: Vec<_> = type_counts.iter().collect();
     sorted_types.sort_by(|a, b| b.1.cmp(a.1));
 
-    for (type_key, _count) in sorted_types {
+    for (color_idx, (type_key, _count)) in sorted_types.into_iter().enumerate() {
         let contains: Vec<String> = children_types
             .get(type_key.as_str())
             .map(|s| s.iter().cloned().collect())
@@ -78,7 +77,6 @@ pub fn infer_schema(kg: &KnowledgeGraph, name: &str) -> TopologySchema {
         };
 
         let color = colors[color_idx % colors.len()].to_string();
-        color_idx += 1;
 
         let time_field = if has_timestamps {
             Some("timestamp".to_string())
@@ -163,15 +161,14 @@ pub fn infer_schema(kg: &KnowledgeGraph, name: &str) -> TopologySchema {
         Geometry::Force
     };
 
-    // Triage summary for metadata.
-    let mut atoms = 0usize;
-    let mut sequences = 0usize;
-    let mut branches = 0usize;
+    // Triage summary for metadata: classification counts are computed for
+    // potential future use in node/edge styling but not yet wired into the
+    // emitted schema. Compile-time check only that all variants are matched.
     for entity in kg.entities() {
         match triage::classify(kg, &entity.id) {
-            triage::TopologyForm::Atom => atoms += 1,
-            triage::TopologyForm::Sequence => sequences += 1,
-            triage::TopologyForm::Branch => branches += 1,
+            triage::TopologyForm::Atom
+            | triage::TopologyForm::Sequence
+            | triage::TopologyForm::Branch => {}
         }
     }
 
