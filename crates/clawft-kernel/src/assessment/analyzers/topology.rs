@@ -178,16 +178,17 @@ fn extract_compose_services(content: &str, rel_str: &str, findings: &mut Vec<Fin
                     .trim_start_matches("- ")
                     .trim_matches('"')
                     .trim_matches('\'');
-                if val.contains(':') && val.chars().all(|c| c.is_ascii_digit() || c == ':') {
-                    if let Some(ref svc) = current_service {
-                        findings.push(Finding {
-                            severity: "info".into(),
-                            category: "topology".into(),
-                            file: rel_str.to_string(),
-                            line: None,
-                            message: format!("Service '{svc}' port mapping: {val}"),
-                        });
-                    }
+                if val.contains(':')
+                    && val.chars().all(|c| c.is_ascii_digit() || c == ':')
+                    && let Some(ref svc) = current_service
+                {
+                    findings.push(Finding {
+                        severity: "info".into(),
+                        category: "topology".into(),
+                        file: rel_str.to_string(),
+                        line: None,
+                        message: format!("Service '{svc}' port mapping: {val}"),
+                    });
                 }
             }
         }

@@ -83,17 +83,17 @@ async fn replay_boot_log(client: &mut DaemonClient) -> anyhow::Result<()> {
         println!("  (boot log unavailable)");
         return Ok(());
     }
-    if let Some(result) = resp.result {
-        if let Some(entries) = result.as_array() {
-            for entry in entries {
-                let phase = entry.get("phase").and_then(|v| v.as_str()).unwrap_or("?");
-                let message = entry.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let level = entry.get("level").and_then(|v| v.as_str()).unwrap_or("info");
-                if level == "debug" {
-                    continue;
-                }
-                println!("  [{phase:<10}] {message}");
+    if let Some(result) = resp.result
+        && let Some(entries) = result.as_array()
+    {
+        for entry in entries {
+            let phase = entry.get("phase").and_then(|v| v.as_str()).unwrap_or("?");
+            let message = entry.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let level = entry.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+            if level == "debug" {
+                continue;
             }
+            println!("  [{phase:<10}] {message}");
         }
     }
     Ok(())
@@ -186,10 +186,10 @@ fn print_response(resp: &Response) {
         eprintln!("error: {}", resp.error.as_deref().unwrap_or("unknown"));
         return;
     }
-    if let Some(ref result) = resp.result {
-        if let Ok(pretty) = serde_json::to_string_pretty(result) {
-            println!("{pretty}");
-        }
+    if let Some(ref result) = resp.result
+        && let Ok(pretty) = serde_json::to_string_pretty(result)
+    {
+        println!("{pretty}");
     }
 }
 

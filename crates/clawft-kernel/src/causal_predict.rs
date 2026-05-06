@@ -301,7 +301,7 @@ pub fn is_redundant(
     }
 
     // Condition 3: a recent addition already bridged the partition.
-    let partition_already_bridged = recent_additions.iter().any(|&(rs, rt, rw)| {
+    recent_additions.iter().any(|&(rs, rt, rw)| {
         let phi_rs = fiedler.get(rs as usize).copied().unwrap_or(0.0);
         let phi_rt = fiedler.get(rt as usize).copied().unwrap_or(0.0);
         let opposite_signs = phi_rs.signum() != phi_rt.signum()
@@ -309,9 +309,7 @@ pub fn is_redundant(
             && phi_rt.abs() > 1e-12;
         let recent_delta = predict_delta_lambda2(phi_rs, phi_rt, rw as f64);
         opposite_signs && recent_delta > threshold
-    });
-
-    partition_already_bridged
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +358,7 @@ impl CollapseFeatures {
 
 /// Internal training record storing both features and the residual ground truth.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CollapseTrainingPoint {
     features: Vec<f64>,
     residual: f64,

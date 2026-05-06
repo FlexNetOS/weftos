@@ -61,6 +61,7 @@ pub struct KernelEmlModels {
     pub complexity: ComplexityModel,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for KernelEmlModels {
     fn default() -> Self {
         Self {

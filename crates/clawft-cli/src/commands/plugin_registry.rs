@@ -2,6 +2,7 @@
 //!
 //! The registry stores metadata about installed and available plugins
 //! in `~/.clawft/plugins/index.json`.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 

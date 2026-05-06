@@ -522,16 +522,16 @@ impl HnswService {
 
         // Chain logging: hnsw.save
         #[cfg(feature = "exochain")]
-        if result.is_ok() {
-            if let Some(ref cm) = self.chain_manager {
-                cm.append(
-                    "hnsw_service",
-                    crate::chain::EVENT_KIND_HNSW_SAVE,
-                    Some(serde_json::json!({
-                        "path": path.display().to_string(),
-                    })),
-                );
-            }
+        if result.is_ok()
+            && let Some(ref cm) = self.chain_manager
+        {
+            cm.append(
+                "hnsw_service",
+                crate::chain::EVENT_KIND_HNSW_SAVE,
+                Some(serde_json::json!({
+                    "path": path.display().to_string(),
+                })),
+            );
         }
 
         result

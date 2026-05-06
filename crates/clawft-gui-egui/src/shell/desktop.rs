@@ -461,15 +461,15 @@ fn render_empty_hint(ui: &mut egui::Ui, chip: tray::ChipId, snap: &Snapshot) {
             .italics()
             .color(egui::Color32::from_rgb(170, 170, 180)),
     );
-    if show_error {
-        if let Some(err) = &snap.last_error {
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(format!("last error: {err}"))
-                    .monospace()
-                    .color(egui::Color32::from_rgb(220, 140, 140)),
-            );
-        }
+    if show_error
+        && let Some(err) = &snap.last_error
+    {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!("last error: {err}"))
+                .monospace()
+                .color(egui::Color32::from_rgb(220, 140, 140)),
+        );
     }
 }
 

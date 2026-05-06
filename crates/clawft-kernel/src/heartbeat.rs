@@ -37,7 +37,7 @@ impl HeartbeatConfig {
 
 /// Phase of an agent's heartbeat cycle.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeartbeatPhase {
     /// Agent is waking up and initialising for the tick.
@@ -47,6 +47,7 @@ pub enum HeartbeatPhase {
     /// Agent is executing queued work.
     Execute,
     /// Agent is idle, waiting for the next tick.
+    #[default]
     Sleep,
     /// Agent is reporting results from this cycle.
     Report,
@@ -62,12 +63,6 @@ impl HeartbeatPhase {
             Self::Sleep => Self::Report,
             Self::Report => Self::Wake,
         }
-    }
-}
-
-impl Default for HeartbeatPhase {
-    fn default() -> Self {
-        Self::Sleep
     }
 }
 

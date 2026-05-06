@@ -244,12 +244,11 @@ impl BenchmarkScorerModel {
     /// Load models from the given directory, or return a new untrained scorer.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join("scorer.json");
-        if path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(model) = serde_json::from_str::<Self>(&data) {
-                    return model;
-                }
-            }
+        if path.exists()
+            && let Ok(data) = std::fs::read_to_string(&path)
+            && let Ok(model) = serde_json::from_str::<Self>(&data)
+        {
+            return model;
         }
         Self::new()
     }

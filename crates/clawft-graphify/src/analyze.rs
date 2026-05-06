@@ -64,14 +64,12 @@ pub fn is_file_node(kg: &KnowledgeGraph, id: &EntityId) -> bool {
     }
 
     // File-level hub: label matches source filename
-    if let Some(ref source_file) = entity.source_file {
-        if !source_file.is_empty() {
-            if let Some(fname) = std::path::Path::new(source_file.as_str()).file_name() {
-                if label == fname.to_str().unwrap_or("") {
-                    return true;
-                }
-            }
-        }
+    if let Some(ref source_file) = entity.source_file
+        && !source_file.is_empty()
+        && let Some(fname) = std::path::Path::new(source_file.as_str()).file_name()
+        && label == fname.to_str().unwrap_or("")
+    {
+        return true;
     }
 
     // Method stub: `.method_name()`
@@ -212,6 +210,7 @@ pub fn surprising_connections_eml(
 ///
 /// `[confidence_ordinal, cross_file_type, cross_repo,
 ///   cross_community, is_semantic, min_degree, max_degree]`
+#[allow(clippy::too_many_arguments)]
 fn surprise_features(
     kg: &KnowledgeGraph,
     src_id: &EntityId,
@@ -270,6 +269,7 @@ fn surprise_features(
 ///
 /// When `eml_model` is `Some`, uses the trained model for scoring.
 /// Otherwise falls back to the original hardcoded heuristics.
+#[allow(clippy::too_many_arguments)]
 fn surprise_score(
     kg: &KnowledgeGraph,
     src_id: &EntityId,
@@ -293,16 +293,16 @@ fn surprise_score(
     );
 
     // If a trained EML model is provided, use it for the score.
-    if let Some(model) = eml_model {
-        if model.is_trained() {
-            let eml_score = model.score(&features);
-            // Still generate human-readable reasons from the feature vector.
-            let reasons = surprise_reasons(
-                &features,
-                kg, src_id, tgt_id, src_source, tgt_source, confidence,
-            );
-            return (eml_score as i32, reasons);
-        }
+    if let Some(model) = eml_model
+        && model.is_trained()
+    {
+        let eml_score = model.score(&features);
+        // Still generate human-readable reasons from the feature vector.
+        let reasons = surprise_reasons(
+            &features,
+            kg, src_id, tgt_id, src_source, tgt_source, confidence,
+        );
+        return (eml_score as i32, reasons);
     }
 
     // Hardcoded fallback (original logic).
@@ -340,11 +340,11 @@ fn surprise_score(
     // 4. Cross-community bonus
     let cid_u = node_community.get(src_id);
     let cid_v = node_community.get(tgt_id);
-    if let (Some(cu), Some(cv)) = (cid_u, cid_v) {
-        if cu != cv {
-            score += 1;
-            reasons.push("bridges separate communities".to_owned());
-        }
+    if let (Some(cu), Some(cv)) = (cid_u, cid_v)
+        && cu != cv
+    {
+        score += 1;
+        reasons.push("bridges separate communities".to_owned());
     }
 
     // 4b. Semantic similarity multiplier
@@ -1092,7 +1092,7 @@ impl MctsExplorer {
 
         // Deterministic PRNG (xorshift64) for rollout -- avoids rand dep.
         let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_1234;
-        let mut next_rng = |state: &mut u64| -> u64 {
+        let next_rng = |state: &mut u64| -> u64 {
             *state ^= *state << 13;
             *state ^= *state >> 7;
             *state ^= *state << 17;

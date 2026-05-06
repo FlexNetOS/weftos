@@ -188,16 +188,17 @@ fn extract_tf_blocks(content: &str, rel_str: &str, findings: &mut Vec<Finding>) 
         }
 
         // version constraint inside provider/required_providers block
-        if trimmed.starts_with("version") && trimmed.contains('=') {
-            if let Some(v) = extract_version_value(trimmed) {
-                findings.push(Finding {
-                    severity: "info".into(),
-                    category: "infrastructure".into(),
-                    file: rel_str.to_string(),
-                    line: Some(i + 1),
-                    message: format!("Terraform version constraint: {v}"),
-                });
-            }
+        if trimmed.starts_with("version")
+            && trimmed.contains('=')
+            && let Some(v) = extract_version_value(trimmed)
+        {
+            findings.push(Finding {
+                severity: "info".into(),
+                category: "infrastructure".into(),
+                file: rel_str.to_string(),
+                line: Some(i + 1),
+                message: format!("Terraform version constraint: {v}"),
+            });
         }
     }
 }
@@ -287,18 +288,18 @@ fn extract_lock_providers(content: &str, rel_str: &str, findings: &mut Vec<Findi
             continue;
         }
 
-        if trimmed.starts_with("version") && trimmed.contains('=') {
-            if let Some(v) = extract_version_value(trimmed) {
-                if let Some(ref prov) = current_provider {
-                    findings.push(Finding {
-                        severity: "info".into(),
-                        category: "infrastructure".into(),
-                        file: rel_str.to_string(),
-                        line: Some(i + 1),
-                        message: format!("Terraform locked provider version: {prov} = {v}"),
-                    });
-                }
-            }
+        if trimmed.starts_with("version")
+            && trimmed.contains('=')
+            && let Some(v) = extract_version_value(trimmed)
+            && let Some(ref prov) = current_provider
+        {
+            findings.push(Finding {
+                severity: "info".into(),
+                category: "infrastructure".into(),
+                file: rel_str.to_string(),
+                line: Some(i + 1),
+                message: format!("Terraform locked provider version: {prov} = {v}"),
+            });
         }
 
         if trimmed == "}" {
