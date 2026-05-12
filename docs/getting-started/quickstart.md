@@ -21,8 +21,8 @@ configuration file, and running your first agent session.
 Clone the repository and build in release mode:
 
 ```bash
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 scripts/build.sh native    # Or: cargo build --release
 ```
 

@@ -40,19 +40,19 @@ Each release publishes the following artifacts:
 | `weft-macos-aarch64`        | `aarch64-apple-darwin`           | Apple Silicon             |
 | `weft-windows-x86_64.exe`   | `x86_64-pc-windows-msvc`        | Windows                   |
 | `clawft_wasm.wasm`          | `wasm32-wasip2`                  | WASM module, < 300 KB     |
-| Docker image                | `ghcr.io/clawft/clawft:vX.Y.Z`  | FROM scratch, ~5 MB       |
+| Docker image                | `ghcr.io/flexnetos/weftos:vX.Y.Z`  | FROM scratch, ~5 MB       |
 
 ## Downloading a Release
 
 ### From GitHub
 
 Download binaries from the
-[Releases page](https://github.com/weave-logic-ai/clawft/releases):
+[Releases page](https://github.com/FlexNetOS/weftos/releases):
 
 ```bash
 # Example: download the latest Linux x86_64 binary
 curl -L -o weft \
-  https://github.com/weave-logic-ai/clawft/releases/latest/download/weft-linux-x86_64
+  https://github.com/FlexNetOS/weftos/releases/latest/download/weft-linux-x86_64
 chmod +x weft
 ```
 
@@ -63,7 +63,7 @@ download:
 
 ```bash
 curl -L -o checksums.txt \
-  https://github.com/weave-logic-ai/clawft/releases/latest/download/checksums.txt
+  https://github.com/FlexNetOS/weftos/releases/latest/download/checksums.txt
 
 sha256sum -c checksums.txt --ignore-missing
 ```
@@ -89,13 +89,13 @@ rename it to `weft.exe`.
 Pull a specific release:
 
 ```bash
-docker pull ghcr.io/clawft/clawft:v0.3.1
+docker pull ghcr.io/flexnetos/weftos:v0.3.1
 ```
 
 Or use the `latest` tag:
 
 ```bash
-docker pull ghcr.io/clawft/clawft:latest
+docker pull ghcr.io/flexnetos/weftos:latest
 ```
 
 See the [Docker Deployment Guide](docker.md) for full usage instructions.
@@ -116,8 +116,8 @@ See the [Docker Deployment Guide](docker.md) for full usage instructions.
 ### Build Steps
 
 ```bash
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 scripts/build.sh native    # Or: cargo build --release
 ```
 

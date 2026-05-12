@@ -392,11 +392,11 @@ cargo test -p clawft-kernel test_install_app_from_directory
 ```toml
 # Option A: Git dependencies
 [dependencies]
-rvf-sona = { git = "https://github.com/ruvnet/ruvector", optional = true }
-tiny-dancer = { git = "https://github.com/ruvnet/ruvector", optional = true }
-prime-radiant = { git = "https://github.com/ruvnet/ruvector", optional = true }
-rvf-wire = { git = "https://github.com/ruvnet/ruvector", optional = true }
-rvf-kernel = { git = "https://github.com/ruvnet/ruvector", optional = true }
+rvf-sona = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
+tiny-dancer = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
+prime-radiant = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
+rvf-wire = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
+rvf-kernel = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
 
 [features]
 ruvector-cluster = ["rvf-sona", "tiny-dancer"]
@@ -406,9 +406,9 @@ ruvector-apps = ["rvf-wire"]
 ```
 
 **Repositories**:
-- https://github.com/ruvnet/ruvector
-- https://github.com/ruvnet/agentic-flow
-- https://github.com/ruvnet/ruflo
+- https://github.com/FlexNetOS/ruvector
+- https://github.com/FlexNetOS/agentic-flow
+- https://github.com/FlexNetOS/ruflo
 
 ### Effort Estimate
 **Large** (20-40 hours) - Depends on ruvector crate maturity.
@@ -528,17 +528,17 @@ cargo test -p clawft-kernel --all-features test_multinode_consensus -- --ignored
 **External Crates** (not on crates.io):
 ```toml
 [dependencies]
-exo-core = { git = "https://github.com/ruvnet/exochain", optional = true }
-exo-identity = { git = "https://github.com/ruvnet/exochain", optional = true }
-exo-consent = { git = "https://github.com/ruvnet/exochain", optional = true }
-exo-dag = { git = "https://github.com/ruvnet/exochain", optional = true }
+exo-core = { git = "https://github.com/FlexNetOS/exochain", optional = true }
+exo-identity = { git = "https://github.com/FlexNetOS/exochain", optional = true }
+exo-consent = { git = "https://github.com/FlexNetOS/exochain", optional = true }
+exo-dag = { git = "https://github.com/FlexNetOS/exochain", optional = true }
 
 [features]
 exochain = ["exo-core", "exo-identity", "exo-consent", "exo-dag"]
 ```
 
 **Repository**:
-- https://github.com/ruvnet/exochain
+- https://github.com/FlexNetOS/exochain
 
 ### Effort Estimate
 **Very Large** (40-80 hours) - Complex system requiring new crate.
@@ -1085,7 +1085,7 @@ cargo test -p clawft-kernel --features networking test_browser_websocket -- --ig
 ```toml
 [dependencies]
 blake3 = "1.5"
-exo-dag = { git = "https://github.com/ruvnet/exochain", optional = true }
+exo-dag = { git = "https://github.com/FlexNetOS/exochain", optional = true }
 
 [features]
 crypto-fs = ["blake3", "exo-dag"]
@@ -1162,7 +1162,7 @@ cargo test -p clawft-kernel --features crypto-fs test_merkle_dag_versioning
 [dependencies]
 llama-cpp-sys = { version = "0.1", optional = true }
 # OR
-ruvllm = { git = "https://github.com/ruvnet/ruvector", optional = true }
+ruvllm = { git = "https://github.com/FlexNetOS/ruvector", optional = true }
 
 [features]
 local-inference = ["llama-cpp-sys"]

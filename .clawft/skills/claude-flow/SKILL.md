@@ -91,4 +91,4 @@ not exposed to external consumers. Tools are namespaced as
 
 ## Reference
 
-- Documentation: https://github.com/ruvnet/claude-flow/tree/main/v3
+- Documentation: https://github.com/FlexNetOS/claude-flow/tree/main/v3

@@ -123,7 +123,7 @@ clawft/crates/
 # Phase 3C: Rust Toolchain Upgrade 1.85 -> 1.93.1
 # Estimated time: ~12 minutes
 set -euo pipefail
-cd clawft
+cd weftos
 
 # ─── Step 1: Pre-migration baseline (2 min) ────────────────────────
 
@@ -191,7 +191,7 @@ git commit -m "chore: upgrade Rust toolchain 1.85 -> 1.93
 #!/bin/bash
 # Rollback: revert to Rust 1.85 if issues arise
 set -euo pipefail
-cd clawft
+cd weftos
 
 # Option A: Git revert (if committed)
 git revert HEAD
@@ -417,7 +417,7 @@ These are not required for this phase but become available for future developmen
 Run these before making any changes to establish a clean baseline:
 
 ```bash
-cd clawft
+cd weftos
 
 # 1. Confirm current toolchain
 rustup show active-toolchain
@@ -513,7 +513,7 @@ pub enum PolicyMode {
 Run the full validation suite after all changes are applied:
 
 ```bash
-cd clawft
+cd weftos
 
 # ─── Core workspace validation ─────────────────────────────────────
 
@@ -558,7 +558,7 @@ echo "wasm-build.yml: valid YAML"
 Specific checks to confirm wasip2 is fully operational:
 
 ```bash
-cd clawft
+cd weftos
 
 # Confirm wasip2 target is installed
 rustup target list --installed | grep wasm32-wasip2

@@ -246,7 +246,7 @@ targets = [
 # Installers to generate
 installers = ["shell", "powershell", "homebrew"]
 # Homebrew tap repository
-tap = "weave-logic-ai/homebrew-tap"
+tap = "FlexNetOS/homebrew-tap"
 # Publish jobs to run (homebrew formula auto-published to tap repo)
 publish-jobs = ["homebrew"]
 # Enable GitHub Attestations for provenance

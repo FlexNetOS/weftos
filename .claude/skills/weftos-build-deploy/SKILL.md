@@ -31,8 +31,8 @@ You are the WeftOS release engineer. You handle builds, tagging, publishing, and
 | **GitHub Releases** | 3 binaries x 5 platforms + installers | `FlexNetOS/weftos/releases` |
 | **crates.io** | 10 crates (8 clawft-*, 2 weftos-*) | `crates.io` |
 | **npm** | `@weftos/core` (WASM browser module) | `npmjs.com` |
-| **Docker** | `ghcr.io/FlexNetOS/weftos` | GHCR (multi-arch amd64+arm64) |
-| **Homebrew** | `clawft-cli.rb`, `clawft-weave.rb`, `weftos.rb` | `weave-logic-ai/homebrew-tap` |
+| **Docker** | `ghcr.io/flexnetos/weftos` | GHCR (multi-arch amd64+arm64) |
+| **Homebrew** | `clawft-cli.rb`, `clawft-weave.rb`, `weftos.rb` | `FlexNetOS/homebrew-tap` |
 
 ## Secrets & Auth
 
@@ -151,12 +151,12 @@ tar xzf /tmp/test/clawft-cli-*.tar.gz -C /tmp/test
 /tmp/test/clawft-cli-*/weft tools list
 
 # Homebrew
-brew install weave-logic-ai/tap/clawft-cli
+brew install FlexNetOS/tap/clawft-cli
 weft --version
 
 # Docker
-docker pull ghcr.io/FlexNetOS/weftos:X.Y.Z
-docker run --rm ghcr.io/FlexNetOS/weftos:X.Y.Z --version
+docker pull ghcr.io/flexnetos/weftos:X.Y.Z
+docker run --rm ghcr.io/flexnetos/weftos:X.Y.Z --version
 
 # crates.io
 cargo install weftos
@@ -177,7 +177,7 @@ npm info @weftos/core version
    - `x86_64-pc-windows-msvc` (~10 min)
 3. **Global artifacts** — SHA256 checksums, shell + PowerShell installers
 4. **Host** — creates GitHub Release with all artifacts
-5. **Homebrew** — pushes `.rb` formulae to `weave-logic-ai/homebrew-tap`
+5. **Homebrew** — pushes `.rb` formulae to `FlexNetOS/homebrew-tap`
 6. **Announce** — marks release as published
 
 **Docker** runs in parallel via `release-docker.yml` (~2h for multi-arch QEMU build).
@@ -236,7 +236,7 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 installers = ["shell", "powershell", "homebrew"]
-tap = "weave-logic-ai/homebrew-tap"
+tap = "FlexNetOS/homebrew-tap"
 publish-jobs = ["homebrew"]
 github-attestations = true
 ```
@@ -270,7 +270,7 @@ github-attestations = true
 - **Platforms**: linux/amd64, linux/arm64
 - **Tags**: `X.Y.Z`, `X.Y`, `X`, `latest`
 - **Health check**: `weft status` (exec form, no shell)
-- **Registry**: `ghcr.io/FlexNetOS/weftos`
+- **Registry**: `ghcr.io/flexnetos/weftos`
 
 ## Platform Support
 

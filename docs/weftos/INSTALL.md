@@ -10,8 +10,8 @@
 ## From Source
 
 ```bash
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 
 # Build the CLI in release mode
 scripts/build.sh native

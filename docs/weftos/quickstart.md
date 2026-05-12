@@ -17,8 +17,8 @@ directory.
 ## Install from Source
 
 ```bash
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 
 # Build the WeftOS binary
 scripts/build.sh native

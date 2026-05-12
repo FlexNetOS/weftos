@@ -152,24 +152,24 @@ members = [
 
 [workspace.dependencies]
 # RVF core (feature-gated in clawft-core)
-rvf-runtime = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-types = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-index = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-quant = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-adapter-agentdb = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-crypto = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-rvf-wasm = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
+rvf-runtime = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-types = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-index = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-quant = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-adapter-agentdb = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-crypto = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+rvf-wasm = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
 
 # ruvector intelligence (feature-gated in clawft-core)
-ruvector-core = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-ruvllm = { git = "https://github.com/ruvnet/ruvector", branch = "main", default-features = false, features = ["minimal"], optional = true }
-ruvector-sona = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-ruvector-tiny-dancer-core = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-ruvector-attention = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
-ruvector-temporal-tensor = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
+ruvector-core = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+ruvllm = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", default-features = false, features = ["minimal"], optional = true }
+ruvector-sona = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+ruvector-tiny-dancer-core = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+ruvector-attention = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
+ruvector-temporal-tensor = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
 
 # WASM-only
-micro-hnsw-wasm = { git = "https://github.com/ruvnet/ruvector", branch = "main", optional = true }
+micro-hnsw-wasm = { git = "https://github.com/FlexNetOS/ruvector", branch = "main", optional = true }
 ```
 
 ---

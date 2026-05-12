@@ -276,13 +276,13 @@ causality, search semantic memory, and process ephemeral signals in real-time.
 curl -fsSL https://github.com/FlexNetOS/weftos/releases/latest/download/clawft-cli-installer.sh | sh
 
 # Or via Homebrew
-brew install weave-logic-ai/tap/clawft-cli
+brew install FlexNetOS/tap/clawft-cli
 
 # Or via cargo
 cargo install weftos
 
 # Or via Docker
-docker pull ghcr.io/FlexNetOS/weftos:latest
+docker pull ghcr.io/flexnetos/weftos:latest
 ```
 
 Pre-built binaries for Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), and Windows are on [GitHub Releases](https://github.com/FlexNetOS/weftos/releases). WASM module available as [`@weftos/core`](https://www.npmjs.com/package/@weftos/core) on npm. All framework crates on [crates.io](https://crates.io/crates/weftos).
@@ -460,8 +460,8 @@ Environments apply different thresholds:
 ### Build
 
 ```sh
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 scripts/build.sh native          # Release binary
 scripts/build.sh native-debug    # Debug binary (fast iteration)
 scripts/build.sh test            # Run tests
@@ -493,8 +493,8 @@ at your option.
 clawft + WeftOS builds on ideas and patterns from:
 
 - [claude-code](https://github.com/anthropics/claude-code) — Anthropic's agentic coding tool
-- [claude-flow](https://github.com/ruvnet/claude-flow) — Multi-agent orchestration framework
-- [ruvector](https://github.com/ruvnet/ruvector) — Rust vector operations and distributed consensus
+- [claude-flow](https://github.com/FlexNetOS/claude-flow) — Multi-agent orchestration framework
+- [ruvector](https://github.com/FlexNetOS/ruvector) — Rust vector operations and distributed consensus
 - The WeftOS kernel architecture draws from microkernel OS design (L4, seL4),
   capability-based security (Capsicum), and distributed systems research
   (SWIM, Raft, CRDTs, Kademlia)

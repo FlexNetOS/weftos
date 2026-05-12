@@ -12,8 +12,8 @@ statically-linked `weft` binary. The resulting image is typically around 5 MB.
 Pull the pre-built image and run the gateway:
 
 ```bash
-docker pull ghcr.io/clawft/clawft:latest
-docker run --rm -it ghcr.io/clawft/clawft:latest --version
+docker pull ghcr.io/flexnetos/weftos:latest
+docker run --rm -it ghcr.io/flexnetos/weftos:latest --version
 ```
 
 By default the container starts in gateway mode (`weft gateway`).
@@ -24,8 +24,8 @@ Clone the repository and build a static musl binary, then build the Docker
 image:
 
 ```bash
-git clone https://github.com/weave-logic-ai/clawft.git
-cd clawft
+git clone https://github.com/FlexNetOS/weftos.git
+cd weftos
 
 # Build the static binary (requires musl target)
 rustup target add x86_64-unknown-linux-musl
@@ -49,7 +49,7 @@ local config into the container:
 ```bash
 docker run --rm -it \
   -v "$HOME/.clawft:/root/.clawft:ro" \
-  ghcr.io/clawft/clawft:latest gateway
+  ghcr.io/flexnetos/weftos:latest gateway
 ```
 
 ### Environment Variables
@@ -61,7 +61,7 @@ docker run --rm -it \
   -e OPENAI_API_KEY="sk-..." \
   -e CLAWFT_CONFIG="/root/.clawft/config.json" \
   -v "$HOME/.clawft:/root/.clawft:ro" \
-  ghcr.io/clawft/clawft:latest gateway
+  ghcr.io/flexnetos/weftos:latest gateway
 ```
 
 ### Workspace Persistence
@@ -72,7 +72,7 @@ directory:
 ```bash
 docker run --rm -it \
   -v "$HOME/.clawft:/root/.clawft" \
-  ghcr.io/clawft/clawft:latest gateway
+  ghcr.io/flexnetos/weftos:latest gateway
 ```
 
 ## Docker Compose
@@ -82,7 +82,7 @@ A Docker Compose configuration for running the gateway with persistent storage:
 ```yaml
 services:
   clawft:
-    image: ghcr.io/clawft/clawft:latest
+    image: ghcr.io/flexnetos/weftos:latest
     command: ["gateway"]
     restart: unless-stopped
     volumes:
@@ -141,7 +141,7 @@ Check that the config file is valid JSON and the volume mount path is correct:
 ```bash
 docker run --rm -it \
   -v "$HOME/.clawft:/root/.clawft:ro" \
-  ghcr.io/clawft/clawft:latest status --detailed
+  ghcr.io/flexnetos/weftos:latest status --detailed
 ```
 
 **Permission denied on config file**
@@ -157,7 +157,7 @@ chmod 644 ~/.clawft/config.json
 Verify DNS and network access from the container:
 
 ```bash
-docker run --rm ghcr.io/clawft/clawft:latest agent -m "ping"
+docker run --rm ghcr.io/flexnetos/weftos:latest agent -m "ping"
 ```
 
 If running behind a corporate proxy, pass proxy environment variables:

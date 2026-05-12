@@ -217,5 +217,5 @@ npx @claude-flow/cli@latest doctor --fix
 
 ## Support
 
-- Documentation: https://github.com/ruvnet/claude-flow
-- Issues: https://github.com/ruvnet/claude-flow/issues
+- Documentation: https://github.com/FlexNetOS/claude-flow
+- Issues: https://github.com/FlexNetOS/claude-flow/issues
