@@ -31,7 +31,7 @@ You are the WeftOS release engineer. You handle builds, tagging, publishing, and
 | **GitHub Releases** | 3 binaries x 5 platforms + installers | `FlexNetOS/weftos/releases` |
 | **crates.io** | 10 crates (8 clawft-*, 2 weftos-*) | `crates.io` |
 | **npm** | `@weftos/core` (WASM browser module) | `npmjs.com` |
-| **Docker** | `ghcr.io/FlexNetOS/weftos` | GHCR (multi-arch amd64+arm64) |
+| **Docker** | `ghcr.io/flexnetos/weftos` | GHCR (multi-arch amd64+arm64) |
 | **Homebrew** | `clawft-cli.rb`, `clawft-weave.rb`, `weftos.rb` | `FlexNetOS/homebrew-tap` |
 
 ## Secrets & Auth
@@ -155,8 +155,8 @@ brew install FlexNetOS/tap/clawft-cli
 weft --version
 
 # Docker
-docker pull ghcr.io/FlexNetOS/weftos:X.Y.Z
-docker run --rm ghcr.io/FlexNetOS/weftos:X.Y.Z --version
+docker pull ghcr.io/flexnetos/weftos:X.Y.Z
+docker run --rm ghcr.io/flexnetos/weftos:X.Y.Z --version
 
 # crates.io
 cargo install weftos
@@ -270,7 +270,7 @@ github-attestations = true
 - **Platforms**: linux/amd64, linux/arm64
 - **Tags**: `X.Y.Z`, `X.Y`, `X`, `latest`
 - **Health check**: `weft status` (exec form, no shell)
-- **Registry**: `ghcr.io/FlexNetOS/weftos`
+- **Registry**: `ghcr.io/flexnetos/weftos`
 
 ## Platform Support
 
