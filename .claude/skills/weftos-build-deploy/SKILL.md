@@ -32,7 +32,7 @@ You are the WeftOS release engineer. You handle builds, tagging, publishing, and
 | **crates.io** | 10 crates (8 clawft-*, 2 weftos-*) | `crates.io` |
 | **npm** | `@weftos/core` (WASM browser module) | `npmjs.com` |
 | **Docker** | `ghcr.io/FlexNetOS/weftos` | GHCR (multi-arch amd64+arm64) |
-| **Homebrew** | `clawft-cli.rb`, `clawft-weave.rb`, `weftos.rb` | `weave-logic-ai/homebrew-tap` |
+| **Homebrew** | `clawft-cli.rb`, `clawft-weave.rb`, `weftos.rb` | `FlexNetOS/homebrew-tap` |
 
 ## Secrets & Auth
 
@@ -177,7 +177,7 @@ npm info @weftos/core version
    - `x86_64-pc-windows-msvc` (~10 min)
 3. **Global artifacts** — SHA256 checksums, shell + PowerShell installers
 4. **Host** — creates GitHub Release with all artifacts
-5. **Homebrew** — pushes `.rb` formulae to `weave-logic-ai/homebrew-tap`
+5. **Homebrew** — pushes `.rb` formulae to `FlexNetOS/homebrew-tap`
 6. **Announce** — marks release as published
 
 **Docker** runs in parallel via `release-docker.yml` (~2h for multi-arch QEMU build).
@@ -236,7 +236,7 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 installers = ["shell", "powershell", "homebrew"]
-tap = "weave-logic-ai/homebrew-tap"
+tap = "FlexNetOS/homebrew-tap"
 publish-jobs = ["homebrew"]
 github-attestations = true
 ```

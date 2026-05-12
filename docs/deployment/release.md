@@ -117,7 +117,7 @@ See the [Docker Deployment Guide](docker.md) for full usage instructions.
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 scripts/build.sh native    # Or: cargo build --release
 ```
 

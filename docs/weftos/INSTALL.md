@@ -11,7 +11,7 @@
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 
 # Build the CLI in release mode
 scripts/build.sh native

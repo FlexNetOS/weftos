@@ -18,7 +18,7 @@ directory.
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 
 # Build the WeftOS binary
 scripts/build.sh native

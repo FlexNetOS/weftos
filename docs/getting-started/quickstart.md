@@ -22,7 +22,7 @@ Clone the repository and build in release mode:
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 scripts/build.sh native    # Or: cargo build --release
 ```
 

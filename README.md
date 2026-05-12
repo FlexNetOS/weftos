@@ -282,7 +282,7 @@ brew install FlexNetOS/tap/clawft-cli
 cargo install weftos
 
 # Or via Docker
-docker pull ghcr.io/FlexNetOS/weftos:latest
+docker pull ghcr.io/flexnetos/weftos:latest
 ```
 
 Pre-built binaries for Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), and Windows are on [GitHub Releases](https://github.com/FlexNetOS/weftos/releases). WASM module available as [`@weftos/core`](https://www.npmjs.com/package/@weftos/core) on npm. All framework crates on [crates.io](https://crates.io/crates/weftos).
@@ -461,7 +461,7 @@ Environments apply different thresholds:
 
 ```sh
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 scripts/build.sh native          # Release binary
 scripts/build.sh native-debug    # Debug binary (fast iteration)
 scripts/build.sh test            # Run tests

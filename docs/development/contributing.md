@@ -12,7 +12,7 @@
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 cargo build --workspace
 cargo test --workspace
 ```

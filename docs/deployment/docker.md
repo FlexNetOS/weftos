@@ -25,7 +25,7 @@ image:
 
 ```bash
 git clone https://github.com/FlexNetOS/weftos.git
-cd clawft
+cd weftos
 
 # Build the static binary (requires musl target)
 rustup target add x86_64-unknown-linux-musl
