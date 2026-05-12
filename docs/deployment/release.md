@@ -40,7 +40,7 @@ Each release publishes the following artifacts:
 | `weft-macos-aarch64`        | `aarch64-apple-darwin`           | Apple Silicon             |
 | `weft-windows-x86_64.exe`   | `x86_64-pc-windows-msvc`        | Windows                   |
 | `clawft_wasm.wasm`          | `wasm32-wasip2`                  | WASM module, < 300 KB     |
-| Docker image                | `ghcr.io/clawft/clawft:vX.Y.Z`  | FROM scratch, ~5 MB       |
+| Docker image                | `ghcr.io/flexnetos/weftos:vX.Y.Z`  | FROM scratch, ~5 MB       |
 
 ## Downloading a Release
 
@@ -89,13 +89,13 @@ rename it to `weft.exe`.
 Pull a specific release:
 
 ```bash
-docker pull ghcr.io/clawft/clawft:v0.3.1
+docker pull ghcr.io/flexnetos/weftos:v0.3.1
 ```
 
 Or use the `latest` tag:
 
 ```bash
-docker pull ghcr.io/clawft/clawft:latest
+docker pull ghcr.io/flexnetos/weftos:latest
 ```
 
 See the [Docker Deployment Guide](docker.md) for full usage instructions.

@@ -5,7 +5,7 @@
 **Date**: 2026-02-28
 **Status**: Partially Implemented (cluster layer done)
 **Supersedes**: Portions of K0-K5 where ruvector crates replace custom implementations
-**Dependencies**: ruvector distributed crates from `https://github.com/weave-logic-ai/ruvector`
+**Dependencies**: ruvector distributed crates from `https://github.com/FlexNetOS/ruvector`
 
 ---
 

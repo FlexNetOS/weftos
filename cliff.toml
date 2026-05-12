@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 # https://keats.github.io/tera/docs/#introduction
 body = """
 {%- macro remote_url() -%}
-  https://github.com/clawft/clawft
+  https://github.com/FlexNetOS/weftos
 {%- endmacro -%}
 
 {% if version -%}
@@ -40,13 +40,13 @@ footer = """
     {% if release.version -%}
         {% if release.previous.version -%}
             [{{ release.version | trim_start_matches(pat="v") }}]: \
-                https://github.com/clawft/clawft/compare/{{ release.previous.version }}...{{ release.version }}
+                https://github.com/FlexNetOS/weftos/compare/{{ release.previous.version }}...{{ release.version }}
         {% else -%}
             [{{ release.version | trim_start_matches(pat="v") }}]: \
-                https://github.com/clawft/clawft/releases/tag/{{ release.version }}
+                https://github.com/FlexNetOS/weftos/releases/tag/{{ release.version }}
         {% endif -%}
     {% else -%}
-        [Unreleased]: https://github.com/clawft/clawft/compare/{{ release.previous.version }}...HEAD
+        [Unreleased]: https://github.com/FlexNetOS/weftos/compare/{{ release.previous.version }}...HEAD
     {% endif -%}
 {% endfor %}
 """
