@@ -11,11 +11,11 @@ The ruv ecosystem spans 5+ repos and 100+ Rust crates:
 
 | Repo | Purpose | Key Relevance to WeftOS |
 |------|---------|------------------------|
-| [ruvector](https://github.com/ruvnet/ruvector) | Vector DB + self-learning engine (101 Rust crates) | Cognitive containers, Raft consensus, CRDT delta sync, cluster management, witness chains, WASM sandbox, service discovery, coherence gate |
-| [agentic-flow](https://github.com/ruvnet/agentic-flow) | Agent orchestration (66 agents, 213 MCP tools) | Agent routing, swarm coordination, AgentDB memory, QUIC transport, attention-based consensus |
-| [ruflo](https://github.com/ruvnet/ruflo) | Claude agent platform (swarms, hive-mind) | Queen/worker patterns, ReasoningBank learning, anti-drift, gossip protocol |
-| [QuDAG](https://github.com/ruvnet/QuDAG) | Quantum-resistant DAG communication | P2P messaging via LibP2P/Kademlia, onion routing, QR-Avalanche consensus, .dark domain naming, MCP server |
-| [DAA](https://github.com/ruvnet/daa) | Decentralized Autonomous Applications | MRAP autonomy loop, governance rule engine, token economy, federated learning |
+| [ruvector](https://github.com/FlexNetOS/ruvector) | Vector DB + self-learning engine (101 Rust crates) | Cognitive containers, Raft consensus, CRDT delta sync, cluster management, witness chains, WASM sandbox, service discovery, coherence gate |
+| [agentic-flow](https://github.com/FlexNetOS/agentic-flow) | Agent orchestration (66 agents, 213 MCP tools) | Agent routing, swarm coordination, AgentDB memory, QUIC transport, attention-based consensus |
+| [ruflo](https://github.com/FlexNetOS/ruflo) | Claude agent platform (swarms, hive-mind) | Queen/worker patterns, ReasoningBank learning, anti-drift, gossip protocol |
+| [QuDAG](https://github.com/FlexNetOS/QuDAG) | Quantum-resistant DAG communication | P2P messaging via LibP2P/Kademlia, onion routing, QR-Avalanche consensus, .dark domain naming, MCP server |
+| [DAA](https://github.com/FlexNetOS/daa) | Decentralized Autonomous Applications | MRAP autonomy loop, governance rule engine, token economy, federated learning |
 
 ---
 
@@ -573,9 +573,9 @@ See individual phase plan files for inline annotations. Key additions per phase:
 
 ## 8. Sources
 
-- [ruvector](https://github.com/ruvnet/ruvector) -- 101 Rust crates, RVF format, cognitive containers
-- [agentic-flow](https://github.com/ruvnet/agentic-flow) -- Agent orchestration, AgentDB, 213 MCP tools
-- [ruflo](https://github.com/ruvnet/ruflo) -- Claude agent platform, swarm coordination
-- [QuDAG](https://github.com/ruvnet/QuDAG) -- Quantum-resistant DAG communication
-- [DAA](https://github.com/ruvnet/daa) -- Decentralized Autonomous Applications
+- [ruvector](https://github.com/FlexNetOS/ruvector) -- 101 Rust crates, RVF format, cognitive containers
+- [agentic-flow](https://github.com/FlexNetOS/agentic-flow) -- Agent orchestration, AgentDB, 213 MCP tools
+- [ruflo](https://github.com/FlexNetOS/ruflo) -- Claude agent platform, swarm coordination
+- [QuDAG](https://github.com/FlexNetOS/QuDAG) -- Quantum-resistant DAG communication
+- [DAA](https://github.com/FlexNetOS/daa) -- Decentralized Autonomous Applications
 - [AgentDB](https://agentdb.ruv.io/) -- Vector database for AI agents

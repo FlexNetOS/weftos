@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-The [ruvector](https://github.com/ruvnet/ruvector) repository contains **80+ crates** spanning vector search, neural routing, self-learning, graph operations, quantum computing, distributed consensus, and WASM microkernels. This document maps which crates clawft should weave into its fabric, at which phase, and how they address the litellm replacement and beyond.
+The [ruvector](https://github.com/FlexNetOS/ruvector) repository contains **80+ crates** spanning vector search, neural routing, self-learning, graph operations, quantum computing, distributed consensus, and WASM microkernels. This document maps which crates clawft should weave into its fabric, at which phase, and how they address the litellm replacement and beyond.
 
 ### The Fundamental Insight
 

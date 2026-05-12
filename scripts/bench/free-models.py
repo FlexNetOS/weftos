@@ -266,7 +266,7 @@ def call_model_streaming(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
-        "HTTP-Referer": "https://github.com/ruvnet/clawft",
+        "HTTP-Referer": "https://github.com/FlexNetOS/weftos",
         "X-Title": "clawft-bench",
     }
 
@@ -370,7 +370,7 @@ def call_model_non_streaming(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/ruvnet/clawft",
+        "HTTP-Referer": "https://github.com/FlexNetOS/weftos",
         "X-Title": "clawft-bench",
     }
 

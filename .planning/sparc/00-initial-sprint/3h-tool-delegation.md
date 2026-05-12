@@ -1551,4 +1551,4 @@ Translation: unwrap `function` envelope, rename `parameters` to `input_schema`.
 - [Anthropic Tool Use Docs](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)
 - [MCP Transports (stdio, HTTP)](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
 - [Official Rust MCP SDK (rmcp)](https://github.com/modelcontextprotocol/rust-sdk)
-- [claude-flow MCP Tools](https://github.com/ruvnet/claude-flow)
+- [claude-flow MCP Tools](https://github.com/FlexNetOS/claude-flow)

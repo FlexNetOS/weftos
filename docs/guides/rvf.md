@@ -1,7 +1,7 @@
 # RVF Integration Guide
 
 RVF (RuVector Format) is a universal binary format from the
-[ruvector](https://github.com/ruvnet/ruvector) project. A single `.rvf` file
+[ruvector](https://github.com/FlexNetOS/ruvector) project. A single `.rvf` file
 merges a vector database, routing policies, quantization dictionaries, and a
 cryptographic audit trail into one self-contained artifact. It is designed for
 embedded and edge deployment where a multi-service stack is impractical.

@@ -214,19 +214,19 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 # ruvector dependencies (all optional, feature-gated)
-ruvector-cluster = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-ruvector-cognitive-container = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-cognitum-gate-tilezero = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-ruvector-delta-consensus = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-ruvector-nervous-system = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-ruvector-tiny-dancer-core = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-sona = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-prime-radiant = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-mcp-gate = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-rvf-wire = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-rvf-wasm = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-rvf-kernel = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
-rvf-crypto = { git = "https://github.com/ruvnet/ruvector", rev = "PIN_ME", optional = true }
+ruvector-cluster = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+ruvector-cognitive-container = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+cognitum-gate-tilezero = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+ruvector-delta-consensus = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+ruvector-nervous-system = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+ruvector-tiny-dancer-core = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+sona = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+prime-radiant = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+mcp-gate = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+rvf-wire = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+rvf-wasm = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+rvf-kernel = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
+rvf-crypto = { git = "https://github.com/FlexNetOS/ruvector", rev = "PIN_ME", optional = true }
 wasmtime = { version = "27.0", optional = true }
 bollard = { version = "0.17", optional = true }
 ```

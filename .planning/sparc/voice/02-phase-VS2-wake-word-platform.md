@@ -1602,7 +1602,7 @@ impl std::fmt::Display for MetricsSummary {
 
 [Unit]
 Description=ClawFT Voice Wake Daemon
-Documentation=https://github.com/ruvnet/clawft
+Documentation=https://github.com/FlexNetOS/weftos
 After=pipewire.service pulseaudio.service
 Wants=pipewire.service
 

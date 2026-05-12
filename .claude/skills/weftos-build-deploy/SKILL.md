@@ -151,7 +151,7 @@ tar xzf /tmp/test/clawft-cli-*.tar.gz -C /tmp/test
 /tmp/test/clawft-cli-*/weft tools list
 
 # Homebrew
-brew install weave-logic-ai/tap/clawft-cli
+brew install FlexNetOS/tap/clawft-cli
 weft --version
 
 # Docker

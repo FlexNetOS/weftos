@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-[RVF (RuVector Format)](https://github.com/ruvnet/ruvector/blob/main/crates/rvf/README.md) is the foundational technology for clawft's intelligence layer. It is a universal binary substrate that merges vector database, model routing, progressive indexing, and WASM runtime into a single format.
+[RVF (RuVector Format)](https://github.com/FlexNetOS/ruvector/blob/main/crates/rvf/README.md) is the foundational technology for clawft's intelligence layer. It is a universal binary substrate that merges vector database, model routing, progressive indexing, and WASM runtime into a single format.
 
 A single `.rvf` file stores agent memory embeddings, session state, routing policies, and can run queries via a 5.5 KB WASM microkernel. This replaces litellm and provides capabilities far beyond simple model routing.
 

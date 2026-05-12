@@ -45,11 +45,11 @@ elsewhere.
 
 | Repo | GitHub URL | Language | Clone Target |
 |------|-----------|----------|-------------|
-| ruvector | `https://github.com/ruvnet/ruvector` | Rust | `/tmp/ruv-research/ruvector` |
-| agentic-flow | `https://github.com/ruvnet/agentic-flow` | TypeScript/Rust | `/tmp/ruv-research/agentic-flow` |
-| ruflo | `https://github.com/ruvnet/ruflo` | TypeScript | `/tmp/ruv-research/ruflo` |
-| QuDAG | `https://github.com/ruvnet/QuDAG` | Rust | `/tmp/ruv-research/qudag` |
-| DAA | `https://github.com/ruvnet/daa` | Rust | `/tmp/ruv-research/daa` |
+| ruvector | `https://github.com/FlexNetOS/ruvector` | Rust | `/tmp/ruv-research/ruvector` |
+| agentic-flow | `https://github.com/FlexNetOS/agentic-flow` | TypeScript/Rust | `/tmp/ruv-research/agentic-flow` |
+| ruflo | `https://github.com/FlexNetOS/ruflo` | TypeScript | `/tmp/ruv-research/ruflo` |
+| QuDAG | `https://github.com/FlexNetOS/QuDAG` | Rust | `/tmp/ruv-research/qudag` |
+| DAA | `https://github.com/FlexNetOS/daa` | Rust | `/tmp/ruv-research/daa` |
 
 ## Available Actions
 
@@ -67,7 +67,7 @@ Usage: `/ruv-researcher update <repo>`
    if [ -d /tmp/ruv-research/<repo> ]; then
      cd /tmp/ruv-research/<repo> && git pull
    else
-     mkdir -p /tmp/ruv-research && git clone https://github.com/ruvnet/<repo>.git /tmp/ruv-research/<repo>
+     mkdir -p /tmp/ruv-research && git clone https://github.com/FlexNetOS/<repo>.git /tmp/ruv-research/<repo>
    fi
    ```
 
