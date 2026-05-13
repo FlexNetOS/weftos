@@ -2556,8 +2556,8 @@ mod tests {
     #[test]
     fn spectral_disconnected_graph_zero_lambda2() {
         let g = make_graph();
-        let a = g.add_node("A".into(), serde_json::json!({}));
-        let b = g.add_node("B".into(), serde_json::json!({}));
+        let _a = g.add_node("A".into(), serde_json::json!({}));
+        let _b = g.add_node("B".into(), serde_json::json!({}));
         // No edges — disconnected.
         let result = g.spectral_analysis(50);
         assert!(

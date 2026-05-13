@@ -24,6 +24,7 @@ DRY_RUN=false
 FORCE=false
 SERVE_PORT=""
 COMMAND=""
+UI_DIR="$ROOT/clawft-ui"
 
 # ── Reporting helpers ────────────────────────────────────────────────
 pass()  { printf "  ${GREEN}PASS${NC}  %s\n" "$*"; }
@@ -193,20 +194,20 @@ cmd_browser() {
 
 cmd_ui() {
     header "Building React frontend (tsc + vite)"
-    if [ ! -d "$ROOT/ui" ] || [ ! -f "$ROOT/ui/package.json" ]; then
-        skip "ui/ directory not found — skipping"
+    if [ ! -d "$UI_DIR" ] || [ ! -f "$UI_DIR/package.json" ]; then
+        skip "clawft-ui/ directory not found — skipping"
         return 0
     fi
     timer_start
     if [ "$DRY_RUN" = true ]; then
-        printf "  ${YELLOW}DRY${NC}   cd ui && npm run build\n"
+        printf "  ${YELLOW}DRY${NC}   cd clawft-ui && npm run build\n"
     else
-        (cd "$ROOT/ui" && npm run build)
+        (cd "$UI_DIR" && npm run build)
     fi
     timer_end
-    if [ -d "$ROOT/ui/dist" ]; then
+    if [ -d "$UI_DIR/dist" ]; then
         local size
-        size=$(du -sh "$ROOT/ui/dist" 2>/dev/null | cut -f1)
+        size=$(du -sh "$UI_DIR/dist" 2>/dev/null | cut -f1)
         printf "  ${CYAN}SIZE${NC}  UI bundle: %s\n" "$size"
     fi
 }
@@ -261,9 +262,9 @@ cmd_clippy() {
 cmd_clean() {
     header "Cleaning build artifacts"
     run_cmd cargo clean
-    if [ -d "$ROOT/ui/dist" ]; then
-        info "Removing ui/dist"
-        rm -rf "$ROOT/ui/dist"
+    if [ -d "$UI_DIR/dist" ]; then
+        info "Removing clawft-ui/dist"
+        rm -rf "$UI_DIR/dist"
     fi
     if [ -d "$ROOT/crates/clawft-wasm/www/pkg" ]; then
         info "Removing crates/clawft-wasm/www/pkg"
@@ -400,13 +401,13 @@ cmd_gate() {
     fi
 
     # 10. UI build
-    if [ -d "$ROOT/ui" ] && [ -f "$ROOT/ui/package.json" ]; then
+    if [ -d "$UI_DIR" ] && [ -f "$UI_DIR/package.json" ]; then
         printf "\n${BOLD}[%2d/%d]${NC} %s\n" 10 "$total" "UI build (tsc + vite)"
         timer_start
         if [ "$DRY_RUN" = true ]; then
-            printf "  ${YELLOW}DRY${NC}   cd ui && npm run build\n"
+            printf "  ${YELLOW}DRY${NC}   cd clawft-ui && npm run build\n"
             passed=$((passed + 1))
-        elif (cd "$ROOT/ui" && npm run build) >/dev/null 2>&1; then
+        elif (cd "$UI_DIR" && npm run build) >/dev/null 2>&1; then
             pass "UI build"
             passed=$((passed + 1))
         else
@@ -416,7 +417,7 @@ cmd_gate() {
         timer_end
     else
         printf "\n${BOLD}[%2d/%d]${NC} %s\n" 10 "$total" "UI build"
-        skip "ui/ directory not found"
+        skip "clawft-ui/ directory not found"
         skipped=$((skipped + 1))
     fi
 
@@ -456,8 +457,8 @@ ${BOLD}Commands:${NC}
   native-debug    Build native CLI binary (debug, fast)
   wasi            Build WASM for WASI (wasm32-wasip2)
   browser         Build WASM for browser (wasm32-unknown-unknown)
-  ui              Build React frontend (tsc + vite)
-  all             Build everything (native + wasi + browser + ui)
+  ui              Build React frontend in clawft-ui/ (tsc + vite)
+  all             Build everything (native + wasi + browser + clawft-ui)
   test            Run cargo test --workspace
   check           Run cargo check --workspace (fast compile check)
   clippy          Run clippy with warnings-as-errors

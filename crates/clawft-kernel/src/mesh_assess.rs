@@ -574,7 +574,6 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_assessment_sync_between_two_nodes() {
-        use crate::mesh::MeshStream;
         use crate::mesh_tcp::TcpTransport;
         use crate::mesh::MeshTransport;
 

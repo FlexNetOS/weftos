@@ -189,6 +189,9 @@ mod tests {
     use super::*;
     use clawft_platform::NativePlatform;
     use std::path::PathBuf;
+    use tokio::sync::Mutex;
+
+    static ACTIVE_SPAWNS_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     fn make_tool() -> SpawnTool<NativePlatform> {
         SpawnTool::new(
@@ -224,6 +227,8 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_echo_succeeds() {
+        let _guard = ACTIVE_SPAWNS_TEST_LOCK.lock().await;
+        ACTIVE_SPAWNS.store(0, Ordering::Relaxed);
         let tool = make_tool();
         let result = tool
             .execute(json!({
@@ -253,6 +258,8 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_with_no_args() {
+        let _guard = ACTIVE_SPAWNS_TEST_LOCK.lock().await;
+        ACTIVE_SPAWNS.store(0, Ordering::Relaxed);
         let tool = make_tool();
         let result = tool
             .execute(json!({
@@ -272,6 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrency_limit_enforced() {
+        let _guard = ACTIVE_SPAWNS_TEST_LOCK.lock().await;
         // Set active spawns to the maximum.
         ACTIVE_SPAWNS.store(MAX_CONCURRENT_SPAWNS, Ordering::Relaxed);
 

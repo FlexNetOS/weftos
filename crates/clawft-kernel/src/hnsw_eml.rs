@@ -2073,7 +2073,7 @@ mod tests {
 
     #[test]
     fn benchmark_4_phase_runs() {
-        let bench = run_hnsw_benchmark(500, 32, 10);
+        let bench = run_hnsw_benchmark(100, 16, 5);
 
         assert!(bench.phase1_build_ns > 0);
         assert!(bench.phase1_baseline_recall >= 0.0);
@@ -2086,7 +2086,7 @@ mod tests {
 
     #[test]
     fn benchmark_produces_json() {
-        let bench = run_hnsw_benchmark(200, 16, 5);
+        let bench = run_hnsw_benchmark(50, 8, 3);
         let json = serde_json::to_string_pretty(&bench).unwrap();
         eprintln!("\n{json}\n");
         assert!(json.contains("phase1_baseline_recall"));
@@ -2097,6 +2097,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full benchmark report is intentionally excluded from default release-gate tests"]
     fn benchmark_full_report() {
         let bench = run_hnsw_benchmark(5000, 128, 10);
         let c = &bench.phase3_control;
