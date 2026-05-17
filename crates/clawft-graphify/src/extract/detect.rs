@@ -143,8 +143,14 @@ pub fn looks_like_paper(path: &Path) -> bool {
         Ok(t) => t,
         Err(_) => return false,
     };
+    // Take the first ~3000 bytes, but respect UTF-8 char boundaries so we
+    // never panic on multi-byte characters (e.g. em dashes, smart quotes).
     let sample: &str = if text.len() > 3000 {
-        &text[..3000]
+        let mut end = 3000;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
     } else {
         &text
     };
