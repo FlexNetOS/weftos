@@ -1,0 +1,29 @@
+name: DevOps Scripts Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/test-devops-scripts.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/test-devops-scripts.yml'
+
+jobs:
+  test-scripts:
+    name: Test DevOps Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax Check
+        run: |
+          bash -n scripts/hardware-scan.sh
+          bash -n scripts/health-check.sh
+          bash -n scripts/rollback.sh
+
+      - name: Run Tests
+        run: bash scripts/tests/run-all.sh

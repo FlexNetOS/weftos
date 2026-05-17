@@ -161,8 +161,8 @@ ciborium = "0.2"
 instant-distance = "0.6"
 
 # ONNX Runtime (embedding inference)
-ort = { version = "2.0.0-rc.12", default-features = false }
-ndarray = "0.16"
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "download-binaries", "tls-rustls"] }
+ndarray = "0.17"
 
 # Noise Protocol (mesh transport encryption)
 snow = "0.10"

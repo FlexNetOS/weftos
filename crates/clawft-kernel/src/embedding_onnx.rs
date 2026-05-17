@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "onnx-embeddings")]
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -342,7 +341,7 @@ pub struct OnnxEmbeddingProvider {
     /// ONNX runtime session (only present when `onnx-embeddings` feature is active
     /// and model was loaded successfully).
     #[cfg(feature = "onnx-embeddings")]
-    session: Option<Arc<ort::Session>>,
+    session: Option<std::sync::Mutex<ort::session::Session>>,
 }
 
 impl OnnxEmbeddingProvider {
@@ -444,17 +443,17 @@ impl OnnxEmbeddingProvider {
 
     /// Attempt to load an ONNX runtime session from the model path.
     #[cfg(feature = "onnx-embeddings")]
-    fn try_load_session(model_path: &PathBuf) -> Option<Arc<ort::Session>> {
+    fn try_load_session(model_path: &PathBuf) -> Option<std::sync::Mutex<ort::session::Session>> {
         if !model_path.exists() {
             tracing::debug!("ONNX model not found at {}, using hash fallback", model_path.display());
             return None;
         }
-        match ort::Session::builder()
-            .and_then(|builder| builder.commit_from_file(model_path))
+        match ort::session::Session::builder()
+            .and_then(|mut builder| builder.commit_from_file(model_path))
         {
             Ok(session) => {
                 tracing::info!("ONNX session loaded from {}", model_path.display());
-                Some(Arc::new(session))
+                Some(std::sync::Mutex::new(session))
             }
             Err(e) => {
                 tracing::warn!("Failed to load ONNX session: {e}, using hash fallback");
@@ -502,9 +501,11 @@ impl OnnxEmbeddingProvider {
     fn onnx_embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         use ndarray::Array2;
 
-        let session = self.session.as_ref().ok_or_else(|| {
+        let session_mtx = self.session.as_ref().ok_or_else(|| {
             EmbeddingError::BackendError("ONNX session not loaded".to_string())
         })?;
+        let mut session = session_mtx.lock()
+            .map_err(|e| EmbeddingError::BackendError(format!("session lock error: {e}")))?;
 
         // Tokenize using WordPiece if available, otherwise fall back to hashing.
         let (input_ids, attention_mask, token_type_ids) = if let Some(ref tokenizer) = self.tokenizer {
@@ -514,7 +515,7 @@ impl OnnxEmbeddingProvider {
         } else {
             // Legacy hash-based fallback (produces structurally valid but
             // semantically meaningless token IDs).
-            tracing::warn_once!(
+            tracing::warn!(
                 "ONNX inference without WordPiece vocab — embeddings will not be semantic"
             );
             let tokens = simple_tokenize(text, self.max_tokens);
@@ -546,39 +547,42 @@ impl OnnxEmbeddingProvider {
         let token_type_ids_arr = Array2::from_shape_vec((1, seq_len), token_type_ids)
             .map_err(|e| EmbeddingError::BackendError(format!("shape error: {e}")))?;
 
+        let input_ids_tensor = ort::value::Tensor::<i64>::from_array(input_ids_arr)
+            .map_err(|e| EmbeddingError::BackendError(format!("input_ids tensor error: {e}")))?;
+        let attention_mask_tensor = ort::value::Tensor::<i64>::from_array(attention_mask_arr)
+            .map_err(|e| EmbeddingError::BackendError(format!("attention_mask tensor error: {e}")))?;
+        let token_type_ids_tensor = ort::value::Tensor::<i64>::from_array(token_type_ids_arr)
+            .map_err(|e| EmbeddingError::BackendError(format!("token_type_ids tensor error: {e}")))?;
+
         let inputs = ort::inputs![
-            "input_ids" => input_ids_arr,
-            "attention_mask" => attention_mask_arr,
-            "token_type_ids" => token_type_ids_arr,
-        ].map_err(|e| EmbeddingError::BackendError(format!("input error: {e}")))?;
+            "input_ids" => input_ids_tensor,
+            "attention_mask" => attention_mask_tensor,
+            "token_type_ids" => token_type_ids_tensor,
+        ];
 
         let outputs = session.run(inputs)
             .map_err(|e| EmbeddingError::BackendError(format!("inference error: {e}")))?;
 
         // Extract the last_hidden_state output and mean-pool across the sequence.
         // Output shape: (1, seq_len, hidden_dim)
-        let output_tensor = outputs.get("last_hidden_state")
-            .or_else(|| outputs.iter().next().map(|(_, v)| v))
+        let (_, output_tensor) = outputs.iter().next()
             .ok_or_else(|| EmbeddingError::BackendError("no output tensor".to_string()))?;
 
-        let tensor = output_tensor
+        let (shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .map_err(|e| EmbeddingError::BackendError(format!("extract error: {e}")))?;
 
-        let shape = tensor.shape();
-        if shape.len() < 2 {
+        let shape_vec: Vec<usize> = shape.iter().map(|d| *d as usize).collect();
+        if shape_vec.len() < 2 {
             return Err(EmbeddingError::BackendError(
-                format!("unexpected output shape: {shape:?}"),
+                format!("unexpected output shape: {shape_vec:?}"),
             ));
         }
-        let hidden_dim = *shape.last().unwrap();
-        let seq = shape[1];
+        let hidden_dim = *shape_vec.last().unwrap();
+        let seq = shape_vec[1];
 
         // Attention-masked mean pooling: only average over non-padding tokens.
         let mut embedding = vec![0.0f32; hidden_dim];
-        let data = tensor.as_slice().ok_or_else(|| {
-            EmbeddingError::BackendError("tensor not contiguous".to_string())
-        })?;
 
         let mut active_count: f32 = 0.0;
         for s in 0..seq {
@@ -613,7 +617,7 @@ impl OnnxEmbeddingProvider {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EmbeddingProvider for OnnxEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         #[cfg(feature = "onnx-embeddings")]
@@ -729,7 +733,7 @@ pub fn split_sentences(text: &str) -> Vec<&str> {
         .collect()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EmbeddingProvider for SentenceTransformerProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         let cleaned = preprocess_markdown(text);
@@ -1073,7 +1077,7 @@ impl AstEmbeddingProvider {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EmbeddingProvider for AstEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         Ok(self.hybrid_embed(text))

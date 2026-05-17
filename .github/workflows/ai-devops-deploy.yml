@@ -1,0 +1,387 @@
+name: WeftOS AI DevOps - Build, Test & Deploy
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: 'Deployment target'
+        required: true
+        type: choice
+        options:
+          - linux-x86_64
+          - aarch64-raspberry-pi
+          - wasm32-wasip2
+          - macos-arm64
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+jobs:
+  # ============= BUILD MATRIX =============
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            binaries: weft,weaver,weftos
+
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            binaries: weft,weaver,weftos
+
+          - target: wasm32-wasip2
+            runner: ubuntu-latest
+            binaries: clawft_wasm.wasm
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+          if [[ "${{ matrix.target }}" == "wasm32-wasip2" ]]; then
+            sudo apt-get install -y binaryen
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ matrix.target }}-
+
+      - name: Build WeftOS Binaries
+        run: |
+          if [[ "${{ matrix.target }}" == "wasm32-wasip2" ]]; then
+            cargo build --target ${{ matrix.target }} --profile release-wasm -p clawft-wasm
+            wasm-opt -Oz target/${{ matrix.target }}/release-wasm/clawft_wasm.wasm \
+              -o target/${{ matrix.target }}/release-wasm/clawft_wasm-optimized.wasm
+            ls -lh target/${{ matrix.target }}/release-wasm/*.wasm
+          else
+            cargo build --release --target ${{ matrix.target }} --bin weft --bin weaver --bin weftos
+            strip --strip-all target/${{ matrix.target }}/release/weft || true
+            strip --strip-all target/${{ matrix.target }}/release/weaver || true
+            strip --strip-all target/${{ matrix.target }}/release/weftos || true
+            ls -lh target/${{ matrix.target }}/release/weft target/${{ matrix.target }}/release/weaver target/${{ matrix.target }}/release/weftos
+          fi
+
+      - name: Run Tests (native only)
+        if: matrix.target != 'wasm32-wasip2'
+        run: cargo test --release --target ${{ matrix.target }} --workspace --lib
+
+      - name: Cargo Check (WASM only)
+        if: matrix.target == 'wasm32-wasip2'
+        run: cargo check --target ${{ matrix.target }} --profile release-wasm -p clawft-wasm
+
+      - name: Cargo Audit (Security)
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit
+          fi
+          cargo audit --deny warnings
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weftos-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/weft
+            target/${{ matrix.target }}/release/weaver
+            target/${{ matrix.target }}/release/weftos
+            target/${{ matrix.target }}/release-wasm/clawft_wasm*.wasm
+            !target/**/deps
+          retention-days: 7
+
+  # ============= HARDWARE ANALYSIS =============
+  hardware-analysis:
+    name: Hardware Optimization Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Hardware Scan
+        run: |
+          chmod +x scripts/hardware-scan.sh
+          ./scripts/hardware-scan.sh > hardware-analysis.txt 2>&1
+
+      - name: Upload Analysis Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-analysis
+          path: hardware-analysis.txt
+
+  # ============= SECURITY CHECKS =============
+  security:
+    name: Security & Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit ~/.cargo/bin/cargo-sbom
+          key: ${{ runner.os }}-cargo-tools-audit-sbom
+
+      - name: Cargo Audit
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit
+          fi
+          cargo audit --json > audit-report.json
+
+      - name: SBOM Generation
+        run: |
+          if ! command -v cargo-sbom >/dev/null 2>&1; then
+            cargo install cargo-sbom
+          fi
+          cargo sbom -o sbom.json
+
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            audit-report.json
+            sbom.json
+
+  # ============= DEPLOY TO LINUX X86_64 =============
+  deploy-linux-x86_64:
+    name: Deploy to Linux x86_64
+    needs: [build, security]
+    runs-on: [self-hosted, linux, x86_64]
+    environment: weftos-deployment
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: weftos-x86_64-unknown-linux-gnu
+
+      - name: Hardware Detection & Adaptive Config
+        env:
+          MESHNET_NODE_ID: ${{ secrets.MESHNET_NODE_ID }}
+          MODEL_CACHE_PATH: ${{ secrets.MODEL_CACHE_PATH }}
+        run: |
+          chmod +x scripts/hardware-scan.sh
+          source <(./scripts/hardware-scan.sh --env)
+          echo "FORCE_SMALL_MODELS=$FORCE_SMALL_MODELS" >> $GITHUB_ENV
+          echo "REDUCE_PARALLELISM=$REDUCE_PARALLELISM" >> $GITHUB_ENV
+
+      - name: Prepare Deployment
+        env:
+          MODEL_CACHE_PATH: ${{ secrets.MODEL_CACHE_PATH }}
+        run: |
+          mkdir -p "$MODEL_CACHE_PATH"
+          chmod +x weftos || true
+          ls -lh weftos weft weaver
+
+      - name: Backup & Deploy Binary
+        env:
+          MESHNET_NODE_ID: ${{ secrets.MESHNET_NODE_ID }}
+        run: |
+          mkdir -p /opt/weftos/bin
+          for bin in weft weaver weftos; do
+            if [[ -f "$bin" ]]; then
+              if [[ -f "/opt/weftos/bin/$bin" ]]; then
+                sudo cp "/opt/weftos/bin/$bin" "/opt/weftos/bin/${bin}.old"
+              fi
+              sudo cp "./$bin" /opt/weftos/bin/
+              sudo chmod +x "/opt/weftos/bin/$bin"
+            fi
+          done
+          /opt/weftos/bin/weftos version
+
+      - name: Health Check Suite
+        env:
+          HEALTH_CHECK_TIMEOUT: ${{ secrets.HEALTH_CHECK_TIMEOUT }}
+          WEFTOS_BINARY: /opt/weftos/bin/weftos
+        run: |
+          chmod +x scripts/health-check.sh
+          ./scripts/health-check.sh
+
+      - name: Automatic Rollback (on failure)
+        if: failure()
+        env:
+          WEFTOS_BINARY: /opt/weftos/bin/weftos
+        run: |
+          echo "Deployment health checks failed! Rolling back..."
+          chmod +x scripts/rollback.sh
+          sudo bash scripts/rollback.sh
+          exit 1
+
+  # ============= DEPLOY TO RASPBERRY PI =============
+  deploy-aarch64-raspberry-pi:
+    name: Deploy to Raspberry Pi (ARM64)
+    needs: [build, security]
+    runs-on: [self-hosted, linux, arm64]
+    environment: weftos-deployment
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: weftos-aarch64-unknown-linux-gnu
+
+      - name: Raspberry Pi Hardware Constraints
+        run: |
+          echo "Raspberry Pi detected - applying constraints"
+          TOTAL_MEM=$(free -g | awk 'NR==2{printf "%.0f", $2}')
+          if [[ $TOTAL_MEM -lt 4 ]]; then
+            echo "Low RAM on Pi: forcing small models"
+            echo "FORCE_SMALL_MODELS=1" >> $GITHUB_ENV
+          fi
+
+      - name: Deploy Binaries
+        run: |
+          for bin in weft weaver weftos; do
+            if [[ -f "$bin" ]]; then
+              sudo cp "./$bin" /usr/local/bin/
+              sudo chmod +x "/usr/local/bin/$bin"
+            fi
+          done
+          /usr/local/bin/weftos version
+
+      - name: Health Check Suite
+        env:
+          HEALTH_CHECK_TIMEOUT: ${{ secrets.HEALTH_CHECK_TIMEOUT }}
+          WEFTOS_BINARY: /usr/local/bin/weftos
+        run: |
+          chmod +x scripts/health-check.sh
+          ./scripts/health-check.sh
+
+      - name: Automatic Rollback (on failure)
+        if: failure()
+        env:
+          WEFTOS_BINARY: /usr/local/bin/weftos
+        run: |
+          echo "Raspberry Pi deployment failed! Rolling back..."
+          chmod +x scripts/rollback.sh
+          sudo WEFTOS_BINARY=/usr/local/bin/weftos bash scripts/rollback.sh
+          exit 1
+
+  # ============= RELEASE ARTIFACTS =============
+  release:
+    name: Create GitHub Release
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release Notes
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          # WeftOS Release
+
+          Version: ${{ github.ref_name }}
+          Built: $(date)
+
+          ## Build Artifacts
+
+          - **Linux x86_64** (Ubuntu, Debian, RHEL)
+          - **ARM64** (Raspberry Pi 4/5, Apple Silicon)
+          - **WASM** (Browser, WASI containers)
+
+          ## Hardware Optimization
+
+          This build includes dynamic hardware detection that adapts to:
+          - RAM constraints (forces small models on <4GB)
+          - CPU cores (adjusts parallelism)
+          - GPU availability (enables acceleration)
+          - Storage capacity (manages model caching)
+
+          ## Installation
+
+          ```bash
+          tar xzf weftos-linux-x86_64.tar.gz
+          sudo ./install.sh
+          sudo systemctl restart weftos
+          ```
+
+          See [README.md](README.md) for details.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: weftos-*/*
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============= WORKFLOW SUMMARY =============
+  workflow-summary:
+    name: Workflow Summary
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        run: |
+          cat << 'EOF'
+
+          WeftOS DevOps Automation Summary
+
+          Build: ${{ needs.build.result }}
+          Security: ${{ needs.security.result }}
+
+          Targets Built:
+          - linux-x86_64 (GitHub-hosted)
+          - aarch64-raspberry-pi (GitHub-hosted)
+          - wasm32-wasip2 (GitHub-hosted)
+
+          Next Steps:
+          1. Verify artifacts in Actions tab
+          2. Run health checks on self-hosted runners
+          3. Review security reports (SBOM, audit)
+          4. Deploy to production on tag v*.*.*
+
+          EOF

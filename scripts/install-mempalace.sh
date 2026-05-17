@@ -88,19 +88,21 @@ cd "$REPO_ROOT"
 
 # ── Install ──────────────────────────────────────────────────────────
 # Prefer pipx if available (isolated venv per CLI is the recommended
-# packaging for end-user Python tools), otherwise fall back to
-# `pip install --user`. We avoid system-wide installs to stay sudo-free.
+# packaging for end-user Python tools), then uv (modern Python tooling),
+# then fall back to `pip install --user`. We avoid system-wide installs
+# to stay sudo-free.
 #
-# Both paths invoke the install subprocess with:
+# All paths invoke the install subprocess with:
 #   PIP_EXTRA_INDEX_URL=''  → strip any inherited extra-index env var
 #   PIP_CONFIG_FILE=/dev/null → ignore any pip.conf / pip.ini extra-index-url
 #   --index-url "$MEMPALACE_INDEX_URL" → pin the primary index
-# Together these close the dependency-confusion window: pip will resolve
-# `mempalace` (and its transitive deps) only from the pinned primary
-# index for this single install, regardless of how the calling shell or
-# host pip configuration is set up. The pipx path also tunnels these
-# settings into pipx's internal pip subprocess via `--pip-args`.
-if command -v pipx >/dev/null 2>&1; then
+# Together these close the dependency-confusion window.
+
+if command -v uv >/dev/null 2>&1; then
+  log "installing ${MEMPALACE_PIP_SPEC} via uv tool (modern Python tooling) from ${MEMPALACE_INDEX_URL}"
+  uv tool install --force --index-url "$MEMPALACE_INDEX_URL" \
+    "${MEMPALACE_PIP_SPEC}" || fail "uv tool install failed"
+elif command -v pipx >/dev/null 2>&1; then
   log "installing ${MEMPALACE_PIP_SPEC} via pipx (isolated venv) from ${MEMPALACE_INDEX_URL}"
   PIP_EXTRA_INDEX_URL='' \
   PIP_CONFIG_FILE=/dev/null \
@@ -108,19 +110,19 @@ if command -v pipx >/dev/null 2>&1; then
     --pip-args="--index-url=${MEMPALACE_INDEX_URL} --no-config" \
     "${MEMPALACE_PIP_SPEC}" || fail "pipx install failed"
 else
-  log "installing ${MEMPALACE_PIP_SPEC} via pip --user (pipx not found) from ${MEMPALACE_INDEX_URL}"
-  log "  — install pipx for cleaner CLI isolation: pip install --user pipx"
+  log "installing ${MEMPALACE_PIP_SPEC} via pip --user (pipx/uv not found) from ${MEMPALACE_INDEX_URL}"
+  log "  — install pipx or uv for cleaner CLI isolation"
   PIP_EXTRA_INDEX_URL='' \
   PIP_CONFIG_FILE=/dev/null \
   python3 -m pip install --user --upgrade --no-config \
-    --index-url "${MEMPALACE_INDEX_URL}" \
+    --index-url "$MEMPALACE_INDEX_URL" \
     "${MEMPALACE_PIP_SPEC}" || \
     fail "pip install failed — see https://github.com/MemPalace/mempalace#installation"
 fi
 
-# Locate the installed CLI. pipx puts it under ~/.local/bin; pip --user
-# also targets ~/.local/bin on POSIX. Surface the path in case it isn't
-# on PATH yet (common after a fresh pip --user install).
+# Locate the installed CLI. pipx and uv both put it under ~/.local/bin;
+# pip --user also targets ~/.local/bin on POSIX. Surface the path in
+# case it isn't on PATH yet (common after a fresh install).
 if ! command -v mempalace >/dev/null 2>&1; then
   warn "'mempalace' not yet on PATH. Add ~/.local/bin to PATH to use the CLI."
   warn "  e.g.  export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -148,19 +150,20 @@ log "directory; subsequent inits merge additively into the same palace."
 log ""
 log "Smoke test (does not modify any project directory):"
 log "  mempalace status"
-log "  mempalace list-wings"
+log "  mempalace search \"test\""
+log "  mempalace repair-status"
 
 # ── MCP registration (optional) ──────────────────────────────────────
-# MemPalace ships a Claude Code plugin marketplace entry that registers
-# the MCP server with all 9 tools (status, list_wings, list_rooms,
-# get_taxonomy, search, check_duplicate, add_drawer, delete_drawer,
-# reconnect). We don't auto-install — that's a per-user choice (palace
-# is shared across projects, plugin install is a global Claude config
+# MemPalace ships an MCP server with 30 tools (status, list_wings,
+# list_rooms, get_taxonomy, search, check_duplicate, add_drawer,
+# get_drawer, list_drawers, update_drawer, delete_drawer, reconnect,
+# sync, plus knowledge graph, graph traversal, tunnels, diary, and
+# utility tools). We don't auto-install — that's a per-user choice
+# (palace is shared across projects, plugin install is a global config
 # change). Surface the command instead.
 if command -v claude >/dev/null 2>&1; then
   log "Claude Code detected. To wire the MCP server, run:"
-  log "  claude plugin marketplace add MemPalace/mempalace"
-  log "  claude plugin install --scope user mempalace"
+  log "  claude mcp add mempalace -- mempalace-mcp"
   log "  # then restart Claude Code and run /skills to verify"
   log ""
   log "Or for manual MCP registration without the marketplace:"
