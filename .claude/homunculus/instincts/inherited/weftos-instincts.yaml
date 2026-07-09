@@ -1,0 +1,728 @@
+# Instincts generated from https://github.com/drdave-flexnetos/weftos
+# Generated: 2026-07-09T11:32:36.922Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: weftos-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, docs, fix, merge, refactor
+
+## Evidence
+
+- 100 commits analyzed
+- Detected conventional commit pattern
+- Examples: refactor(gui,mic): explorer chip + mic race fix + clippy sweep, fix(vscode): allow substrate.read/subscribe through webview proxy
+
+---
+id: weftos-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Commit Length
+
+## Action
+
+Write moderate-length commit messages (~62 characters)
+
+## Evidence
+
+- Average commit message length: 62 chars
+- Based on 100 commits
+
+---
+id: weftos-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: weftos-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: weftos-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: weftos-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: weftos-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Test Framework
+
+## Action
+
+Use playwright as the test framework
+
+## Evidence
+
+- Test framework detected: playwright
+- File pattern: *.test.ts
+
+---
+id: weftos-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: weftos-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Test Types
+
+## Action
+
+Write unit, integration, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, integration, e2e
+- Coverage config: no
+
+---
+id: weftos-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~18x per month
+- Files: extensions/vscode-weft-panel/src/*, **/*.test.*
+
+---
+id: weftos-workflow-planning-track-initiation
+trigger: "when doing planning track initiation"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Planning Track Initiation
+
+## Action
+
+Follow the planning-track-initiation workflow:
+1. Create or update .planning/*/*.md files with detailed plans, research, or sequencing.
+2. Commit multiple related planning docs together (e.g., plan, adoption, spike, journal).
+3. Reference these docs in subsequent implementation commits.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: .planning/explorer/PROJECT-PLAN.md, .planning/explorer/PHASE-2-PLAN.md, .planning/ontology/ADOPTION.md
+
+---
+id: weftos-workflow-backend-rpc-surface-extension
+trigger: "when doing backend rpc surface extension"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Backend Rpc Surface Extension
+
+## Action
+
+Follow the backend-rpc-surface-extension workflow:
+1. Implement new method in kernel/service (e.g., substrate_service.rs, node_registry.rs, control.rs).
+2. Add protocol types and wire handler in daemon.rs.
+3. Update protocol.rs with params/result structs.
+4. Add or update integration/unit tests (tests/*.rs).
+5. Optionally update GUI or VSCode extension to use new RPC.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: crates/clawft-kernel/src/substrate_service.rs, crates/clawft-kernel/src/node_registry.rs, crates/clawft-weave/src/daemon.rs
+
+---
+id: weftos-workflow-gui-explorer-viewer-addition
+trigger: "when doing gui explorer viewer addition"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Gui Explorer Viewer Addition
+
+## Action
+
+Follow the gui-explorer-viewer-addition workflow:
+1. Create a new viewer module (src/explorer/viewers/*.rs) implementing SubstrateViewer.
+2. Register the viewer in viewers/mod.rs using marker comments ([[VIEWERS_MODULES_INSERT]], [[VIEWERS_REGISTRATIONS_INSERT]]).
+3. Write unit tests for matches(), edge cases, and rendering.
+4. Update mod.rs and lib.rs as needed.
+5. Optionally update integration tests.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: crates/clawft-gui-egui/src/explorer/viewers/*.rs, crates/clawft-gui-egui/src/explorer/viewers/mod.rs, crates/clawft-gui-egui/src/explorer/mod.rs
+
+---
+id: weftos-workflow-gui-explorer-panel-extension
+trigger: "when doing gui explorer panel extension"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Gui Explorer Panel Extension
+
+## Action
+
+Follow the gui-explorer-panel-extension workflow:
+1. Create new module(s) under src/explorer/ (e.g., workshop.rs, control_toggle.rs).
+2. Update explorer/mod.rs to mount the new primitive.
+3. Write integration/unit tests for new UI logic.
+4. Optionally add example TOML/specs for dev tools.
+5. Update GUI shell (desktop.rs) if new entry points are needed.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: crates/clawft-gui-egui/src/explorer/*.rs, crates/clawft-gui-egui/src/explorer/mod.rs, crates/clawft-gui-egui/tests/*.rs
+
+---
+id: weftos-workflow-merge-feature-track
+trigger: "when doing merge feature track"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Merge Feature Track
+
+## Action
+
+Follow the merge-feature-track workflow:
+1. Merge feature branch into main/dev (commit message: merge: phaseX-...).
+2. Resolve conflicts, especially in mod.rs or viewers/mod.rs.
+3. Ensure all related files (modules, tests, protocol) are included.
+4. Workspace clippy/test sweep before merge.
+5. Document in handoff or planning docs as needed.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: crates/clawft-gui-egui/src/explorer/*.rs, crates/clawft-gui-egui/src/explorer/viewers/*.rs, crates/clawft-gui-egui/src/ontology/types/*.rs
+
+---
+id: weftos-workflow-fix-cross-platform-or-performance-bug
+trigger: "when doing fix cross platform or performance bug"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Fix Cross Platform Or Performance Bug
+
+## Action
+
+Follow the fix-cross-platform-or-performance-bug workflow:
+1. Identify and isolate the bug (often with a minimal repro in examples/).
+2. Patch the affected module (e.g., response.rs, json_fallback.rs).
+3. Add or update example/repro files for regression testing.
+4. Document the fix in commit message and/or handoff docs.
+5. Run platform-specific tests/checks.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: crates/clawft-gui-egui/src/canon/response.rs, crates/clawft-gui-egui/examples/*.rs, crates/clawft-gui-egui/src/explorer/viewers/json_fallback.rs
+
+---
+id: weftos-workflow-handoff-or-journal-update
+trigger: "when doing handoff or journal update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/drdave-flexnetos/weftos
+---
+
+# Weftos Workflow Handoff Or Journal Update
+
+## Action
+
+Follow the handoff-or-journal-update workflow:
+1. Edit docs/handoff.md or .planning/sensors/PIPELINE-PRIMITIVE-JOURNAL.md with details of recent changes.
+2. Summarize what landed, what is pending, and known issues.
+3. Commit updated doc(s) as a standalone or follow-up to merges/fixes.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: docs/handoff.md, .planning/sensors/PIPELINE-PRIMITIVE-JOURNAL.md
+
+---
+id: weftos-instinct-camelcase-functions
+trigger: "When defining a function in Rust code"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Camelcase Functions
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.functions
+- Seen in crates/clawft-gui-egui/src/explorer/mod.rs
+
+---
+id: weftos-instinct-pascalcase-classes
+trigger: "When defining a class or struct in Rust code"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Pascalcase Classes
+
+## Action
+
+Name the class/struct using PascalCase
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.classes
+- Seen in crates/clawft-gui-egui/src/explorer/viewers/json_fallback.rs
+
+---
+id: weftos-instinct-screaming-snake-constants
+trigger: "When defining a constant in Rust code"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Screaming Snake Constants
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.constants
+- Seen in crates/clawft-gui-egui/src/explorer/mod.rs
+
+---
+id: weftos-instinct-relative-imports
+trigger: "When importing modules in Rust code"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Relative Imports
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+- Seen in crates/clawft-gui-egui/src/explorer/mod.rs
+
+---
+id: weftos-instinct-named-exports
+trigger: "When exporting modules or functions in Rust code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Named Exports
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+- Seen in crates/clawft-gui-egui/src/explorer/mod.rs
+
+---
+id: weftos-instinct-playwright-test-pattern
+trigger: "When writing tests for the GUI (clawft-ui)"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Playwright Test Pattern
+
+## Action
+
+Write tests in files matching *.test.ts using Playwright
+
+## Evidence
+
+- Pattern in testing.filePattern
+- Seen in clawft-ui/*.test.ts
+
+---
+id: weftos-instinct-unit-integration-e2e-tests
+trigger: "When adding tests for a new feature or module"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Unit Integration E2e Tests
+
+## Action
+
+Include unit, integration, and e2e tests as appropriate
+
+## Evidence
+
+- Pattern in testing.testTypes
+- Seen in crates/clawft-weave/tests/*.rs
+
+---
+id: weftos-instinct-no-coverage-config
+trigger: "When configuring tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct No Coverage Config
+
+## Action
+
+Do not add coverage configuration files
+
+## Evidence
+
+- Pattern in testing.coverageConfig=false
+
+---
+id: weftos-instinct-conventional-commits
+trigger: "When writing a commit message"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Conventional Commits
+
+## Action
+
+Use conventional commit format: <type>(<scope>): <description>
+
+## Evidence
+
+- Pattern in commits.type=conventional
+- Seen in commit 'feat(gui): Explorer panel skeleton + SubstrateViewer trait'
+
+---
+id: weftos-instinct-commit-prefixes
+trigger: "When choosing a commit type"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Commit Prefixes
+
+## Action
+
+Use one of: feat, fix, docs, refactor, merge
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Seen in commit 'fix(vscode): allow substrate.read/subscribe through webview proxy'
+
+---
+id: weftos-instinct-merge-feature-track
+trigger: "When a feature branch is ready to land after review and conflict resolution"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Merge Feature Track
+
+## Action
+
+Merge the feature branch into main/dev with a 'merge: phaseX-...' commit, resolve conflicts, ensure all related files are included, run clippy/tests, and document in handoff/planning docs
+
+## Evidence
+
+- Workflow: merge-feature-track
+- Seen in commit 'merge: phase1-explorer-backend (substrate.list RPC)'
+
+---
+id: weftos-instinct-planning-track-initiation
+trigger: "When a new feature, phase, or architectural direction is being planned and needs documentation before code lands"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Planning Track Initiation
+
+## Action
+
+Create or update .planning/*/*.md files with detailed plans, commit related planning docs together, and reference them in later implementation commits
+
+## Evidence
+
+- Workflow: planning-track-initiation
+- Pattern in .planning/explorer/PROJECT-PLAN.md
+
+---
+id: weftos-instinct-backend-rpc-surface-extension
+trigger: "When a new backend capability or API endpoint is needed for GUI or firmware integration"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Backend Rpc Surface Extension
+
+## Action
+
+Implement the new method in kernel/service, update protocol/daemon, add tests, and optionally update GUI/VSCode extension
+
+## Evidence
+
+- Workflow: backend-rpc-surface-extension
+- Pattern in crates/clawft-kernel/src/substrate_service.rs
+
+---
+id: weftos-instinct-gui-explorer-viewer-addition
+trigger: "When a new substrate data shape needs a specialized GUI representation"
+confidence: 0.97
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Gui Explorer Viewer Addition
+
+## Action
+
+Create a new viewer module implementing SubstrateViewer, register it in viewers/mod.rs, write unit tests, and update mod.rs/lib.rs as needed
+
+## Evidence
+
+- Workflow: gui-explorer-viewer-addition
+- Pattern in crates/clawft-gui-egui/src/explorer/viewers/*.rs
+
+---
+id: weftos-instinct-gui-explorer-panel-extension
+trigger: "When a new composition primitive or control surface is needed in the Explorer"
+confidence: 0.92
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Gui Explorer Panel Extension
+
+## Action
+
+Create new module(s) under src/explorer/, update explorer/mod.rs, write tests, and update GUI shell if needed
+
+## Evidence
+
+- Workflow: gui-explorer-panel-extension
+- Pattern in crates/clawft-gui-egui/src/explorer/*.rs
+
+---
+id: weftos-instinct-fix-cross-platform-or-performance-bug
+trigger: "When a platform-specific or performance regression is reported and needs a targeted fix"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Fix Cross Platform Or Performance Bug
+
+## Action
+
+Isolate the bug, patch the affected module, add/update example/repro files, document the fix, and run platform-specific tests
+
+## Evidence
+
+- Workflow: fix-cross-platform-or-performance-bug
+- Pattern in crates/clawft-gui-egui/src/canon/response.rs
+
+---
+id: weftos-instinct-handoff-or-journal-update
+trigger: "When major merges land or phase transitions occur, or after bugfixes that require operational notes"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: drdave-flexnetos/weftos
+---
+
+# Weftos Instinct Handoff Or Journal Update
+
+## Action
+
+Edit docs/handoff.md or .planning/sensors/PIPELINE-PRIMITIVE-JOURNAL.md with recent changes, summarize status, and commit as standalone or follow-up
+
+## Evidence
+
+- Workflow: handoff-or-journal-update
+- Pattern in docs/handoff.md
+
